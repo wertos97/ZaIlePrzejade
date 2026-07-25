@@ -113,6 +113,11 @@ function setupEventListeners() {
     document.getElementById('modal-close').addEventListener('click', closeModal);
     document.getElementById('modal-overlay').addEventListener('click', closeModal);
 
+    // Mobile result close
+    document.getElementById('mobile-result-close').addEventListener('click', function() {
+        document.getElementById('mobile-result').style.display = 'none';
+    });
+
 }
 
 function clearRoute() {
@@ -123,6 +128,7 @@ function clearRoute() {
     document.getElementById('from-search').value = '';
     document.getElementById('to-search').value = '';
     document.getElementById('right-panel').style.display = 'none';
+    document.getElementById('mobile-result').style.display = 'none';
     document.querySelector('.main-content').classList.remove('with-result');
     state.routeLayer.clearLayers();
     updateSelectedStops();
@@ -437,9 +443,17 @@ function displayRoute(result) {
     drawRouteOnMap(result);
     displayResult(result);
 
-    // Show right panel
-    document.getElementById('right-panel').style.display = 'block';
-    document.querySelector('.main-content').classList.add('with-result');
+    // Show right panel (desktop) or mobile result
+    const isMobile = window.innerWidth <= 768;
+    if (isMobile) {
+        document.getElementById('right-panel').style.display = 'none';
+        document.querySelector('.main-content').classList.remove('with-result');
+        document.getElementById('mobile-result').style.display = 'block';
+    } else {
+        document.getElementById('right-panel').style.display = 'block';
+        document.querySelector('.main-content').classList.add('with-result');
+        document.getElementById('mobile-result').style.display = 'none';
+    }
 
     // Update marker visibility
     updateSelectedStops();
@@ -517,37 +531,64 @@ function drawRouteOnMap(result) {
         }).addTo(state.routeLayer);
     });
 
-    // Fit bounds with padding for the right panel (340px)
+    // Fit bounds with appropriate padding for desktop or mobile
     const bounds = L.latLngBounds(path.map(s => [s.lat, s.lon]));
-    state.map.fitBounds(bounds, {
-        paddingTopLeft: [0, 20],
-        paddingBottomRight: [340, 20],
-        maxZoom: 16,
-    });
+    const isMobile = window.innerWidth <= 768;
+    if (isMobile) {
+        // On mobile: account for bottom sheet (~45vh) and header (48px)
+        state.map.fitBounds(bounds, {
+            paddingTopLeft: [0, 20],
+            paddingBottomRight: [0, window.innerHeight * 0.5],
+            maxZoom: 15,
+        });
+    } else {
+        // On desktop: account for right panel (340px) and header (52px)
+        state.map.fitBounds(bounds, {
+            paddingTopLeft: [0, 20],
+            paddingBottomRight: [340, 20],
+            maxZoom: 16,
+        });
+    }
 }
 
 function displayResult(result) {
+    // Desktop result
     document.getElementById('result-distance').textContent =
         `${result.total_distance.toFixed(2)} km`;
-
     document.getElementById('result-regular').textContent =
         `${result.cost_regular.toFixed(2)} zł`;
     document.getElementById('result-reduced').textContent =
         `${result.cost_reduced.toFixed(2)} zł`;
 
+    // Mobile result
+    document.getElementById('mobile-result-distance').textContent =
+        `${result.total_distance.toFixed(2)} km`;
+    document.getElementById('mobile-result-regular').textContent =
+        `${result.cost_regular.toFixed(2)} zł`;
+    document.getElementById('mobile-result-reduced').textContent =
+        `${result.cost_reduced.toFixed(2)} zł`;
+
     const transferCount = result.transfers ? result.transfers.length : 0;
-    document.getElementById('result-transfers').textContent =
-        transferCount > 0 ? `${transferCount} przesiadka(e/k)` : 'Bez przesiadek';
+    const transferText = transferCount > 0 ? `${transferCount} przesiadka(e/k)` : 'Bez przesiadek';
+    document.getElementById('result-transfers').textContent = transferText;
+    document.getElementById('mobile-result-transfers').textContent = transferText;
 
-    const stepsEl = document.getElementById('route-steps');
-    stepsEl.innerHTML = '';
+    // Build steps HTML (shared between desktop and mobile)
+    const stepsHtml = buildStepsHtml(result);
 
+    document.getElementById('route-steps').innerHTML = stepsHtml;
+    document.getElementById('mobile-route-steps').innerHTML = stepsHtml;
+}
+
+function buildStepsHtml(result) {
     const stopNameLookup = {};
     if (result.path) {
         result.path.forEach(s => {
             stopNameLookup[s.stop_id] = s.name;
         });
     }
+
+    let html = '';
 
     // Display segments interleaved with transfers
     if (result.segments && result.segments.length > 0) {
@@ -570,22 +611,21 @@ function displayResult(result) {
             }
             const routeLabel = routeNames.join(', ');
 
-            const stepEl = document.createElement('div');
-            stepEl.className = 'route-step';
-            stepEl.innerHTML = `
-                <div class="step-header">
-                    <span class="step-title">${modeIcon} Przejazd</span>
-                    <span class="step-distance">${segment.distance.toFixed(2)} km</span>
-                </div>
-                <div class="step-routes">Linie: ${escapeHtml(routeLabel)}</div>
-                <div class="step-detail">
-                    ${escapeHtml(firstStopName)} → ${escapeHtml(lastStopName)}
-                </div>
-                <div class="step-detail" style="margin-top: 2px; color: #999;">
-                    ${segment.stops.length} przystanków
+            html += `
+                <div class="route-step">
+                    <div class="step-header">
+                        <span class="step-title">${modeIcon} Przejazd</span>
+                        <span class="step-distance">${segment.distance.toFixed(2)} km</span>
+                    </div>
+                    <div class="step-routes">Linie: ${escapeHtml(routeLabel)}</div>
+                    <div class="step-detail">
+                        ${escapeHtml(firstStopName)} → ${escapeHtml(lastStopName)}
+                    </div>
+                    <div class="step-detail" style="margin-top: 2px; color: #999;">
+                        ${segment.stops.length} przystanków
+                    </div>
                 </div>
             `;
-            stepsEl.appendChild(stepEl);
             
             // Show transfer after this segment
             if (result.transfers && index < result.transfers.length) {
@@ -593,23 +633,24 @@ function displayResult(result) {
                 const transferStopName = transfer.stop_name || stopNameLookup[transfer.stop_id] || transfer.stop_id;
                 const fromRoute = getRouteInfo(transfer.from_route);
                 const toRoute = getRouteInfo(transfer.to_route);
-                const transferEl = document.createElement('div');
-                transferEl.className = 'route-step transfer';
-                transferEl.innerHTML = `
-                    <div class="step-header">
-                        <span class="step-title">🔄 Przesiadka</span>
-                    </div>
-                    <div class="step-detail" style="font-weight: 500; margin-bottom: 2px;">
-                        <strong>${escapeHtml(transferStopName)}</strong>
-                    </div>
-                    <div class="step-detail" style="color: #888;">
-                        ${fromRoute ? `linia ${fromRoute.short_name}` : '?'} → ${toRoute ? `linia ${toRoute.short_name}` : '?'}
+                html += `
+                    <div class="route-step transfer">
+                        <div class="step-header">
+                            <span class="step-title">🔄 Przesiadka</span>
+                        </div>
+                        <div class="step-detail" style="font-weight: 500; margin-bottom: 2px;">
+                            <strong>${escapeHtml(transferStopName)}</strong>
+                        </div>
+                        <div class="step-detail" style="color: #888;">
+                            ${fromRoute ? `linia ${fromRoute.short_name}` : '?'} → ${toRoute ? `linia ${toRoute.short_name}` : '?'}
+                        </div>
                     </div>
                 `;
-                stepsEl.appendChild(transferEl);
             }
         });
     }
+
+    return html;
 }
 
 // ============================================================

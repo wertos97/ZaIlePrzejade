@@ -1,15 +1,15 @@
 Aplikacja "Kalkulator Cen Biletów MPK Kraków 2027"
 
-Autor: wertos97
-
 Aplikacja została stworzona w celu obliczania kosztów podróży komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości, który ma wejść w życie w 2027 roku.
 
 Dane linii i przystanków pochodzą z ogólnodostępnych rozkładów GTFS MPK Kraków (dostęp 24.07.2026).
 
 Kod źródłowy: https://github.com/wertos97/ZaIlePrzejade
 
+Autor: wertos97
+
 Mapę ogarnia Leaflet i OpenStreetMap.
 
 W przypadku pytań lub uwag, zapraszam do kontaktu przez GitHub.
 
-Może niedługo zrobię jakąś wersję mobilną.
+Może niedługo zrobię jakąś bardziej sensowną wersję mobilną.
