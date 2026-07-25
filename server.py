@@ -169,9 +169,25 @@ def calculate_cost(distance_km):
 # Dijkstra's algorithm for shortest path
 # ============================================================
 
+# Precompute stop coordinates for A* heuristic
+stop_coords = {}
+for stop_id, edges in adjacency.items():
+    # Get coordinates from stops_by_id
+    stop_info = stops_by_id.get(stop_id, {})
+    stop_coords[stop_id] = (stop_info.get('lat', 0), stop_info.get('lon', 0))
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Approximate distance in km between two coordinates."""
+    # Simple flat-earth approximation for Kraków area (good enough for heuristic)
+    dlat = (lat1 - lat2) * 111.32
+    dlon = (lon1 - lon2) * 111.32 * math.cos((lat1 + lat2) / 2 * math.pi / 180)
+    return math.sqrt(dlat * dlat + dlon * dlon)
+
+
 def find_shortest_path(start_id, end_id):
     """
-    Find the shortest path using Dijkstra's algorithm.
+    Find the shortest path using A* algorithm with Euclidean heuristic.
     Minimizes distance, with a small penalty for route changes to avoid
     unnecessary zigzagging between routes. Still properly tracks route
     changes and reports them as segments/transfers.
@@ -181,27 +197,38 @@ def find_shortest_path(start_id, end_id):
     if end_id not in adjacency:
         return None, "Przystanek końcowy nie został znaleziony w grafie"
 
+    # Precompute heuristic for the target
+    end_coords = stop_coords.get(end_id, (0, 0))
+
     # Penalty for changing routes (used only for routing decisions, not for display)
     CHANGE_PENALTY = 0.3
 
     # Track distance by (stop_id, route_id) state
-    # We track both penalized distance (for routing) and real distance (for display)
-    pq = [(0.0, 0.0, start_id, None)]  # (penalized_dist, real_dist, stop, route)
+    # Priority queue: (estimated_total, penalized_dist, real_dist, stop, route)
+    # estimated_total = penalized_dist + heuristic(stop, end)
+    start_coords = stop_coords.get(start_id, (0, 0))
+    h_start = haversine_km(start_coords[0], start_coords[1], end_coords[0], end_coords[1])
+    pq = [(h_start, 0.0, 0.0, start_id, None)]
     best = {(start_id, None): (0.0, 0.0)}  # (penalized_dist, real_dist)
     prev = {}
 
+    # Track best found real distance for early pruning
+    best_found_real = float('inf')
+
     while pq:
-        pen_dist, real_dist, stop, route = heapq.heappop(pq)
+        est_total, pen_dist, real_dist, stop, route = heapq.heappop(pq)
 
         state = (stop, route)
         best_pen, _ = best.get(state, (float('inf'), 0))
         if pen_dist > best_pen:
             continue
 
+        # Prune: if even the optimistic estimate is worse than best found, skip
+        if est_total >= best_found_real:
+            continue
+
         if stop == end_id:
             # Recalculate real distance by summing edge distances along the path
-            # (the tracked real_dist may be from a suboptimal path if penalized
-            # distance led us astray, so we reconstruct and sum actual edges)
             path_edges = []
             cur = (stop, route)
             while cur in prev:
@@ -225,9 +252,13 @@ def find_shortest_path(start_id, end_id):
             next_state = (next_stop, next_route)
             best_pen, _ = best.get(next_state, (float('inf'), 0))
             if new_pen < best_pen:
+                # A* heuristic: estimated remaining distance
+                coords = stop_coords.get(next_stop, (0, 0))
+                h = haversine_km(coords[0], coords[1], end_coords[0], end_coords[1])
+                estimated = new_pen + h
                 best[next_state] = (new_pen, new_real)
                 prev[next_state] = (stop, route, edge)
-                heapq.heappush(pq, (new_pen, new_real, next_stop, next_route))
+                heapq.heappush(pq, (estimated, new_pen, new_real, next_stop, next_route))
 
     return None, "Nie znaleziono trasy między tymi przystankami"
 

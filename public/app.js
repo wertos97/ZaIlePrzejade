@@ -370,6 +370,10 @@ async function findRoute() {
         return;
     }
 
+    // Show loading indicator
+    const loadingEl = document.getElementById('loading-indicator');
+    loadingEl.style.display = 'flex';
+
     try {
         // Fetch both modes to compare
         const otherMode = state.routeMode === 'short' ? 'convenient' : 'short';
@@ -382,6 +386,7 @@ async function findRoute() {
         const otherResult = await otherResponse.json();
 
         if (currentResult.error) {
+            loadingEl.style.display = 'none';
             alert(`Błąd: ${currentResult.error}`);
             return;
         }
@@ -408,6 +413,8 @@ async function findRoute() {
     } catch (error) {
         console.error('Route finding error:', error);
         alert('Wystąpił błąd podczas wyszukiwania trasy');
+    } finally {
+        loadingEl.style.display = 'none';
     }
 }
 
