@@ -106,6 +106,10 @@ function setupEventListeners() {
         showModal('Uwaga', 'warning.txt');
     });
 
+    document.getElementById('btn-author').addEventListener('click', function() {
+        showModal('Od autora', 'author.txt');
+    });
+
     document.getElementById('modal-close').addEventListener('click', closeModal);
     document.getElementById('modal-overlay').addEventListener('click', closeModal);
 

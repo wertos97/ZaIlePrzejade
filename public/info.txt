@@ -1,12 +1,19 @@
-MPK Kraków - Kalkulator Biletów
+Garść faktów zanim zaczniesz korzystać z aplikacji:
 
-Aplikacja umożliwia obliczenie kosztu podróży komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.
+Od przyszłego roku bilety MPK w Krakowie będziemy liczyć na odległość.
 
-Funkcjonalności:
-- Wyszukiwanie przystanków po nazwie
-- Wybór przystanków na mapie
-- Obliczanie dystansu i kosztu przejazdu
-- Dwa tryby nawigacji: krótka trasa (najkrótszy dystans) i wygodna trasa (najmniej przesiadek)
-- Wyświetlanie trasy na mapie
+Jak to będzie działać?
+👉 Płacisz za to, ile kilometrów faktycznie przejedziesz. Nie za czas, nie za liczbę przystanków - tylko za dystans.
 
-Dane linii i przystanków pochodzą z rozkładów GTKS MPK Kraków z dnia 24.07.2026.
+Nowy cennik:
+➡️ Do 3,5 km: 4 zł normalny / 2 zł ulgowy
+➡️ Powyżej 3,5 km: każde rozpoczęte 500 m to +0,50 zł / +0,25 zł
+➡️ Maksymalnie zapłacisz 9 zł / 4,50 zł za przejazd
+
+Jest też jeden plus - dzienny limit wydatków 20 zł. Po osiągnięciu tej kwoty kolejne przejazdy tego dnia są gratis, tak jakbyś miał bilet dzienny.
+
+Nowy system ma być dostępny w aplikacji mKraków. No i tyle - jedzie się na odległość.
+
+---
+
+Koniecznie przeczytaj "Uwaga"!
