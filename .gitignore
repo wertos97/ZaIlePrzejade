@@ -11,9 +11,6 @@ data/A_bus/
 data/M_mob/
 data/T_tram/
 
-# Processed data (can be regenerated)
-processed/
-
 # OS files
 .DS_Store
 Thumbs.db
