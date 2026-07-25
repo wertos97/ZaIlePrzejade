@@ -1,0 +1,2 @@
+# No external dependencies needed - the app uses only Python standard library.
+# This file is kept for deployment platforms that expect it.

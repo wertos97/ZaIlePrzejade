@@ -1,0 +1,12 @@
+MPK Kraków - Kalkulator Biletów
+
+Aplikacja umożliwia obliczenie kosztu podróży komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.
+
+Funkcjonalności:
+- Wyszukiwanie przystanków po nazwie
+- Wybór przystanków na mapie
+- Obliczanie dystansu i kosztu przejazdu
+- Dwa tryby nawigacji: krótka trasa (najkrótszy dystans) i wygodna trasa (najmniej przesiadek)
+- Wyświetlanie trasy na mapie
+
+Dane linii i przystanków pochodzą z rozkładów GTKS MPK Kraków z dnia 24.07.2026.

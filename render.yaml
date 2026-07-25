@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: zaileprzejade
+    env: python
+    buildCommand: ""
+    startCommand: python server.py
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 10000

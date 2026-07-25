@@ -1,0 +1,9 @@
+Uwaga!
+
+Kalkulacja kosztów ma charakter poglądowy i może różnić się od rzeczywistych cen biletów.
+
+System biletów opartych na odległości (nowy system) został przedstawiony w oparciu o dostępne informacje. Ostateczne ceny mogą ulec zmianie.
+
+Aplikacja wykorzystuje dane GTFS udostępnione przez MPK Kraków. Trasy i rozkłady jazdy mogą ulegać zmianom.
+
+W przypadku wątpliwości sprawdź aktualne informacje na oficjalnej stronie MPK Kraków.

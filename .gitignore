@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# GTFS raw data (can be re-downloaded)
+data/GTFS_*.zip
+data/A_bus/
+data/M_mob/
+data/T_tram/
+
+# Processed data (can be regenerated)
+processed/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
