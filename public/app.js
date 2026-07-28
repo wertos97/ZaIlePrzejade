@@ -45,10 +45,11 @@ const STOP_COLOR = '#3498db';
 
 document.addEventListener('DOMContentLoaded', function() {
     initMap();
-    loadStops();
-    loadRouteInfo();
     setupEventListeners();
-    restoreFromURL();
+    // Wait for both stops and routes to load before restoring from URL
+    Promise.all([loadStops(), loadRouteInfo()]).then(function() {
+        restoreFromURL();
+    });
 });
 
 // ============================================================

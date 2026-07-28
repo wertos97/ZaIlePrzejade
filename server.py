@@ -396,7 +396,6 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
                     'end_stop': stop_id,
                 }
 
-            current_segment['distance'] += edge['distance']
             current_segment['end_stop'] = stop_id
             # Only add stops that are actual route stops (not transfers)
             current_segment['stops'].append(stop_id)
@@ -426,16 +425,24 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
         i += 1
     segments = merged_segments
 
-    # For each segment, find all route lines that serve the same stop sequence
-    # (different bus/tram lines that share the same physical route)
+    # For each segment, find all route lines that share the same stops
+    # (different bus/tram lines that run through the same stops)
     for segment in segments:
         if segment['stops'] and len(segment['stops']) >= 2:
-            first_stop = segment['stops'][0]
-            second_stop = segment['stops'][1] if len(segment['stops']) > 1 else None
-            # Find all routes that serve this stop pair in the forward direction
-            all_routes = stop_pair_routes.get((first_stop, second_stop), [])
-            if all_routes:
-                segment['all_routes'] = sorted(all_routes)
+            # Find routes that serve the FIRST two stops of this segment
+            # (all platforms of those groups)
+            first_group = stop_to_group.get(segment['stops'][0], '')
+            second_group = stop_to_group.get(segment['stops'][1], '')
+            
+            # Collect all routes that serve any platform pair from first to second group
+            first_pair_routes = set()
+            for p1 in stops_grouped.get(first_group, {}).get('platforms', []):
+                for p2 in stops_grouped.get(second_group, {}).get('platforms', []):
+                    routes = stop_pair_routes.get((p1['id'], p2['id']), [])
+                    first_pair_routes.update(routes)
+            
+            if first_pair_routes:
+                segment['all_routes'] = sorted(first_pair_routes)
             else:
                 segment['all_routes'] = [segment['route_id']] if segment['route_id'] else []
         else:
@@ -493,10 +500,37 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
             'is_transfer': is_transfer,
         })
 
-    cost_regular, cost_reduced = calculate_cost(total_distance)
+    # Recalculate distances from stop coordinates for consistency
+    # (edge distances vary by route, but user sees same stops)
+    # First normalize segment distances
+    for segment in segments:
+        if len(segment['stops']) >= 2:
+            seg_dist = 0.0
+            for j in range(len(segment['stops']) - 1):
+                s1 = stops_by_id.get(segment['stops'][j], {})
+                s2 = stops_by_id.get(segment['stops'][j + 1], {})
+                if s1 and s2:
+                    g1 = stops_grouped.get(stop_to_group.get(segment['stops'][j], ''), {})
+                    g2 = stops_grouped.get(stop_to_group.get(segment['stops'][j + 1], ''), {})
+                    lat1 = g1.get('lat', s1.get('lat', 0))
+                    lon1 = g1.get('lon', s1.get('lon', 0))
+                    lat2 = g2.get('lat', s2.get('lat', 0))
+                    lon2 = g2.get('lon', s2.get('lon', 0))
+                    seg_dist += haversine_km(lat1, lon1, lat2, lon2)
+            segment['distance'] = round(seg_dist, 4)
+
+    # Then normalize total distance
+    normalized_distance = 0.0
+    for i in range(len(path_stops) - 1):
+        s1 = path_stops[i]
+        s2 = path_stops[i + 1]
+        if not s2.get('is_transfer') and not s1.get('is_transfer'):
+            normalized_distance += haversine_km(s1['lat'], s1['lon'], s2['lat'], s2['lon'])
+
+    cost_regular, cost_reduced = calculate_cost(normalized_distance)
 
     return {
-        'total_distance': round(total_distance, 4),
+        'total_distance': round(normalized_distance, 4),
         'cost_regular': cost_regular,
         'cost_reduced': cost_reduced,
         'path': path_stops,
