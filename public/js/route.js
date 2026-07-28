@@ -21,6 +21,7 @@ async function findRoute() {
         if (result) {
             updateEqualityIndicators(cached.short, cached.convenient);
             displayRoute(result);
+            updateURL();
             return;
         }
     }
@@ -66,6 +67,7 @@ async function findRoute() {
 
         updateEqualityIndicators(shortResult, convenientResult);
         displayRoute(result);
+        updateURL();
     } catch (error) {
         console.error('Route finding error:', error);
         showToast('Wystąpił błąd podczas wyszukiwania trasy');
