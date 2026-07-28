@@ -25,6 +25,11 @@
 
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
+        <button class="sidebar-toggle" id="sidebar-toggle">
+            <svg class="chevron-icon" width="20" height="12" viewBox="0 0 20 12" fill="none">
+                <path d="M2 10L10 2L18 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </button>
         <!-- Search Panel -->
         <div class="panel">
             <h2>Wybierz przystanki</h2>
@@ -122,30 +127,50 @@
         </div>
     </aside>
 
+    <!-- Mobile loading overlay -->
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-spinner"></div>
+        <span class="loading-text">Szukam trasy...</span>
+    </div>
+
     <!-- Mobile Result Panel -->
     <div class="mobile-result" id="mobile-result" style="display: none;">
-        <button class="mobile-result-close" id="mobile-result-close">✕</button>
-        <div id="mobile-result-content">
-            <div class="result-summary">
-                <div class="result-row">
-                    <span>Dystans</span>
-                    <span id="mobile-result-distance">--</span>
-                </div>
-                <div class="result-row result-regular">
-                    <span>Normalny</span>
-                    <span id="mobile-result-regular">--</span>
-                </div>
-                <div class="result-row result-reduced">
-                    <span>Ulgowy</span>
-                    <span id="mobile-result-reduced">--</span>
-                </div>
-                <div class="result-row">
-                    <span>Przesiadki</span>
-                    <span id="mobile-result-transfers">--</span>
-                </div>
+        <div class="mobile-result-sticky">
+            <button class="mobile-result-toggle" id="mobile-result-toggle">
+                <svg class="chevron-icon" width="20" height="12" viewBox="0 0 20 12" fill="none">
+                    <path d="M2 10L10 2L18 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+            <div class="mobile-mode-bar" id="mobile-mode-bar">
+                <button class="btn-mode-sm btn-mode-sm-active" id="mobile-mode-short" data-mode="short">
+                    ⚡ Krótka
+                </button>
+                <span class="mode-equal-sm" id="mobile-mode-equal" style="display: none;">=</span>
+                <button class="btn-mode-sm" id="mobile-mode-convenient" data-mode="convenient">
+                    🛋️ Wygodna
+                </button>
+                <button class="btn-mode-sm-close" id="mobile-result-close">✕</button>
             </div>
-            <div class="route-steps" id="mobile-route-steps"></div>
         </div>
+        <div class="result-summary">
+            <div class="result-row">
+                <span>Dystans</span>
+                <span id="mobile-result-distance">--</span>
+            </div>
+            <div class="result-row result-regular">
+                <span>Normalny</span>
+                <span id="mobile-result-regular">--</span>
+            </div>
+            <div class="result-row result-reduced">
+                <span>Ulgowy</span>
+                <span id="mobile-result-reduced">--</span>
+            </div>
+            <div class="result-row">
+                <span>Przesiadki</span>
+                <span id="mobile-result-transfers">--</span>
+            </div>
+        </div>
+        <div class="route-steps" id="mobile-route-steps"></div>
     </div>
 
     <!-- Modal overlay -->

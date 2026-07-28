@@ -12,6 +12,9 @@ const state = {
     searchTimeout: null,
     routeMode: 'short',
     hasRoute: false,
+    routeCache: {}, // key: "fromId_toId", value: { short: result, convenient: result }
+    currentRouteKey: null,
+    shouldFitBounds: true,
 };
 
 // Single color for all stops
@@ -37,6 +40,12 @@ document.addEventListener('DOMContentLoaded', function() {
 function initMap() {
     state.map = L.map('map', {
         zoomControl: true,
+        minZoom: 11,
+        maxBounds: [
+            [49.85, 19.60], // Southwest corner
+            [50.25, 20.30]  // Northeast corner
+        ],
+        maxBoundsViscosity: 1.0,
     }).setView([50.0647, 19.9450], 13);
 
     // Use a cleaner tile style - CartoDB Positron (light, no POI clutter)
@@ -66,7 +75,7 @@ function setupEventListeners() {
             document.querySelectorAll('.search-results').forEach(el => el.classList.remove('show'));
         }
         // Close custom popup only if clicking outside the popup itself
-        if (customPopupEl && !customPopupEl.contains(e.target) && !e.target.closest('.leaflet-marker-icon') && !e.target.closest('.leaflet-interactive')) {
+        if (customPopupEl && !customPopupEl.contains(e.target) && !e.target.closest('.leaflet-marker-icon') && !e.target.closest('.leaflet-interactive') && !e.target.closest('.leaflet-pane')) {
             closeCustomPopup();
         }
     });
@@ -113,9 +122,36 @@ function setupEventListeners() {
     document.getElementById('modal-close').addEventListener('click', closeModal);
     document.getElementById('modal-overlay').addEventListener('click', closeModal);
 
-    // Mobile result close
+    // Mobile sidebar toggle button - expand/collapse
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+    const sidebar = document.getElementById('sidebar');
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener('click', function() {
+            sidebar.classList.toggle('expanded');
+        });
+    }
+
+    // Mobile result close (button in mode bar)
     document.getElementById('mobile-result-close').addEventListener('click', function() {
         document.getElementById('mobile-result').style.display = 'none';
+    });
+
+    // Mobile result toggle button - expand/collapse
+    const mobileResultToggle = document.getElementById('mobile-result-toggle');
+    const mobileResult = document.getElementById('mobile-result');
+
+    if (mobileResultToggle) {
+        mobileResultToggle.addEventListener('click', function() {
+            mobileResult.classList.toggle('expanded');
+        });
+    }
+
+    // Mobile mode buttons
+    document.getElementById('mobile-mode-short').addEventListener('click', function() {
+        setRouteMode('short');
+    });
+    document.getElementById('mobile-mode-convenient').addEventListener('click', function() {
+        setRouteMode('convenient');
     });
 
 }
@@ -136,8 +172,15 @@ function clearRoute() {
 
 function setRouteMode(mode) {
     state.routeMode = mode;
+    
+    // Update desktop mode buttons
     document.querySelectorAll('.btn-mode').forEach(btn => {
         btn.classList.toggle('btn-mode-active', btn.dataset.mode === mode);
+    });
+
+    // Update mobile mode buttons
+    document.querySelectorAll('.btn-mode-sm').forEach(btn => {
+        btn.classList.toggle('btn-mode-sm-active', btn.dataset.mode === mode);
     });
 
     if (state.fromStop && state.toStop) {
@@ -234,22 +277,39 @@ async function loadStops() {
         state.stopGroups = stopGroups;
 
         stopGroups.forEach(group => {
-            const marker = L.circleMarker([group.lat, group.lon], {
+            // Invisible larger hit area for easier clicking
+            const hitArea = L.circleMarker([group.lat, group.lon], {
+                radius: 14,
+                fillColor: STOP_COLOR,
+                fillOpacity: 0,
+                color: STOP_COLOR,
+                opacity: 0,
+                weight: 0,
+                interactive: true,
+            });
+
+            hitArea.on('click', function(e) {
+                selectStop(group, e);
+            });
+
+            hitArea.stopData = group;
+            hitArea.addTo(state.map);
+            state.markers.push(hitArea);
+
+            // Visible small dot marker (not interactive - click goes to hitArea)
+            const dot = L.circleMarker([group.lat, group.lon], {
                 radius: 5,
                 fillColor: STOP_COLOR,
                 color: '#fff',
                 weight: 1.5,
                 opacity: 1,
                 fillOpacity: 0.7,
+                interactive: false,
             });
 
-            marker.on('click', function(e) {
-                selectStop(group, e);
-            });
-
-            marker.stopData = group;
-            marker.addTo(state.map);
-            state.markers.push(marker);
+            dot.addTo(state.map);
+            // Store reference to dot for style updates
+            hitArea.dot = dot;
         });
 
         console.log(`Loaded ${stopGroups.length} stop groups`);
@@ -361,13 +421,16 @@ function updateSelectedStops() {
             radius = 10;
         }
 
-        marker.setStyle({
-            radius: radius,
-            fillColor: color,
-            color: '#fff',
-            weight: 2,
-            fillOpacity: opacity,
-        });
+        // Update the visible dot (marker is the invisible hit area)
+        if (marker.dot) {
+            marker.dot.setStyle({
+                radius: radius,
+                fillColor: color,
+                color: '#fff',
+                weight: 2,
+                fillOpacity: opacity,
+            });
+        }
     });
 }
 
@@ -380,51 +443,95 @@ async function findRoute() {
         return;
     }
 
+    const routeKey = `${state.fromStop.id}_${state.toStop.id}`;
+    state.currentRouteKey = routeKey;
+
+    // Check if we have cached results for this route
+    if (state.routeCache[routeKey]) {
+        const cached = state.routeCache[routeKey];
+        const result = cached[state.routeMode];
+        if (result) {
+            updateEqualityIndicators(cached.short, cached.convenient);
+            displayRoute(result);
+            return;
+        }
+    }
+
     // Show loading indicator
     const loadingEl = document.getElementById('loading-indicator');
     loadingEl.style.display = 'flex';
 
+    // Show full-screen loading overlay on mobile
+    const isMobile = window.innerWidth <= 768;
+    const loadingOverlay = document.getElementById('loading-overlay');
+    if (isMobile && loadingOverlay) {
+        loadingOverlay.classList.add('show');
+    }
+
     try {
-        // Fetch both modes to compare
-        const otherMode = state.routeMode === 'short' ? 'convenient' : 'short';
-        const [currentResponse, otherResponse] = await Promise.all([
-            fetch(`/api/find-route?from=${state.fromStop.id}&to=${state.toStop.id}&mode=${state.routeMode}`),
-            fetch(`/api/find-route?from=${state.fromStop.id}&to=${state.toStop.id}&mode=${otherMode}`),
+        // Fetch both modes simultaneously
+        const [shortResponse, convenientResponse] = await Promise.all([
+            fetch(`/api/find-route?from=${state.fromStop.id}&to=${state.toStop.id}&mode=short`),
+            fetch(`/api/find-route?from=${state.fromStop.id}&to=${state.toStop.id}&mode=convenient`),
         ]);
 
-        const currentResult = await currentResponse.json();
-        const otherResult = await otherResponse.json();
+        const shortResult = await shortResponse.json();
+        const convenientResult = await convenientResponse.json();
 
-        if (currentResult.error) {
+        if (shortResult.error) {
             loadingEl.style.display = 'none';
-            alert(`Błąd: ${currentResult.error}`);
+            if (isMobile && loadingOverlay) loadingOverlay.classList.remove('show');
+            alert(`Błąd: ${shortResult.error}`);
             return;
         }
 
-        // Check if both modes give the same result
-        const equal = (
-            !otherResult.error &&
-            Math.abs(currentResult.total_distance - otherResult.total_distance) < 0.001 &&
-            (currentResult.transfers || []).length === (otherResult.transfers || []).length
-        );
+        // Cache both results
+        state.routeCache[routeKey] = {
+            short: shortResult,
+            convenient: convenientResult,
+        };
 
-        const equalEl = document.getElementById('mode-equal');
-        if (equal) {
-            equalEl.style.display = 'flex';
-            // Re-trigger animation by removing and re-adding
-            equalEl.style.animation = 'none';
-            equalEl.offsetHeight; // trigger reflow
-            equalEl.style.animation = '';
-        } else {
-            equalEl.style.display = 'none';
-        }
+        const result = state.routeMode === 'short' ? shortResult : convenientResult;
 
-        displayRoute(currentResult);
+        // This is a new route - fit bounds on next draw
+        state.shouldFitBounds = true;
+
+        updateEqualityIndicators(shortResult, convenientResult);
+        displayRoute(result);
     } catch (error) {
         console.error('Route finding error:', error);
         alert('Wystąpił błąd podczas wyszukiwania trasy');
     } finally {
         loadingEl.style.display = 'none';
+        if (isMobile && loadingOverlay) loadingOverlay.classList.remove('show');
+    }
+}
+
+function updateEqualityIndicators(shortResult, convenientResult) {
+    const equal = (
+        !convenientResult.error &&
+        Math.abs(shortResult.total_distance - convenientResult.total_distance) < 0.001 &&
+        (shortResult.transfers || []).length === (convenientResult.transfers || []).length
+    );
+
+    const equalEl = document.getElementById('mode-equal');
+    if (equal) {
+        equalEl.style.display = 'flex';
+        equalEl.style.animation = 'none';
+        equalEl.offsetHeight;
+        equalEl.style.animation = '';
+    } else {
+        equalEl.style.display = 'none';
+    }
+
+    const mobileEqualEl = document.getElementById('mobile-mode-equal');
+    if (equal) {
+        mobileEqualEl.style.display = 'flex';
+        mobileEqualEl.style.animation = 'none';
+        mobileEqualEl.offsetHeight;
+        mobileEqualEl.style.animation = '';
+    } else {
+        mobileEqualEl.style.display = 'none';
     }
 }
 
@@ -457,6 +564,28 @@ function displayRoute(result) {
 
     // Update marker visibility
     updateSelectedStops();
+
+    // Fit bounds AFTER the panel is shown, so padding is correct
+    if (state.shouldFitBounds && result.path && result.path.length > 0) {
+        state.shouldFitBounds = false;
+        const bounds = L.latLngBounds(result.path.map(s => [s.lat, s.lon]));
+        if (isMobile) {
+            // Panel is now visible - use its actual height for padding
+            const panelEl = document.getElementById('mobile-result');
+            const panelHeight = panelEl.offsetHeight || (window.innerHeight * 0.50);
+            state.map.fitBounds(bounds, {
+                paddingTopLeft: [0, 72],
+                paddingBottomRight: [0, panelHeight],
+                maxZoom: 15,
+            });
+        } else {
+            state.map.fitBounds(bounds, {
+                paddingTopLeft: [0, 52],
+                paddingBottomRight: [340, 20],
+                maxZoom: 16,
+            });
+        }
+    }
 }
 
 function drawRouteOnMap(result) {
@@ -531,24 +660,6 @@ function drawRouteOnMap(result) {
         }).addTo(state.routeLayer);
     });
 
-    // Fit bounds with appropriate padding for desktop or mobile
-    const bounds = L.latLngBounds(path.map(s => [s.lat, s.lon]));
-    const isMobile = window.innerWidth <= 768;
-    if (isMobile) {
-        // On mobile: account for bottom sheet (~45vh) and header (48px)
-        state.map.fitBounds(bounds, {
-            paddingTopLeft: [0, 20],
-            paddingBottomRight: [0, window.innerHeight * 0.5],
-            maxZoom: 15,
-        });
-    } else {
-        // On desktop: account for right panel (340px) and header (52px)
-        state.map.fitBounds(bounds, {
-            paddingTopLeft: [0, 20],
-            paddingBottomRight: [340, 20],
-            maxZoom: 16,
-        });
-    }
 }
 
 function displayResult(result) {

@@ -20,3 +20,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Server scripts (local use only)
+start.sh
+stop.sh
