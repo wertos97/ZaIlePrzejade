@@ -636,9 +636,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     def send_response(self, code, message=None):
         """Override to suppress default Server header."""
         super().send_response(code, message)
-        # Remove the default Server header added by super()
-        if 'Server' in self.headers:
-            del self.headers['Server']
 
     def do_HEAD(self):
         """Handle HEAD requests same as GET."""
@@ -852,29 +849,14 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.serve_json({'error': 'Internal server error'})
 
     def serve_json(self, data):
-        """Serve JSON response with gzip compression when supported."""
+        """Serve JSON response. Cloudflare handles compression."""
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
-        # Compress if client supports gzip and response is large enough
-        accept = self.headers.get('Accept-Encoding', '')
-        if 'gzip' in accept and len(body) > 500:
-            buf = io.BytesIO()
-            with gzip.GzipFile(fileobj=buf, mode='wb') as f:
-                f.write(body)
-            compressed = buf.getvalue()
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.send_header('Content-Length', str(len(compressed)))
-            self.send_header('Content-Encoding', 'gzip')
-            self.send_header('Cache-Control', 'no-cache')
-            self.end_headers()
-            self.wfile.write(compressed)
-        else:
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.send_header('Content-Length', str(len(body)))
-            self.send_header('Cache-Control', 'no-cache')
-            self.end_headers()
-            self.wfile.write(body)
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-cache')
+        self.end_headers()
+        self.wfile.write(body)
 
     def send_error_page(self, code):
         """Send a minimal error response without revealing server details."""
