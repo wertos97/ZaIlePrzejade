@@ -4,6 +4,8 @@ HTTP Server for MPK Kraków Ticket Cost Calculator.
 Serves static files and provides API endpoints for route finding and cost calculation.
 """
 
+import gzip
+import io
 import json
 import math
 import os
@@ -126,16 +128,54 @@ for stop_id, edges in adjacency_raw.items():
 print(f"  Built stop pair route lookup with {len(stop_pair_routes)} entries")
 
 # ============================================================
-# Ticket pricing configuration
+# Build search index for fast stop name lookups
 # ============================================================
-BASE_DISTANCE = 3.5       # km - base distance included in base price
-BASE_COST_REGULAR = 4.00  # PLN
-BASE_COST_REDUCED = 2.00  # PLN
-SEGMENT_DISTANCE = 0.5    # km - each additional 500m
-SEGMENT_COST_REGULAR = 0.50  # PLN per 500m
-SEGMENT_COST_REDUCED = 0.25  # PLN per 500m
-MAX_COST_REGULAR = 9.00   # PLN
-MAX_COST_REDUCED = 4.50   # PLN
+# inverted_index: prefix -> set of (name_lower, group_id)
+# This avoids iterating all stop names on every search query
+_stop_search_index = {}  # prefix -> [(name_lower, group_id), ...]
+for name_lower, group_ids in stops_by_name_grouped.items():
+    # Index all substrings of length 2+ for fast prefix matching
+    for i in range(len(name_lower)):
+        for length in range(2, min(6, len(name_lower) - i + 1)):
+            prefix = name_lower[i:i+length]
+            if prefix not in _stop_search_index:
+                _stop_search_index[prefix] = []
+            for gid in group_ids:
+                _stop_search_index[prefix].append((name_lower, gid))
+
+# Also index stop codes
+for s in stops_list:
+    code = s.get('code', '').lower()
+    if code:
+        group_id = stop_to_group.get(s['id'])
+        if group_id:
+            for i in range(len(code)):
+                for length in range(2, min(6, len(code) - i + 1)):
+                    prefix = code[i:i+length]
+                    if prefix not in _stop_search_index:
+                        _stop_search_index[prefix] = []
+                    _stop_search_index[prefix].append(('_code_' + code, group_id))
+
+print(f"  Built search index with {len(_stop_search_index)} prefixes")
+
+# ============================================================
+# Ticket pricing configuration (loaded from pricing.json)
+# ============================================================
+PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
+
+with open(PRICING_PATH, encoding='utf-8') as f:
+    pricing = json.load(f)
+
+BASE_DISTANCE = pricing['base_distance_km']
+BASE_COST_REGULAR = pricing['base_cost_regular']
+BASE_COST_REDUCED = pricing['base_cost_reduced']
+SEGMENT_DISTANCE = pricing['segment_distance_km']
+SEGMENT_COST_REGULAR = pricing['segment_cost_regular']
+SEGMENT_COST_REDUCED = pricing['segment_cost_reduced']
+MAX_COST_REGULAR = pricing['max_cost_regular']
+MAX_COST_REDUCED = pricing['max_cost_reduced']
+
+print(f"  Loaded pricing from {PRICING_PATH}")
 
 
 def calculate_cost(distance_km):
@@ -504,9 +544,6 @@ def find_route_between_groups(from_group_id, to_group_id, mode):
     # Try all platform combinations
     for from_platform in from_group['platforms']:
         for to_platform in to_group['platforms']:
-            # Use the same routing algorithm for both modes (with change penalty
-            # to avoid unnecessary zigzagging). The difference is in how results
-            # are compared between platform combinations.
             result, error = find_shortest_path(from_platform['id'], to_platform['id'])
 
             if result is not None:
@@ -518,8 +555,7 @@ def find_route_between_groups(from_group_id, to_group_id, mode):
                          result['total_distance'] < best_result['total_distance'])):
                         best_result = result
                 else:
-                    # For short mode: just compare real distance (penalties are only
-                    # used internally for routing decisions, not for comparison)
+                    # For short mode: just compare real distance
                     if best_result is None or result['total_distance'] < best_result['total_distance']:
                         best_result = result
             elif best_result is None:
@@ -535,11 +571,66 @@ def find_route_between_groups(from_group_id, to_group_id, mode):
 # HTTP Request Handler
 # ============================================================
 
+# Paths commonly targeted by vulnerability scanners
+BLOCKED_PREFIXES = (
+    '/.', '/_',
+)
+BLOCKED_PATHS = (
+    '/.env', '/.env.old', '/.env.local', '/.env.production', '/.env.development',
+    '/.env.backup', '/.env.bak', '/.env.config', '/.env.staging',
+    '/.git', '/.git/', '/.git/config', '/.git/HEAD',
+    '/.htaccess', '/.htpasswd',
+    '/.vscode', '/.vscode/', '/.vscode/sftp.json',
+    '/wp-admin', '/wp-login.php', '/xmlrpc.php',
+    '/admin', '/phpmyadmin',
+    '/cgi-bin', '/scripts',
+    '/server-status', '/server-info',
+    '/favicon.ico',  # unnecessary 404s
+)
+
+
 class MPKRequestHandler(SimpleHTTPRequestHandler):
     """Custom request handler for MPK Kraków app."""
 
+    # Hide server version from headers
+    server_version = 'MPK/1.0'
+    sys_version = ''
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
+
+    def send_response(self, code, message=None):
+        """Override to suppress default Server header."""
+        super().send_response(code, message)
+        # Remove the default Server header added by super()
+        if 'Server' in self.headers:
+            del self.headers['Server']
+
+    def do_HEAD(self):
+        """Handle HEAD requests same as GET."""
+        self.do_GET()
+
+    def do_POST(self):
+        """Reject POST - not needed for this read-only app."""
+        self.send_error_page(405)
+
+    def do_PUT(self):
+        """Reject PUT."""
+        self.send_error_page(405)
+
+    def do_DELETE(self):
+        """Reject DELETE."""
+        self.send_error_page(405)
+
+    def do_PATCH(self):
+        """Reject PATCH."""
+        self.send_error_page(405)
+
+    def do_OPTIONS(self):
+        """Handle OPTIONS for CORS preflight."""
+        self.send_response(204)
+        self.send_header('Allow', 'GET, HEAD, OPTIONS')
+        self.end_headers()
 
     def do_GET(self):
         """Handle GET requests."""
@@ -551,16 +642,38 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.handle_api(path, query)
             return
 
+        # Block known attack paths and hidden files/dirs
+        if path in BLOCKED_PATHS or any(path.startswith(p) for p in BLOCKED_PREFIXES):
+            self.send_error_page(404)
+            return
+
         if path == '/' or path == '':
             path = '/index.html'
 
-        super().do_GET()
+        # Prevent directory listing - only serve known files
+        # Resolve the file path and ensure it stays within PUBLIC_DIR
+        file_path = os.path.normpath(os.path.join(PUBLIC_DIR, path.lstrip('/')))
+        if not file_path.startswith(PUBLIC_DIR):
+            self.send_error_page(403)
+            return
+
+        if not os.path.isfile(file_path):
+            self.send_error_page(404)
+            return
+
+        # Add cache headers for static assets (CSS, JS change rarely)
+        if path.endswith(('.css', '.js')):
+            self.send_response(200)
+            self.send_header('Cache-Control', 'public, max-age=3600')
+            # Let SimpleHTTPRequestHandler handle the rest
+            super().do_GET()
+        else:
+            super().do_GET()
 
     def handle_api(self, path, query):
         """Handle API requests."""
         try:
             if path == '/api/stops':
-                # Return grouped stops (one per name)
                 result = []
                 for g in stops_grouped.values():
                     result.append({
@@ -578,12 +691,16 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 if len(q) < 2:
                     self.serve_json([])
                     return
+                # Use precomputed search index for fast lookups
+                # Check if query matches any indexed prefix (first 5 chars)
                 results = []
                 seen = set()
-                for name_lower, group_ids in stops_by_name_grouped.items():
-                    if q in name_lower:
-                        for group_id in group_ids:
-                            if group_id not in seen:
+                # Try indexed lookup first (fast path)
+                for prefix_len in range(min(5, len(q)), 1, -1):
+                    prefix = q[:prefix_len]
+                    if prefix in _stop_search_index:
+                        for name_lower, group_id in _stop_search_index[prefix]:
+                            if group_id not in seen and q in name_lower:
                                 seen.add(group_id)
                                 g = stops_grouped[group_id]
                                 results.append({
@@ -594,26 +711,31 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                                     'modes': g['modes'],
                                     'platform_count': len(g['platforms']),
                                 })
-                # Also search by code
-                for s in stops_list:
-                    code = s.get('code', '').lower()
-                    if q in code:
-                        group_id = stop_to_group.get(s['id'])
-                        if group_id and group_id not in seen:
-                            seen.add(group_id)
-                            g = stops_grouped[group_id]
-                            results.append({
-                                'id': g['id'],
-                                'name': g['name'],
-                                'lat': round(g['lat'], 6),
-                                'lon': round(g['lon'], 6),
-                                'modes': g['modes'],
-                                'platform_count': len(g['platforms']),
-                            })
+                        if results:
+                            break
+                # Fallback to full scan if index didn't find enough
+                if not results:
+                    for name_lower, group_ids in stops_by_name_grouped.items():
+                        if q in name_lower:
+                            for group_id in group_ids:
+                                if group_id not in seen:
+                                    seen.add(group_id)
+                                    g = stops_grouped[group_id]
+                                    results.append({
+                                        'id': g['id'],
+                                        'name': g['name'],
+                                        'lat': round(g['lat'], 6),
+                                        'lon': round(g['lon'], 6),
+                                        'modes': g['modes'],
+                                        'platform_count': len(g['platforms']),
+                                    })
                 self.serve_json(results[:50])
 
             elif path == '/api/stop-platforms':
                 group_id = query.get('id', [''])[0]
+                if not group_id or not group_id.startswith('group_'):
+                    self.serve_json({'error': 'Invalid stop group ID'})
+                    return
                 group = stops_grouped.get(group_id)
                 if group:
                     self.serve_json({
@@ -636,6 +758,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                     self.serve_json({'error': 'Missing from or to parameter'})
                     return
 
+                if not from_stop.startswith('group_') or not to_stop.startswith('group_'):
+                    self.serve_json({'error': 'Invalid stop ID format'})
+                    return
+
+                if mode not in ('short', 'convenient'):
+                    mode = 'short'
+
                 result, error = find_route_between_groups(from_stop, to_stop, mode)
                 if result is None:
                     self.serve_json({'error': error})
@@ -643,32 +772,39 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                     self.serve_json(result)
 
             elif path == '/api/cost':
-                distance = float(query.get('distance', ['0'])[0])
+                try:
+                    distance = float(query.get('distance', ['0'])[0])
+                except (ValueError, TypeError):
+                    self.serve_json({'error': 'Invalid distance parameter'})
+                    return
+                if distance < 0:
+                    distance = 0.0
                 cost_reg, cost_red = calculate_cost(distance)
                 self.serve_json({
                     'distance': distance,
                     'cost_regular': cost_reg,
                     'cost_reduced': cost_red,
-                    'base_distance': BASE_DISTANCE,
-                    'base_cost_regular': BASE_COST_REGULAR,
-                    'base_cost_reduced': BASE_COST_REDUCED,
-                    'segment_distance': SEGMENT_DISTANCE,
-                    'segment_cost_regular': SEGMENT_COST_REGULAR,
-                    'segment_cost_reduced': SEGMENT_COST_REDUCED,
-                    'max_cost_regular': MAX_COST_REGULAR,
-                    'max_cost_reduced': MAX_COST_REDUCED,
                 })
 
             elif path == '/api/shapes':
                 route_id = query.get('route_id', [''])[0]
+                if not route_id:
+                    self.serve_json({'error': 'Missing route_id parameter'})
+                    return
                 shape = route_shapes.get(route_id, [])
                 self.serve_json({'route_id': route_id, 'shape': shape})
+
+            elif path == '/api/health':
+                self.serve_json({'status': 'ok'})
 
             elif path == '/api/routes':
                 self.serve_json(routes_list)
 
             elif path == '/api/stop':
                 stop_id = query.get('id', [''])[0]
+                if not stop_id:
+                    self.serve_json({'error': 'Missing id parameter'})
+                    return
                 stop = stops_by_id.get(stop_id)
                 if stop:
                     self.serve_json(stop)
@@ -679,20 +815,57 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 self.serve_json({'error': 'Unknown API endpoint'})
 
         except Exception as e:
-            self.serve_json({'error': str(e)})
+            self.serve_json({'error': 'Internal server error'})
 
     def serve_json(self, data):
-        """Serve JSON response."""
+        """Serve JSON response with gzip compression when supported."""
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
+        # Compress if client supports gzip and response is large enough
+        accept = self.headers.get('Accept-Encoding', '')
+        if 'gzip' in accept and len(body) > 500:
+            buf = io.BytesIO()
+            with gzip.GzipFile(fileobj=buf, mode='wb') as f:
+                f.write(body)
+            compressed = buf.getvalue()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(compressed)))
+            self.send_header('Content-Encoding', 'gzip')
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(compressed)
+        else:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(body)
+
+    def send_error_page(self, code):
+        """Send a minimal error response without revealing server details."""
+        self.send_response(code)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.send_header('Content-Length', '0')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Cache-Control', 'no-store')
         self.end_headers()
-        self.wfile.write(body)
+
+    def end_headers(self):
+        """Add security headers to all responses."""
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
+        super().end_headers()
 
     def log_message(self, format, *args):
-        """Suppress default logging."""
-        pass
+        """Log only errors and API requests, suppress static file requests."""
+        msg = format % args
+        # Log errors and API requests, skip static file requests
+        if '/api/' in msg or 'Error' in msg or 'error' in msg:
+            import sys
+            print(f"  {msg}", file=sys.stderr)
 
 
 def main():

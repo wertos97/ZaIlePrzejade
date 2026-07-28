@@ -1,0 +1,10 @@
+{
+    "base_distance_km": 3.5,
+    "base_cost_regular": 4.00,
+    "base_cost_reduced": 2.00,
+    "segment_distance_km": 0.5,
+    "segment_cost_regular": 0.50,
+    "segment_cost_reduced": 0.25,
+    "max_cost_regular": 9.00,
+    "max_cost_reduced": 4.50
+}

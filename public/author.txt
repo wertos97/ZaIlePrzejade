@@ -1,4 +1,4 @@
-Aplikacja "Kalkulator Cen Biletów MPK Kraków 2027"
+Aplikacja "Za Ile Przejadę?" - Kalkulator cen biletów MPK Kraków 2027
 
 Aplikacja została stworzona w celu obliczania kosztów podróży komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości, który ma wejść w życie w 2027 roku.
 

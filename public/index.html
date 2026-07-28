@@ -3,7 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kalkulator Cen Biletów MPK Kraków 2027</title>
+    <title>Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027</title>
+    <meta name="description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">
+    <meta name="theme-color" content="#1a5276">
+    <!-- Open Graph -->
+    <meta property="og:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">
+    <meta property="og:description" content="Oblicz ile zapłacisz za bilet w nowym systemie opartym na odległości.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://zaileprzeja.de/">
+    <meta property="og:image" content="https://zaileprzeja.de/og-image.svg">
+    <meta property="og:locale" content="pl_PL">
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">
+    <meta name="twitter:description" content="Oblicz ile zapłacisz za bilet w nowym systemie opartym na odległości.">
+    <meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <!-- Custom CSS -->
@@ -13,13 +29,13 @@
     <!-- Header -->
     <header class="header">
         <div class="header-left">
-            <h1>Kalkulator Cen Biletów MPK Kraków 2027</h1>
-            <p class="subtitle">Oblicz ile zapłacisz za bilet w 2027 roku</p>
+            <h1>Za Ile Przejadę?</h1>
+            <p class="subtitle">Kalkulator cen biletów MPK Kraków 2027</p>
         </div>
         <div class="header-right">
-            <button class="btn-header" id="btn-info">ℹ️ Informacja</button>
-            <button class="btn-header" id="btn-warning">⚠️ Uwaga</button>
-            <button class="btn-header" id="btn-author">✍️ Od Autora</button>
+            <button class="btn-header" id="btn-info" aria-label="Informacja o aplikacji">ℹ️ Informacja</button>
+            <button class="btn-header" id="btn-warning" aria-label="Ważna uwaga o aplikacji">⚠️ Uwaga</button>
+            <button class="btn-header" id="btn-author" aria-label="Informacje o autorze">✍️ Od Autora</button>
         </div>
     </header>
 
@@ -36,15 +52,15 @@
             <div class="search-container">
                 <div class="search-box">
                     <label for="from-search">Przystanek początkowy</label>
-                    <input type="text" id="from-search" placeholder="Wpisz nazwę przystanku..." autocomplete="off">
+                    <input type="text" id="from-search" placeholder="Wpisz nazwę przystanku..." autocomplete="off" aria-label="Przystanek początkowy">
                     <div class="search-results" id="from-results"></div>
                 </div>
                 <div class="swap-container">
-                    <button class="btn-swap" id="swap-btn" title="Zamień przystanki">⇅</button>
+                    <button class="btn-swap" id="swap-btn" title="Zamień przystanki" aria-label="Zamień przystanek początkowy z końcowym">⇅</button>
                 </div>
                 <div class="search-box">
                     <label for="to-search">Przystanek końcowy</label>
-                    <input type="text" id="to-search" placeholder="Wpisz nazwę przystanku..." autocomplete="off">
+                    <input type="text" id="to-search" placeholder="Wpisz nazwę przystanku..." autocomplete="off" aria-label="Przystanek końcowy">
                     <div class="search-results" id="to-results"></div>
                 </div>
             </div>
@@ -66,7 +82,7 @@
                     </button>
                 </div>
             </div>
-            <button class="btn btn-clear" id="clear-btn">🗑️ Wyczyść trasę</button>
+            <button class="btn btn-clear" id="clear-btn" aria-label="Wyczyść wybraną trasę">🗑️ Wyczyść trasę</button>
             <div class="loading-indicator" id="loading-indicator" style="display: none;">
                 <div class="loading-spinner"></div>
                 <span class="loading-text">Szukam trasy...</span>
@@ -186,6 +202,7 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <!-- App JS -->
+    <script src="js/route.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

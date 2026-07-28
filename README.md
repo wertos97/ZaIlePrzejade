@@ -1,6 +1,6 @@
 # Za Ile Przejadę? 🚌🚊
 
-Kalkulator kosztu podróży komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.
+Kalkulator cen biletów MPK Kraków 2027 - oblicz koszt podróży komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.
 
 ## Funkcjonalności
 
