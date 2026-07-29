@@ -1,2 +1,0 @@
-# Core dependency for OG image generation
-Pillow>=10.0.0
