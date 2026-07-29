@@ -694,7 +694,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         is_crawler = any(bot in user_agent for bot in [
             'facebookexternalhit', 'twitterbot', 'linkedinbot', 'slackbot',
             'telegrambot', 'discordbot', 'whatsapp', 'skypeuripreview',
-            'applebot', 'bingbot', 'googlebot'
+            'applebot', 'bingbot', 'googlebot', 'yandexbot', 'duckduckbot',
+            'facebot', 'meta-externalagent'
         ])
         
         # For crawlers with route params, serve modified HTML
@@ -764,6 +765,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 '<meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">',
                 f'<meta name="twitter:image" content="{og_image_url}">'
             )
+            
+            # Add og:site_name if not present
+            if 'og:site_name' not in html:
+                html = html.replace(
+                    '<meta property="og:locale"',
+                    f'<meta property="og:site_name" content="Za Ile Przejadę?">\n    <meta property="og:locale"'
+                )
             
             # Send modified HTML
             body = html.encode('utf-8')
