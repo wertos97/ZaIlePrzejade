@@ -1129,12 +1129,12 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         return img
 
     def generate_og_image_svg(self, from_stop_id, to_stop_id, mode):
-        """Generate OG image as SVG — no Pillow needed, no font issues."""
+        """Generate OG image as SVG — designed for social media."""
         # Get stop names
         from_name = "Przystanek początkowy"
         to_name = "Przystanek końcowy"
         cost_text = ""
-        
+
         if from_stop_id and to_stop_id:
             from_group = stops_grouped.get(from_stop_id)
             to_group = stops_grouped.get(to_stop_id)
@@ -1144,54 +1144,43 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 to_name = to_group['name']
             result, _ = find_route_between_groups(from_stop_id, to_stop_id, mode)
             if result:
-                cost_text = f"{result['cost_regular']:.2f} zł"
-        
+                cost_text = f"{result['cost_regular']:.2f} / {result['cost_reduced']:.2f} zł"
+
         # Escape XML special characters
         def esc(s):
             return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
-        
+
         from_name_esc = esc(from_name)
         to_name_esc = esc(to_name)
         cost_text_esc = esc(cost_text)
-        
-        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0d2137"/>
-      <stop offset="100%" stop-color="#1a3a52"/>
-    </linearGradient>
-  </defs>
-  <rect width="1200" height="630" fill="url(#bg)"/>
-  
-  <!-- SKĄD -->
-  <text x="60" y="60" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="bold" fill="#5dade2">SKĄD</text>
-  <text x="60" y="110" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="bold" fill="#ecf0f1">{from_name_esc}</text>
-  
-  <!-- DOKĄD -->
-  <text x="60" y="200" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="bold" fill="#5dade2">DOKĄD</text>
-  <text x="60" y="250" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="bold" fill="#ecf0f1">{to_name_esc}</text>
-  
-  <!-- Separator -->
-  <line x1="60" y1="290" x2="200" y2="290" stroke="#5dade2" stroke-width="3"/>
-  
-  <!-- CENA BILETU -->
-  <text x="60" y="340" font-family="Arial, Helvetica, sans-serif" font-size="26" fill="#5dade2">CENA BILETU</text>
-  <text x="60" y="420" font-family="Arial, Helvetica, sans-serif" font-size="100" font-weight="bold" fill="#ffffff">{cost_text_esc}</text>
-  
-  <!-- Bus icon -->
-  <g transform="translate(950, 440)">
-    <rect x="0" y="0" width="140" height="74" rx="12" fill="#2874a6"/>
-    <rect x="14" y="14" width="22" height="22" rx="3" fill="#aed6f1"/>
-    <rect x="59" y="14" width="22" height="22" rx="3" fill="#aed6f1"/>
-    <rect x="104" y="14" width="22" height="22" rx="3" fill="#aed6f1"/>
-    <circle cx="30" cy="68" r="12" fill="#2c3e50"/>
-    <circle cx="110" cy="68" r="12" fill="#2c3e50"/>
-  </g>
-  
-  <!-- Website -->
-  <text x="1020" y="560" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="bold" fill="#7f8c8d" text-anchor="middle">zaileprzeja.de</text>
-</svg>'''
-        
+
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">\n'
+            '  <defs>\n'
+            '    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">\n'
+            '      <stop offset="0%" stop-color="#0d2137"/>\n'
+            '      <stop offset="100%" stop-color="#1a3a52"/>\n'
+            '    </linearGradient>\n'
+            '  </defs>\n'
+            '  <rect width="1200" height="630" fill="url(#bg)"/>\n'
+            '\n'
+            '  <text x="80" y="77" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#5dade2">SKĄD</text>\n'
+            f'  <text x="80" y="145" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1">{from_name_esc}</text>\n'
+            '  <text x="80" y="230" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#5dade2">DOKĄD</text>\n'
+            f'  <text x="80" y="298" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1">{to_name_esc}</text>\n'
+            '  <line x1="80" y1="346" x2="240" y2="346" stroke="#5dade2" stroke-width="4"/>\n'
+            '  <text x="80" y="431" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="normal" fill="#5dade2">CENA BILETU</text>\n'
+            f'  <text x="80" y="548" font-family="Arial, Helvetica, sans-serif" font-size="120" font-weight="bold" fill="#ffffff">{cost_text_esc}</text>\n'
+            '  <rect x="920" y="420" width="180" height="96" rx="16" fill="#2874a6"/>\n'
+            '  <rect x="938" y="438" width="32" height="32" rx="4" fill="#aed6f1"/>\n'
+            '  <rect x="994" y="438" width="32" height="32" rx="4" fill="#aed6f1"/>\n'
+            '  <rect x="1050" y="438" width="32" height="32" rx="4" fill="#aed6f1"/>\n'
+            '  <circle cx="960" cy="518" r="16" fill="#241f31"/>\n'
+            '  <circle cx="1060" cy="518" r="16" fill="#241f31"/>\n'
+            '  <text x="1010" y="577" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#7f8c8d" text-anchor="middle">zaileprzeja.de</text>\n'
+            '</svg>'
+        )
+
         return svg
 
     def log_message(self, format, *args):
