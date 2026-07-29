@@ -18,6 +18,24 @@
     <meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">
     <meta name="twitter:description" content="Oblicz ile zapłacisz za bilet w nowym systemie opartym na odległości.">
     <meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">
+    <!-- Dynamic OG Image Update -->
+    <script>
+        (function() {
+            var params = new URLSearchParams(window.location.search);
+            var from = params.get('from');
+            var to = params.get('to');
+            var mode = params.get('mode') || 'short';
+            
+            if (from && to) {
+                var ogImageUrl = 'https://zaileprzeja.de/api/og-image?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&mode=' + encodeURIComponent(mode);
+                document.querySelector('meta[property="og:image"]').setAttribute('content', ogImageUrl);
+                document.querySelector('meta[name="twitter:image"]').setAttribute('content', ogImageUrl);
+                
+                // Update title with route info
+                document.title = 'Za Ile Przejadę? - Trasa';
+            }
+        })();
+    </script>
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <!-- Leaflet CSS -->

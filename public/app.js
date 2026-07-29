@@ -419,11 +419,10 @@ function handleSearch(input, resultsId, field) {
                     const item = document.createElement('div');
                     item.className = 'search-item';
                     const modeLabels = group.modes.map(m => getModeLabel(m).replace(/[^a-zA-Ząęćłńóśźż]/g, '')).join(', ');
-                    const platformInfo = group.platform_count > 1 ? ` · ${group.platform_count} perony` : '';
                     item.innerHTML = `
                         <div class="name">${escapeHtml(group.name)}</div>
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span class="code">${modeLabels}${platformInfo}</span>
+                            <span class="code">${modeLabels}</span>
                             <span class="mode" style="background: ${STOP_COLOR}; color: white;">${group.modes.join('/').toUpperCase()}</span>
                         </div>
                     `;
