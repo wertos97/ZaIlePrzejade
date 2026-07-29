@@ -703,7 +703,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         to_stop = query.get('to', [''])[0]
         mode = query.get('mode', ['short'])[0]
         
-        if is_crawler and from_stop and to_stop and path == '/index.html':
+        if is_crawler and from_stop and to_stop and path in ('/', '', '/index.html'):
             self.serve_modified_html(from_stop, to_stop, mode)
             return
 
