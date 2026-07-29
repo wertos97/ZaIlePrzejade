@@ -8,17 +8,22 @@
     <meta name="theme-color" content="#1a5276">
     <!-- Open Graph -->
     <meta property="og:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">
-    <meta property="og:description" content="Oblicz ile zapłacisz za bilet w nowym systemie opartym na odległości.">
+    <meta property="og:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://zaileprzeja.de/">
     <meta property="og:image" content="https://zaileprzeja.de/og-image.svg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
     <meta property="og:locale" content="pl_PL">
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">
-    <meta name="twitter:description" content="Oblicz ile zapłacisz za bilet w nowym systemie opartym na odległości.">
+    <meta name="twitter:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">
     <meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">
     <!-- Dynamic OG Image Update -->
+    <!-- NOTE: Social media crawlers (Facebook, Twitter) don't execute JavaScript, -->
+    <!-- so they will always see the static OG tags above. To show dynamic OG images -->
+    <!-- for route links, you would need Server-Side Rendering (SSR). -->
     <script>
         (function() {
             var params = new URLSearchParams(window.location.search);
@@ -30,6 +35,9 @@
                 var ogImageUrl = 'https://zaileprzeja.de/api/og-image?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&mode=' + encodeURIComponent(mode);
                 document.querySelector('meta[property="og:image"]').setAttribute('content', ogImageUrl);
                 document.querySelector('meta[name="twitter:image"]').setAttribute('content', ogImageUrl);
+                
+                // Update URL meta tag for client-side sharing
+                document.querySelector('meta[property="og:url"]').setAttribute('content', window.location.href);
                 
                 // Update title with route info
                 document.title = 'Za Ile Przejadę? - Trasa';

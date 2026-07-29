@@ -689,8 +689,94 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_error_page(404)
             return
 
+        # Check if this is a crawler (Facebook, Twitter, etc.)
+        user_agent = self.headers.get('User-Agent', '').lower()
+        is_crawler = any(bot in user_agent for bot in [
+            'facebookexternalhit', 'twitterbot', 'linkedinbot', 'slackbot',
+            'telegrambot', 'discordbot', 'whatsapp', 'skypeuripreview',
+            'applebot', 'bingbot', 'googlebot'
+        ])
+        
+        # For crawlers with route params, serve modified HTML
+        from_stop = query.get('from', [''])[0]
+        to_stop = query.get('to', [''])[0]
+        mode = query.get('mode', ['short'])[0]
+        
+        if is_crawler and from_stop and to_stop and path == '/index.html':
+            self.serve_modified_html(from_stop, to_stop, mode)
+            return
+
         # Serve the file using SimpleHTTPRequestHandler
         super().do_GET()
+    
+    def serve_modified_html(self, from_stop, to_stop, mode):
+        """Serve HTML with modified OG tags for crawlers."""
+        try:
+            # Read the original HTML
+            file_path = os.path.join(PUBLIC_DIR, 'index.html')
+            with open(file_path, 'r', encoding='utf-8') as f:
+                html = f.read()
+            
+            # Get stop names
+            from_name = "Przystanek początkowy"
+            to_name = "Przystanek końcowy"
+            
+            from_group = stops_grouped.get(from_stop)
+            to_group = stops_grouped.get(to_stop)
+            
+            if from_group:
+                from_name = from_group['name']
+            if to_group:
+                to_name = to_group['name']
+            
+            # Generate dynamic OG image URL
+            og_image_url = f"https://zaileprzeja.de/api/og-image?from={from_stop}&to={to_stop}&mode={mode}"
+            current_url = f"https://zaileprzeja.de/?from={from_stop}&to={to_stop}&mode={mode}"
+            title = f"Za Ile Przejadę? {from_name} → {to_name}"
+            description = f"Oblicz koszt przejazdu z {from_name} do {to_name} w nowym systemie biletów MPK Kraków."
+            
+            # Replace meta tags
+            html = html.replace(
+                '<meta property="og:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">',
+                f'<meta property="og:title" content="{title}">'
+            )
+            html = html.replace(
+                '<meta property="og:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">',
+                f'<meta property="og:description" content="{description}">'
+            )
+            html = html.replace(
+                '<meta property="og:url" content="https://zaileprzeja.de/">',
+                f'<meta property="og:url" content="{current_url}">'
+            )
+            html = html.replace(
+                '<meta property="og:image" content="https://zaileprzeja.de/og-image.svg">',
+                f'<meta property="og:image" content="{og_image_url}">'
+            )
+            html = html.replace(
+                '<meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">',
+                f'<meta name="twitter:title" content="{title}">'
+            )
+            html = html.replace(
+                '<meta name="twitter:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">',
+                f'<meta name="twitter:description" content="{description}">'
+            )
+            html = html.replace(
+                '<meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">',
+                f'<meta name="twitter:image" content="{og_image_url}">'
+            )
+            
+            # Send modified HTML
+            body = html.encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self.wfile.write(body)
+            
+        except Exception as e:
+            # Fallback to normal serving
+            super().do_GET()
 
     def handle_api(self, path, query):
         """Handle API requests."""
