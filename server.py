@@ -627,15 +627,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     """Custom request handler for MPK Kraków app."""
 
     # Hide server version from headers
-    server_version = 'MPK/1.0'
+    server_version = ''
     sys_version = ''
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
-
-    def send_response(self, code, message=None):
-        """Override to suppress default Server header."""
-        super().send_response(code, message)
 
     def do_HEAD(self):
         """Handle HEAD requests same as GET."""
@@ -692,14 +688,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_error_page(404)
             return
 
-        # Add cache headers for static assets (CSS, JS change rarely)
-        if path.endswith(('.css', '.js')):
-            self.send_response(200)
-            self.send_header('Cache-Control', 'public, max-age=3600')
-            # Let SimpleHTTPRequestHandler handle the rest
-            super().do_GET()
-        else:
-            super().do_GET()
+        # Serve the file using SimpleHTTPRequestHandler
+        super().do_GET()
 
     def handle_api(self, path, query):
         """Handle API requests."""
@@ -869,10 +859,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def end_headers(self):
-        """Add security headers to all responses."""
-        self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('X-Frame-Options', 'DENY')
-        self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
+        """Suppress default end_headers behavior."""
         super().end_headers()
 
     def log_message(self, format, *args):
