@@ -934,18 +934,16 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 to_stop = query.get('to', [''])[0]
                 mode = query.get('mode', ['short'])[0]
                 
-                # Generate OG image
-                img = self.generate_og_image(from_stop, to_stop, mode)
-                buf = io.BytesIO()
-                img.save(buf, format='PNG', optimize=True)
-                buf.seek(0)
+                # Generate OG image as SVG (no Pillow needed, no font issues)
+                svg = self.generate_og_image_svg(from_stop, to_stop, mode)
+                body = svg.encode('utf-8')
                 
                 self.send_response(200)
-                self.send_header('Content-Type', 'image/png')
-                self.send_header('Content-Length', str(len(buf.getvalue())))
+                self.send_header('Content-Type', 'image/svg+xml')
+                self.send_header('Content-Length', str(len(body)))
                 self.send_header('Cache-Control', 'public, max-age=3600')
                 self.end_headers()
-                self.wfile.write(buf.getvalue())
+                self.wfile.write(body)
 
             else:
                 self.serve_json({'error': 'Unknown API endpoint'})
@@ -1014,9 +1012,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         
         # Load fonts - use bundled LiberationSans for proper Polish character support
         # Fonts are in the fonts/ directory next to server.py
-        fonts_dir = os.path.join(BASE_DIR, 'fonts')
-        font_bold = os.path.join(fonts_dir, 'LiberationSans-Bold.ttf')
-        font_regular = os.path.join(fonts_dir, 'LiberationSans-Regular.ttf')
+        font_bold = os.path.join(BASE_DIR, 'fonts', 'LiberationSans-Bold.ttf')
+        font_regular = os.path.join(BASE_DIR, 'fonts', 'LiberationSans-Regular.ttf')
         
         try:
             font_label = ImageFont.truetype(font_bold, 26)
@@ -1130,6 +1127,72 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         draw.text((logo_x + (logo_w - text_w) // 2, logo_y + logo_h + 12), "zaileprzeja.de", fill='#7f8c8d', font=font_website)
         
         return img
+
+    def generate_og_image_svg(self, from_stop_id, to_stop_id, mode):
+        """Generate OG image as SVG — no Pillow needed, no font issues."""
+        # Get stop names
+        from_name = "Przystanek początkowy"
+        to_name = "Przystanek końcowy"
+        cost_text = ""
+        
+        if from_stop_id and to_stop_id:
+            from_group = stops_grouped.get(from_stop_id)
+            to_group = stops_grouped.get(to_stop_id)
+            if from_group:
+                from_name = from_group['name']
+            if to_group:
+                to_name = to_group['name']
+            result, _ = find_route_between_groups(from_stop_id, to_stop_id, mode)
+            if result:
+                cost_text = f"{result['cost_regular']:.2f} zł"
+        
+        # Escape XML special characters
+        def esc(s):
+            return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+        
+        from_name_esc = esc(from_name)
+        to_name_esc = esc(to_name)
+        cost_text_esc = esc(cost_text)
+        
+        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0d2137"/>
+      <stop offset="100%" stop-color="#1a3a52"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  
+  <!-- SKĄD -->
+  <text x="60" y="60" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="bold" fill="#5dade2">SKĄD</text>
+  <text x="60" y="110" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="bold" fill="#ecf0f1">{from_name_esc}</text>
+  
+  <!-- DOKĄD -->
+  <text x="60" y="200" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="bold" fill="#5dade2">DOKĄD</text>
+  <text x="60" y="250" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="bold" fill="#ecf0f1">{to_name_esc}</text>
+  
+  <!-- Separator -->
+  <line x1="60" y1="290" x2="200" y2="290" stroke="#5dade2" stroke-width="3"/>
+  
+  <!-- CENA BILETU -->
+  <text x="60" y="340" font-family="Arial, Helvetica, sans-serif" font-size="26" fill="#5dade2">CENA BILETU</text>
+  <text x="60" y="420" font-family="Arial, Helvetica, sans-serif" font-size="100" font-weight="bold" fill="#ffffff">{cost_text_esc}</text>
+  
+  <!-- Bus icon -->
+  <g transform="translate(950, 440)">
+    <rect x="0" y="0" width="140" height="74" rx="12" fill="#2874a6"/>
+    <rect x="14" y="14" width="22" height="22" rx="3" fill="#aed6f1"/>
+    <rect x="59" y="14" width="22" height="22" rx="3" fill="#aed6f1"/>
+    <rect x="104" y="14" width="22" height="22" rx="3" fill="#aed6f1"/>
+    <circle cx="30" cy="68" r="12" fill="#2c3e50"/>
+    <circle cx="110" cy="68" r="12" fill="#2c3e50"/>
+  </g>
+  
+  <!-- Website -->
+  <text x="1020" y="560" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="bold" fill="#7f8c8d" text-anchor="middle">zaileprzeja.de</text>
+</svg>'''
+        
+        return svg
 
     def log_message(self, format, *args):
         """Log only errors and API requests, suppress static file requests."""
