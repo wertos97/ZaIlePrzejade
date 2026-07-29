@@ -1012,16 +1012,38 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             b = int(55 + alpha * 25)
             draw.line([(0, y), (width, y)], fill=(r, g, b))
         
-        # Load fonts
+        # Load fonts - use bundled LiberationSans for proper Polish character support
+        # Fonts are in the fonts/ directory next to server.py
+        fonts_dir = os.path.join(BASE_DIR, 'fonts')
+        font_bold = os.path.join(fonts_dir, 'LiberationSans-Bold.ttf')
+        font_regular = os.path.join(fonts_dir, 'LiberationSans-Regular.ttf')
+        
         try:
-            font_label = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 26)
-            font_stop = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 48)
-            font_stop_sm = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 48)
-            font_cost_label = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 26)
-            font_cost = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 100)
-            font_website = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 22)
+            font_label = ImageFont.truetype(font_bold, 26)
+            font_stop = ImageFont.truetype(font_bold, 48)
+            font_stop_sm = ImageFont.truetype(font_bold, 48)
+            font_cost_label = ImageFont.truetype(font_regular, 26)
+            font_cost = ImageFont.truetype(font_bold, 100)
+            font_website = ImageFont.truetype(font_bold, 22)
         except:
-            font_label = font_stop = font_stop_sm = font_cost_label = font_cost = font_website = ImageFont.load_default()
+            # Fallback: try system fonts, then default
+            try:
+                font_label = ImageFont.truetype('/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf', 26)
+                font_stop = ImageFont.truetype('/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf', 48)
+                font_stop_sm = ImageFont.truetype('/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf', 48)
+                font_cost_label = ImageFont.truetype('/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf', 26)
+                font_cost = ImageFont.truetype('/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf', 100)
+                font_website = ImageFont.truetype('/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf', 22)
+            except:
+                try:
+                    font_label = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 26)
+                    font_stop = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 48)
+                    font_stop_sm = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 48)
+                    font_cost_label = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 26)
+                    font_cost = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 100)
+                    font_website = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 22)
+                except:
+                    font_label = font_stop = font_stop_sm = font_cost_label = font_cost = font_website = ImageFont.load_default()
         
         # Get stop names
         from_name = "Przystanek początkowy"
