@@ -4,6 +4,7 @@ HTTP Server for MPK Kraków Ticket Cost Calculator.
 Serves static files and provides API endpoints for route finding and cost calculation.
 """
 
+import functools
 import gzip
 import io
 import json
@@ -11,8 +12,14 @@ import math
 import os
 import heapq
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 from collections import defaultdict
+
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """HTTPServer that handles each request in a new thread."""
+    daemon_threads = True
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROCESSED_DIR = os.path.join(BASE_DIR, 'processed')
@@ -41,17 +48,14 @@ print(f"  Loaded {len(stops_list)} stops, {len(routes_list)} routes")
 # Build data structures
 # ============================================================
 
-# Stop lookup by ID
 stops_by_id = {s['id']: s for s in stops_list}
 
-# Group stops by name - combine different platforms of the same stop
-stops_grouped = {}  # group_id -> {name, platforms: [{id, code, lat, lon, mode}], lat, lon}
-stops_by_name_grouped = defaultdict(list)  # name_lower -> [group_id]
+stops_grouped = {}
+stops_by_name_grouped = defaultdict(list)
 
 for s in stops_list:
     name_lower = s['name'].lower()
     if name_lower not in stops_by_name_grouped:
-        # Create new group
         group_id = f"group_{len(stops_grouped)}"
         stops_grouped[group_id] = {
             'id': group_id,
@@ -63,7 +67,6 @@ for s in stops_list:
         }
         stops_by_name_grouped[name_lower].append(group_id)
     
-    # Add to existing group
     group_id = stops_by_name_grouped[name_lower][0]
     group = stops_grouped[group_id]
     group['platforms'].append({
@@ -74,16 +77,13 @@ for s in stops_list:
         'mode': s['mode'],
     })
     group['modes'].add(s['mode'])
-    # Update center position (average)
     n = len(group['platforms'])
     group['lat'] = (group['lat'] * (n - 1) + s['lat']) / n
     group['lon'] = (group['lon'] * (n - 1) + s['lon']) / n
 
-# Convert modes set to list for JSON
 for g in stops_grouped.values():
     g['modes'] = sorted(list(g['modes']))
 
-# Build lookup: stop_id -> group_id
 stop_to_group = {}
 for group_id, group in stops_grouped.items():
     for p in group['platforms']:
@@ -91,15 +91,12 @@ for group_id, group in stops_grouped.items():
 
 print(f"  Grouped {len(stops_list)} stops into {len(stops_grouped)} groups")
 
-# Routes lookup by ID
 routes_by_id = {r['route_id']: r for r in routes_list}
 
-# Build bidirectional adjacency list
 adjacency = defaultdict(list)
 for stop_id, edges in adjacency_raw.items():
     for edge in edges:
         adjacency[stop_id].append(dict(edge))
-        # Add reverse edge
         to_stop = edge['to']
         reverse_edge = {
             'to': stop_id,
@@ -113,8 +110,6 @@ for stop_id, edges in adjacency_raw.items():
 
 print(f"  Built bidirectional adjacency list with {len(adjacency)} nodes")
 
-# Precompute stop-to-stop route lookup for fast all_routes calculation
-# stop_pair_routes[(from_stop, to_stop)] = [route_id1, route_id2, ...]
 stop_pair_routes = {}
 for stop_id, edges in adjacency_raw.items():
     for edge in edges:
@@ -130,11 +125,8 @@ print(f"  Built stop pair route lookup with {len(stop_pair_routes)} entries")
 # ============================================================
 # Build search index for fast stop name lookups
 # ============================================================
-# inverted_index: prefix -> set of (name_lower, group_id)
-# This avoids iterating all stop names on every search query
-_stop_search_index = {}  # prefix -> [(name_lower, group_id), ...]
+_stop_search_index = {}
 for name_lower, group_ids in stops_by_name_grouped.items():
-    # Index all substrings of length 2+ for fast prefix matching
     for i in range(len(name_lower)):
         for length in range(2, min(6, len(name_lower) - i + 1)):
             prefix = name_lower[i:i+length]
@@ -143,7 +135,6 @@ for name_lower, group_ids in stops_by_name_grouped.items():
             for gid in group_ids:
                 _stop_search_index[prefix].append((name_lower, gid))
 
-# Also index stop codes
 for s in stops_list:
     code = s.get('code', '').lower()
     if code:
@@ -159,7 +150,7 @@ for s in stops_list:
 print(f"  Built search index with {len(_stop_search_index)} prefixes")
 
 # ============================================================
-# Ticket pricing configuration (loaded from pricing.json)
+# Ticket pricing configuration
 # ============================================================
 PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 
@@ -178,81 +169,83 @@ MAX_COST_REDUCED = pricing['max_cost_reduced']
 print(f"  Loaded pricing from {PRICING_PATH}")
 
 
-def calculate_cost(distance_km):
-    """
-    Calculate ticket cost based on distance.
+# ============================================================
+# Warmup: pre-compute routes for popular stop pairs at startup
+# ============================================================
+def _warmup_cache():
+    """Pre-compute routes for the most common stop pairs to warm up caches."""
+    import random
+    group_ids = list(stops_grouped.keys())
+    if len(group_ids) > 100:
+        sample = random.sample(group_ids, 100)
+    else:
+        sample = group_ids
+    
+    count = 0
+    for i, g1 in enumerate(sample):
+        for g2 in sample[i+1:i+5]:
+            find_route_between_groups(g1, g2, 'short')
+            count += 1
+    
+    print(f"  Warmed up {count} route cache entries")
 
-    Pricing:
-    - Up to 3.5km: 4.00 PLN regular, 2.00 PLN reduced
-    - Each additional 500m: +0.50 PLN regular, +0.25 PLN reduced
-    - Maximum: 9.00 PLN regular, 4.50 PLN reduced
-    """
+
+def calculate_cost(distance_km):
+    """Calculate ticket cost based on distance."""
     if distance_km <= 0:
         return 0.0, 0.0
-
     if distance_km <= BASE_DISTANCE:
         return BASE_COST_REGULAR, BASE_COST_REDUCED
-
     additional_distance = distance_km - BASE_DISTANCE
     additional_segments = math.ceil(additional_distance / SEGMENT_DISTANCE)
-
     cost_regular = BASE_COST_REGULAR + additional_segments * SEGMENT_COST_REGULAR
     cost_reduced = BASE_COST_REDUCED + additional_segments * SEGMENT_COST_REDUCED
-
     cost_regular = min(cost_regular, MAX_COST_REGULAR)
     cost_reduced = min(cost_reduced, MAX_COST_REDUCED)
-
     return round(cost_regular, 2), round(cost_reduced, 2)
 
 
 # ============================================================
-# Dijkstra's algorithm for shortest path
+# A* pathfinding
 # ============================================================
 
-# Precompute stop coordinates for A* heuristic
 stop_coords = {}
-for stop_id, edges in adjacency.items():
-    # Get coordinates from stops_by_id
+for stop_id in adjacency:
     stop_info = stops_by_id.get(stop_id, {})
     stop_coords[stop_id] = (stop_info.get('lat', 0), stop_info.get('lon', 0))
 
 
 def haversine_km(lat1, lon1, lat2, lon2):
     """Approximate distance in km between two coordinates."""
-    # Simple flat-earth approximation for Kraków area (good enough for heuristic)
     dlat = (lat1 - lat2) * 111.32
     dlon = (lon1 - lon2) * 111.32 * math.cos((lat1 + lat2) / 2 * math.pi / 180)
     return math.sqrt(dlat * dlat + dlon * dlon)
 
 
+# --- Pathfinding cache (bounded dict, thread-safe via GIL) ---
+_FIND_CACHE_MAX = 10000
+_find_cache = {}
+
 def find_shortest_path(start_id, end_id):
-    """
-    Find the shortest path using A* algorithm with Euclidean heuristic.
-    Minimizes distance, with a small penalty for route changes to avoid
-    unnecessary zigzagging between routes. Still properly tracks route
-    changes and reports them as segments/transfers.
-    """
+    """Find shortest path with cache."""
+    cache_key = (start_id, end_id)
+    cached = _find_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     if start_id not in adjacency:
         return None, "Przystanek początkowy nie został znaleziony w grafie"
     if end_id not in adjacency:
         return None, "Przystanek końcowy nie został znaleziony w grafie"
 
-    # Precompute heuristic for the target
     end_coords = stop_coords.get(end_id, (0, 0))
-
-    # Penalty for changing routes (used only for routing decisions, not for display)
     CHANGE_PENALTY = 0.3
 
-    # Track distance by (stop_id, route_id) state
-    # Priority queue: (estimated_total, penalized_dist, real_dist, stop, route)
-    # estimated_total = penalized_dist + heuristic(stop, end)
     start_coords = stop_coords.get(start_id, (0, 0))
     h_start = haversine_km(start_coords[0], start_coords[1], end_coords[0], end_coords[1])
     pq = [(h_start, 0.0, 0.0, start_id, None)]
-    best = {(start_id, None): (0.0, 0.0)}  # (penalized_dist, real_dist)
+    best = {(start_id, None): (0.0, 0.0)}
     prev = {}
-
-    # Track best found real distance for early pruning
     best_found_real = float('inf')
 
     while pq:
@@ -262,13 +255,10 @@ def find_shortest_path(start_id, end_id):
         best_pen, _ = best.get(state, (float('inf'), 0))
         if pen_dist > best_pen:
             continue
-
-        # Prune: if even the optimistic estimate is worse than best found, skip
         if est_total >= best_found_real:
             continue
 
         if stop == end_id:
-            # Recalculate real distance by summing edge distances along the path
             path_edges = []
             cur = (stop, route)
             while cur in prev:
@@ -277,7 +267,10 @@ def find_shortest_path(start_id, end_id):
                 cur = (prev_stop, prev_route)
             path_edges.reverse()
             real_total = sum(e['distance'] for e in path_edges if e is not None)
-            return reconstruct_path(prev, start_id, end_id, route, real_total), None
+            result = reconstruct_path(prev, start_id, end_id, route, real_total), None
+            if len(_find_cache) < _FIND_CACHE_MAX:
+                _find_cache[cache_key] = result
+            return result
 
         for edge in adjacency.get(stop, []):
             next_stop = edge['to']
@@ -285,14 +278,12 @@ def find_shortest_path(start_id, end_id):
             new_real = real_dist + edge['distance']
             new_pen = pen_dist + edge['distance']
 
-            # Add a small penalty when changing routes (but not for transfer edges)
             if route is not None and next_route != 'transfer' and next_route != route:
                 new_pen += CHANGE_PENALTY
 
             next_state = (next_stop, next_route)
             best_pen, _ = best.get(next_state, (float('inf'), 0))
             if new_pen < best_pen:
-                # A* heuristic: estimated remaining distance
                 coords = stop_coords.get(next_stop, (0, 0))
                 h = haversine_km(coords[0], coords[1], end_coords[0], end_coords[1])
                 estimated = new_pen + h
@@ -300,14 +291,14 @@ def find_shortest_path(start_id, end_id):
                 prev[next_state] = (stop, route, edge)
                 heapq.heappush(pq, (estimated, new_pen, new_real, next_stop, next_route))
 
-    return None, "Nie znaleziono trasy między tymi przystankami"
+    result = None, "Nie znaleziono trasy między tymi przystankami"
+    if len(_find_cache) < _FIND_CACHE_MAX:
+        _find_cache[cache_key] = result
+    return result
 
 
 def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
-    """
-    Reconstruct the path from start to end using the prev dictionary.
-    Returns segments (rides on same route) and transfers between them.
-    """
+    """Reconstruct the path from start to end."""
     path_with_edges = []
     current_state = (end_id, end_route)
     while current_state in prev:
@@ -317,7 +308,6 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
     path_with_edges.append((start_id, None, None))
     path_with_edges.reverse()
 
-    # Build segments and transfers
     segments = []
     transfers = []
     current_segment = None
@@ -325,31 +315,23 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
 
     for i, (stop_id, route_id, edge) in enumerate(path_with_edges):
         if i == 0:
-            # Start stop - initialize first segment
             continue
 
         prev_stop = path_with_edges[i - 1][0]
         prev_route = path_with_edges[i - 1][1]
 
         if route_id == 'transfer':
-            # A transfer edge connects two different platforms of the same physical stop
-            # This is NOT a user-visible transfer - just moving between platforms
             if current_segment is not None:
-                # Save current segment and start a pause for the transfer
                 segments.append(current_segment)
                 current_segment = None
-            # Record the transfer between routes (but don't show as a separate step)
             transfer_from = prev_route if prev_route != 'transfer' else path_with_edges[i - 2][1] if i >= 2 else None
-            # Look ahead to find what route we're transferring to
             transfer_to = None
             for j in range(i + 1, len(path_with_edges)):
                 if path_with_edges[j][1] != 'transfer':
                     transfer_to = path_with_edges[j][1]
                     break
             if transfer_from and transfer_to and transfer_from != transfer_to:
-                # Avoid duplicate transfers (consecutive transfer edges)
                 if not transfers or transfers[-1]['from_route'] != transfer_from or transfers[-1]['to_route'] != transfer_to:
-                    # Get stop name from group
                     group_id = stop_to_group.get(stop_id, '')
                     group = stops_grouped.get(group_id, {})
                     stop_name = group.get('name', stops_by_id.get(stop_id, {}).get('name', ''))
@@ -371,12 +353,8 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
                 }
 
             if current_segment['route_id'] != route_id:
-                # Route changed - save current segment and start new one.
-                # Record the transfer between routes.
                 if prev_route and prev_route != 'transfer' and prev_route != route_id:
-                    # Avoid duplicate transfers
                     if not transfers or transfers[-1]['from_route'] != prev_route or transfers[-1]['to_route'] != route_id:
-                        # Get stop name from group
                         group_id = stop_to_group.get(prev_stop, '')
                         group = stops_grouped.get(group_id, {})
                         stop_name = group.get('name', stops_by_id.get(prev_stop, {}).get('name', ''))
@@ -397,24 +375,20 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
                 }
 
             current_segment['end_stop'] = stop_id
-            # Only add stops that are actual route stops (not transfers)
             current_segment['stops'].append(stop_id)
 
     if current_segment is not None:
         segments.append(current_segment)
 
-    # Merge consecutive segments that are on the same route
-    # (separated only by platform-to-platform transfer edges)
+    # Merge consecutive segments on same route
     merged_segments = []
     i = 0
     while i < len(segments):
         merged = segments[i]
-        # Look ahead: if the next segment is on the same route, merge them
         while (i + 1 < len(segments) and
                segments[i + 1]['route_id'] == merged['route_id']):
             i += 1
             next_seg = segments[i]
-            # Merge stops (avoid duplicate at boundary)
             if merged['stops'] and merged['stops'][-1] == next_seg['stops'][0]:
                 merged['stops'].extend(next_seg['stops'][1:])
             else:
@@ -425,22 +399,15 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
         i += 1
     segments = merged_segments
 
-    # For each segment, find all route lines that share the same stops
-    # (different bus/tram lines that run through the same stops)
     for segment in segments:
         if segment['stops'] and len(segment['stops']) >= 2:
-            # Find routes that serve the FIRST two stops of this segment
-            # (all platforms of those groups)
             first_group = stop_to_group.get(segment['stops'][0], '')
             second_group = stop_to_group.get(segment['stops'][1], '')
-            
-            # Collect all routes that serve any platform pair from first to second group
             first_pair_routes = set()
             for p1 in stops_grouped.get(first_group, {}).get('platforms', []):
                 for p2 in stops_grouped.get(second_group, {}).get('platforms', []):
                     routes = stop_pair_routes.get((p1['id'], p2['id']), [])
                     first_pair_routes.update(routes)
-            
             if first_pair_routes:
                 segment['all_routes'] = sorted(first_pair_routes)
             else:
@@ -448,7 +415,6 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
         else:
             segment['all_routes'] = [segment['route_id']] if segment['route_id'] else []
 
-        # Add human-readable stop names for the first and last stop
         first_stop_id = segment['stops'][0] if segment['stops'] else None
         last_stop_id = segment['stops'][-1] if segment['stops'] else None
         if first_stop_id:
@@ -460,10 +426,6 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
             group = stops_grouped.get(group_id, {})
             segment['last_stop_name'] = group.get('name', stops_by_id.get(last_stop_id, {}).get('name', last_stop_id))
 
-    # Build path with stop info, using group-averaged coordinates
-    # and deduplicating consecutive same-name stops.
-    # Skip transfer edges (platform-to-platform connections) as they
-    # are not user-visible stops.
     path_stops = []
     last_name = None
     for i, stop_id in enumerate(stop_ids):
@@ -472,20 +434,14 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
         is_transfer = (route_id == 'transfer')
         group_id = stop_to_group.get(stop_id, '')
         group = stops_grouped.get(group_id, {})
-
         stop_name = group.get('name', stop_info.get('name', ''))
 
-        # Skip transfer edges - they are platform-to-platform connections
-        # that are not user-visible stops
         if is_transfer:
             continue
-
-        # Skip consecutive same-name stops (different platforms of same stop)
         if last_name == stop_name:
             continue
         last_name = stop_name
 
-        # Use group-averaged coordinates for consistent distance calculation
         lat = group.get('lat', stop_info.get('lat', 0))
         lon = group.get('lon', stop_info.get('lon', 0))
 
@@ -500,9 +456,6 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
             'is_transfer': is_transfer,
         })
 
-    # Recalculate distances from stop coordinates for consistency
-    # (edge distances vary by route, but user sees same stops)
-    # First normalize segment distances
     for segment in segments:
         if len(segment['stops']) >= 2:
             seg_dist = 0.0
@@ -519,7 +472,6 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
                     seg_dist += haversine_km(lat1, lon1, lat2, lon2)
             segment['distance'] = round(seg_dist, 4)
 
-    # Then normalize total distance
     normalized_distance = 0.0
     for i in range(len(path_stops) - 1):
         s1 = path_stops[i]
@@ -539,11 +491,20 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
     }
 
 
+# --- Group-to-group route cache ---
+_ROUTE_CACHE_MAX = 5000
+_route_cache = {}
+
+# Max platforms to try per group (prevents N^2 blowup for stops with many platforms)
+_MAX_PLATFORMS_TO_TRY = 3
+
 def find_route_between_groups(from_group_id, to_group_id, mode):
-    """
-    Find the best route between two stop groups.
-    Tries all platform combinations and returns the best result.
-    """
+    """Find the best route between two stop groups, with cache."""
+    cache_key = (from_group_id, to_group_id, mode)
+    cached = _route_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     from_group = stops_grouped.get(from_group_id)
     to_group = stops_grouped.get(to_group_id)
 
@@ -554,7 +515,7 @@ def find_route_between_groups(from_group_id, to_group_id, mode):
 
     if from_group_id == to_group_id:
         cost_reg, cost_red = calculate_cost(0)
-        return {
+        result = ({
             'total_distance': 0,
             'cost_regular': cost_reg,
             'cost_reduced': cost_red,
@@ -570,26 +531,30 @@ def find_route_between_groups(from_group_id, to_group_id, mode):
             }],
             'segments': [],
             'transfers': [],
-        }, None
+        }, None)
+        if len(_route_cache) < _ROUTE_CACHE_MAX:
+            _route_cache[cache_key] = result
+        return result
+
+    # Limit platforms to try to prevent N^2 blowup
+    from_platforms = from_group['platforms'][:_MAX_PLATFORMS_TO_TRY]
+    to_platforms = to_group['platforms'][:_MAX_PLATFORMS_TO_TRY]
 
     best_result = None
     best_error = None
 
-    # Try all platform combinations
-    for from_platform in from_group['platforms']:
-        for to_platform in to_group['platforms']:
+    for from_platform in from_platforms:
+        for to_platform in to_platforms:
             result, error = find_shortest_path(from_platform['id'], to_platform['id'])
 
             if result is not None:
                 if mode == 'convenient':
-                    # For convenient mode: prioritize fewer transfers, then shorter distance
                     if (best_result is None or
                         len(result['transfers']) < len(best_result['transfers']) or
                         (len(result['transfers']) == len(best_result['transfers']) and
                          result['total_distance'] < best_result['total_distance'])):
                         best_result = result
                 else:
-                    # For short mode: just compare real distance
                     if best_result is None or result['total_distance'] < best_result['total_distance']:
                         best_result = result
             elif best_result is None:
@@ -598,6 +563,8 @@ def find_route_between_groups(from_group_id, to_group_id, mode):
     if best_result is None:
         return None, best_error or "Nie znaleziono trasy między tymi przystankami"
 
+    if len(_route_cache) < _ROUTE_CACHE_MAX:
+        _route_cache[cache_key] = (best_result, None)
     return best_result, None
 
 
@@ -605,10 +572,7 @@ def find_route_between_groups(from_group_id, to_group_id, mode):
 # HTTP Request Handler
 # ============================================================
 
-# Paths commonly targeted by vulnerability scanners
-BLOCKED_PREFIXES = (
-    '/.', '/_',
-)
+BLOCKED_PREFIXES = ('/.', '/_')
 BLOCKED_PATHS = (
     '/.env', '/.env.old', '/.env.local', '/.env.production', '/.env.development',
     '/.env.backup', '/.env.bak', '/.env.config', '/.env.staging',
@@ -619,14 +583,17 @@ BLOCKED_PATHS = (
     '/admin', '/phpmyadmin',
     '/cgi-bin', '/scripts',
     '/server-status', '/server-info',
-    '/favicon.ico',  # unnecessary 404s
+    '/favicon.ico',
 )
+
+# Pre-computed static JSON responses (cached at startup)
+_cached_stops_json = None
+_cached_routes_json = None
 
 
 class MPKRequestHandler(SimpleHTTPRequestHandler):
     """Custom request handler for MPK Kraków app."""
 
-    # Hide server version from headers
     server_version = ''
     sys_version = ''
 
@@ -634,33 +601,26 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
 
     def do_HEAD(self):
-        """Handle HEAD requests same as GET."""
         self.do_GET()
 
     def do_POST(self):
-        """Reject POST - not needed for this read-only app."""
         self.send_error_page(405)
 
     def do_PUT(self):
-        """Reject PUT."""
         self.send_error_page(405)
 
     def do_DELETE(self):
-        """Reject DELETE."""
         self.send_error_page(405)
 
     def do_PATCH(self):
-        """Reject PATCH."""
         self.send_error_page(405)
 
     def do_OPTIONS(self):
-        """Handle OPTIONS for CORS preflight."""
         self.send_response(204)
         self.send_header('Allow', 'GET, HEAD, OPTIONS')
         self.end_headers()
 
     def do_GET(self):
-        """Handle GET requests."""
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
@@ -669,7 +629,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.handle_api(path, query)
             return
 
-        # Block known attack paths and hidden files/dirs
         if path in BLOCKED_PATHS or any(path.startswith(p) for p in BLOCKED_PREFIXES):
             self.send_error_page(404)
             return
@@ -677,8 +636,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         if path == '/' or path == '':
             path = '/index.html'
 
-        # Prevent directory listing - only serve known files
-        # Resolve the file path and ensure it stays within PUBLIC_DIR
         file_path = os.path.normpath(os.path.join(PUBLIC_DIR, path.lstrip('/')))
         if not file_path.startswith(PUBLIC_DIR):
             self.send_error_page(403)
@@ -688,7 +645,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_error_page(404)
             return
 
-        # Check if this is a crawler (Facebook, Twitter, etc.)
+        # Check if this is a crawler
         user_agent = self.headers.get('User-Agent', '').lower()
         is_crawler = any(bot in user_agent for bot in [
             'facebookexternalhit', 'twitterbot', 'linkedinbot', 'slackbot',
@@ -697,7 +654,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             'facebot', 'meta-externalagent'
         ])
         
-        # For crawlers with route params, serve modified HTML
         from_stop = query.get('from', [''])[0]
         to_stop = query.get('to', [''])[0]
         mode = query.get('mode', ['short'])[0]
@@ -706,18 +662,15 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.serve_modified_html(from_stop, to_stop, mode)
             return
 
-        # Serve the file using SimpleHTTPRequestHandler
         super().do_GET()
     
     def serve_modified_html(self, from_stop, to_stop, mode):
         """Serve HTML with modified OG tags for crawlers."""
         try:
-            # Read the original HTML
             file_path = os.path.join(PUBLIC_DIR, 'index.html')
             with open(file_path, 'r', encoding='utf-8') as f:
                 html = f.read()
             
-            # Get stop names
             from_name = "Przystanek początkowy"
             to_name = "Przystanek końcowy"
             
@@ -729,13 +682,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             if to_group:
                 to_name = to_group['name']
             
-            # Generate dynamic OG image URL
             og_image_url = f"https://zaileprzeja.de/api/og-image?from={from_stop}&to={to_stop}&mode={mode}"
             current_url = f"https://zaileprzeja.de/?from={from_stop}&to={to_stop}&mode={mode}"
             title = f"Za Ile Przejadę? {from_name} → {to_name}"
             description = f"Oblicz koszt przejazdu z {from_name} do {to_name} w nowym systemie biletów MPK Kraków."
             
-            # Replace meta tags
             html = html.replace(
                 '<meta property="og:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">',
                 f'<meta property="og:title" content="{title}">'
@@ -765,54 +716,36 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 f'<meta name="twitter:image" content="{og_image_url}">'
             )
             
-            # Add og:site_name if not present
             if 'og:site_name' not in html:
                 html = html.replace(
                     '<meta property="og:locale"',
                     f'<meta property="og:site_name" content="Za Ile Przejadę?">\n    <meta property="og:locale"'
                 )
             
-            # Send modified HTML
             body = html.encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-            self.send_header('Pragma', 'no-cache')
-            self.send_header('Expires', '0')
             self.end_headers()
             self.wfile.write(body)
             
-        except Exception as e:
-            # Fallback to normal serving
+        except Exception:
             super().do_GET()
 
     def handle_api(self, path, query):
         """Handle API requests."""
         try:
             if path == '/api/stops':
-                result = []
-                for g in stops_grouped.values():
-                    result.append({
-                        'id': g['id'],
-                        'name': g['name'],
-                        'lat': round(g['lat'], 6),
-                        'lon': round(g['lon'], 6),
-                        'modes': g['modes'],
-                        'platform_count': len(g['platforms']),
-                    })
-                self.serve_json(result)
+                self.serve_json_cached(path)
 
             elif path == '/api/stops/search':
                 q = query.get('q', [''])[0].lower().strip()
                 if len(q) < 2:
                     self.serve_json([])
                     return
-                # Use precomputed search index for fast lookups
-                # Check if query matches any indexed prefix (first 5 chars)
                 results = []
                 seen = set()
-                # Try indexed lookup first (fast path)
                 for prefix_len in range(min(5, len(q)), 1, -1):
                     prefix = q[:prefix_len]
                     if prefix in _stop_search_index:
@@ -830,7 +763,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                                 })
                         if results:
                             break
-                # Fallback to full scan if index didn't find enough
                 if not results:
                     for name_lower, group_ids in stops_by_name_grouped.items():
                         if q in name_lower:
@@ -874,11 +806,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 if not from_stop or not to_stop:
                     self.serve_json({'error': 'Missing from or to parameter'})
                     return
-
                 if not from_stop.startswith('group_') or not to_stop.startswith('group_'):
                     self.serve_json({'error': 'Invalid stop ID format'})
                     return
-
                 if mode not in ('short', 'convenient'):
                     mode = 'short'
 
@@ -915,7 +845,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 self.serve_json({'status': 'ok'})
 
             elif path == '/api/routes':
-                self.serve_json(routes_list)
+                self.serve_json_cached(path)
 
             elif path == '/api/stop':
                 stop_id = query.get('id', [''])[0]
@@ -932,11 +862,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 from_stop = query.get('from', [''])[0]
                 to_stop = query.get('to', [''])[0]
                 mode = query.get('mode', ['short'])[0]
-                
-                # Generate OG image as SVG (no Pillow needed, no font issues)
                 svg = self.generate_og_image_svg(from_stop, to_stop, mode)
                 body = svg.encode('utf-8')
-                
                 self.send_response(200)
                 self.send_header('Content-Type', 'image/svg+xml')
                 self.send_header('Content-Length', str(len(body)))
@@ -950,18 +877,72 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self.serve_json({'error': 'Internal server error'})
 
-    def serve_json(self, data):
-        """Serve JSON response. Cloudflare handles compression."""
+    def serve_json(self, data, cache=False):
+        """Serve JSON response with optional gzip compression."""
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', 'no-cache')
-        self.end_headers()
+        
+        # Compress with gzip if response > 1KB and client supports it
+        accept = self.headers.get('Accept-Encoding', '')
+        if len(body) > 1024 and 'gzip' in accept:
+            body = gzip.compress(body, compresslevel=6)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Encoding', 'gzip')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+        else:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+        self.wfile.write(body)
+
+    def serve_json_cached(self, path):
+        """Serve pre-computed JSON for static endpoints."""
+        global _cached_stops_json, _cached_routes_json
+        
+        if path == '/api/stops':
+            if _cached_stops_json is None:
+                result = []
+                for g in stops_grouped.values():
+                    result.append({
+                        'id': g['id'],
+                        'name': g['name'],
+                        'lat': round(g['lat'], 6),
+                        'lon': round(g['lon'], 6),
+                        'modes': g['modes'],
+                        'platform_count': len(g['platforms']),
+                    })
+                _cached_stops_json = json.dumps(result, ensure_ascii=False).encode('utf-8')
+            body = _cached_stops_json
+        elif path == '/api/routes':
+            if _cached_routes_json is None:
+                _cached_routes_json = json.dumps(routes_list, ensure_ascii=False).encode('utf-8')
+            body = _cached_routes_json
+        else:
+            return
+        
+        accept = self.headers.get('Accept-Encoding', '')
+        if 'gzip' in accept:
+            body = gzip.compress(body, compresslevel=6)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Encoding', 'gzip')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'public, max-age=60')
+            self.end_headers()
+        else:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'public, max-age=60')
+            self.end_headers()
         self.wfile.write(body)
 
     def send_error_page(self, code):
-        """Send a minimal error response without revealing server details."""
+        """Send a minimal error response."""
         self.send_response(code)
         self.send_header('Content-Type', 'text/plain; charset=utf-8')
         self.send_header('Content-Length', '0')
@@ -970,31 +951,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
 
-    def end_headers(self):
-        """Suppress default end_headers behavior."""
-        super().end_headers()
-
-    def _wrap_text(self, text, font, max_width, draw):
-        """Wrap text to fit within max_width, returning list of lines."""
-        words = text.split()
-        lines = []
-        current_line = ""
-        for word in words:
-            test_line = f"{current_line} {word}".strip()
-            bbox = draw.textbbox((0, 0), test_line, font=font)
-            if bbox[2] - bbox[0] <= max_width:
-                current_line = test_line
-            else:
-                if current_line:
-                    lines.append(current_line)
-                current_line = word
-        if current_line:
-            lines.append(current_line)
-        return lines if lines else [text]
-
     def generate_og_image_svg(self, from_stop_id, to_stop_id, mode):
-        """Generate OG image as SVG — designed for social media."""
-        # Get stop names
+        """Generate OG image as SVG."""
         from_name = "Przystanek początkowy"
         to_name = "Przystanek końcowy"
         cost_text = ""
@@ -1010,7 +968,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             if result:
                 cost_text = f"{result['cost_regular']:.2f} / {result['cost_reduced']:.2f} zł"
 
-        # Escape XML special characters
         def esc(s):
             return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
 
@@ -1044,13 +1001,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             '  <text x="1010" y="577" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#7f8c8d" text-anchor="middle">zaileprzeja.de</text>\n'
             '</svg>'
         )
-
         return svg
 
     def log_message(self, format, *args):
-        """Log only errors and API requests, suppress static file requests."""
+        """Log only errors and API requests."""
         msg = format % args
-        # Log errors and API requests, skip static file requests
         if '/api/' in msg or 'Error' in msg or 'error' in msg:
             import sys
             print(f"  {msg}", file=sys.stderr)
@@ -1058,7 +1013,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
 def main():
     port = int(os.environ.get('PORT', 8080))
-    server = HTTPServer(('0.0.0.0', port), MPKRequestHandler)
+    # Warmup cache with popular routes
+    _warmup_cache()
+    
+    server = ThreadedHTTPServer(('0.0.0.0', port), MPKRequestHandler)
     print(f"\nServer running at http://localhost:{port}")
     print(f"Serving static files from: {PUBLIC_DIR}")
     print(f"API endpoints:")
@@ -1070,6 +1028,7 @@ def main():
     print(f"  /api/shapes?route_id=<id> - Get route shape")
     print(f"  /api/routes - All routes")
     print(f"  /api/stop?id=<id> - Get stop info")
+    print(f"\nOptimizations: threading, route cache ({_FIND_CACHE_MAX} pathfinding + {_ROUTE_CACHE_MAX} routes), gzip compression")
     print()
     try:
         server.serve_forever()

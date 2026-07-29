@@ -4,12 +4,19 @@ Aplikacja została stworzona w celu obliczania kosztów podróży komunikacją m
 
 Dane linii i przystanków pochodzą z ogólnodostępnych rozkładów GTFS MPK Kraków (dostęp 24.07.2026).
 
+---
+
 Kod źródłowy: https://github.com/wertos97/ZaIlePrzejade
 
 Autor: wertos97
 
 Mapę ogarnia Leaflet i OpenStreetMap.
 
-W przypadku pytań lub uwag, zapraszam do kontaktu przez GitHub.
+W przypadku pytań lub uwag, zapraszam do kontaktu przez GitHub. Wszelkie issues i pr'y mile widziane!
 
-Może niedługo zrobię jakąś bardziej sensowną wersję mobilną.
+---
+
+Zachęcam do udostępniania linków do tras na social mediach, robią się wtedy automatycznie ładne obrazki nad którymi długo pracowałem :')
+
+A jeśli aplikacja podoba ci się na tyle, że chcesz mi podziękować, kup mi bilet!
+https://ko-fi.com/wertos97

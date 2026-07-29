@@ -1,4 +1,6 @@
-Garść faktów zanim zaczniesz korzystać z aplikacji:
+Garść faktów żeby lepiej zrozumieć o co chodzi i dlaczego taki kalkulator powstał:
+
+Zgodnie z oficjalnym komunikatem MPK S.A. w Krakowie (https://www.facebook.com/photo/?fbid=1445327380951786&set=a.612767970874402):
 
 Od przyszłego roku bilety MPK w Krakowie będziemy liczyć na odległość.
 
@@ -15,5 +17,7 @@ Jest też jeden plus - dzienny limit wydatków 20 zł. Po osiągnięciu tej kwot
 Nowy system ma być dostępny w aplikacji mKraków. No i tyle - jedzie się na odległość.
 
 ---
+
+Sytuacja i powyższe stwierdzenia mogą zmienić się w każdej chwili. Sprawdzaj oficjalne komunikaty!
 
 Koniecznie przeczytaj "Uwaga"!

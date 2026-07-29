@@ -163,7 +163,7 @@ function setupEventListeners() {
 
     // Modal buttons
     document.getElementById('btn-info').addEventListener('click', function() {
-        showModal('Informacja', 'info.txt');
+        showModal('O co chodzi?', 'info.txt');
     });
 
     document.getElementById('btn-warning').addEventListener('click', function() {
