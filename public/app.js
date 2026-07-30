@@ -100,7 +100,7 @@ function initMap() {
             [49.85, 19.60], // Southwest corner
             [50.25, 20.30]  // Northeast corner
         ],
-        maxBoundsViscosity: 1.0,
+        maxBoundsViscosity: 0.8,
     }).setView([50.0647, 19.9450], 13);
 
     // Use a cleaner tile style - CartoDB Positron (light, no POI clutter)
@@ -183,12 +183,14 @@ function setupEventListeners() {
     if (sidebarToggle) {
         sidebarToggle.addEventListener('click', function() {
             sidebar.classList.toggle('expanded');
+            setTimeout(function() { state.map.invalidateSize(); }, 450);
         });
     }
 
     // Mobile result close (button in mode bar)
     document.getElementById('mobile-result-close').addEventListener('click', function() {
         document.getElementById('mobile-result').style.display = 'none';
+        setTimeout(function() { state.map.invalidateSize(); }, 50);
     });
 
     // Mobile result toggle button - expand/collapse
@@ -198,6 +200,7 @@ function setupEventListeners() {
     if (mobileResultToggle) {
         mobileResultToggle.addEventListener('click', function() {
             mobileResult.classList.toggle('expanded');
+            setTimeout(function() { state.map.invalidateSize(); }, 50);
         });
     }
 
@@ -224,6 +227,7 @@ function clearRoute() {
     state.routeLayer.clearLayers();
     updateSelectedStops();
     updateURL();
+    setTimeout(function() { state.map.invalidateSize(); }, 50);
 }
 
 function setRouteMode(mode) {

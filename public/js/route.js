@@ -139,21 +139,25 @@ function displayRoute(result) {
     if (state.shouldFitBounds && result.path && result.path.length > 0) {
         state.shouldFitBounds = false;
         const bounds = L.latLngBounds(result.path.map(s => [s.lat, s.lon]));
-        if (isMobile) {
-            const panelEl = document.getElementById('mobile-result');
-            const panelHeight = panelEl.offsetHeight || (window.innerHeight * 0.50);
-            state.map.fitBounds(bounds, {
-                paddingTopLeft: [0, 72],
-                paddingBottomRight: [0, panelHeight],
-                maxZoom: 15,
-            });
-        } else {
-            state.map.fitBounds(bounds, {
-                paddingTopLeft: [0, 52],
-                paddingBottomRight: [340, 20],
-                maxZoom: 16,
-            });
-        }
+        // Delay fitBounds to allow DOM to update (panel rendering)
+        setTimeout(function() {
+            state.map.invalidateSize();
+            if (isMobile) {
+                const panelEl = document.getElementById('mobile-result');
+                const panelHeight = panelEl.offsetHeight || (window.innerHeight * 0.45);
+                state.map.fitBounds(bounds, {
+                    paddingTopLeft: [0, 72],
+                    paddingBottomRight: [0, panelHeight + 10],
+                    maxZoom: 16,
+                });
+            } else {
+                state.map.fitBounds(bounds, {
+                    paddingTopLeft: [0, 52],
+                    paddingBottomRight: [340, 20],
+                    maxZoom: 16,
+                });
+            }
+        }, 150);
     }
 }
 
