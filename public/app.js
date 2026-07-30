@@ -108,10 +108,10 @@ function updateMapSize() {
 function initMap() {
     state.map = L.map('map', {
         zoomControl: true,
-        minZoom: 11,
+        minZoom: 10,
         maxBounds: [
-            [49.85, 19.60], // Southwest corner
-            [50.25, 20.30]  // Northeast corner
+            [49.55, 19.20], // Southwest corner (Małopolska)
+            [50.50, 20.80]  // Northeast corner (Małopolska)
         ],
         maxBoundsViscosity: 0.8,
     }).setView([50.0647, 19.9450], 13);
