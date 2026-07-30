@@ -1,5 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
-  <!-- Background gradient -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#0d2137"/>
@@ -7,34 +6,20 @@
     </linearGradient>
   </defs>
   <rect width="1200" height="630" fill="url(#bg)"/>
-  
-  <!-- Title -->
-  <text x="60" y="80" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="bold" fill="#bdc3c7">Za Ile Przejadę?</text>
-  
-  <!-- Description -->
-  <text x="60" y="140" font-family="Arial, Helvetica, sans-serif" font-size="36" fill="#5dade2">Kalkulator cen biletów</text>
-  <text x="60" y="190" font-family="Arial, Helvetica, sans-serif" font-size="36" fill="#5dade2">MPK Kraków 2027</text>
-  
-  <!-- Separator line -->
-  <line x1="60" y1="220" x2="200" y2="220" stroke="#5dade2" stroke-width="3"/>
-  
-  <!-- Feature text -->
-  <text x="60" y="270" font-family="Arial, Helvetica, sans-serif" font-size="24" fill="#ecf0f1">Oblicz koszt przejazdu</text>
-  <text x="60" y="310" font-family="Arial, Helvetica, sans-serif" font-size="24" fill="#ecf0f1">w nowym systemie biletów</text>
-  
-  <!-- Bus icon - simplified (6 shapes) -->
-  <g transform="translate(950, 440)">
-    <!-- Bus body -->
-    <rect x="0" y="0" width="140" height="74" rx="12" fill="#2874a6"/>
-    <!-- Windows (same size, symmetric) -->
-    <rect x="14" y="14" width="22" height="22" rx="3" fill="#aed6f1"/>
-    <rect x="59" y="14" width="22" height="22" rx="3" fill="#aed6f1"/>
-    <rect x="104" y="14" width="22" height="22" rx="3" fill="#aed6f1"/>
-    <!-- Wheels -->
-    <circle cx="30" cy="68" r="12" fill="#2c3e50"/>
-    <circle cx="110" cy="68" r="12" fill="#2c3e50"/>
-  </g>
-  
-  <!-- Website text below logo -->
-  <text x="1020" y="560" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="bold" fill="#7f8c8d" text-anchor="middle">zaileprzeja.de</text>
+
+  <text x="80" y="77" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#5dade2">ZA ILE PRZEJADĘ?</text>
+  <text x="80" y="155" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1">Kalkulator cen biletów</text>
+  <text x="80" y="225" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1">MPK Kraków 2027</text>
+  <line x1="80" y1="270" x2="240" y2="270" stroke="#5dade2" stroke-width="4"/>
+  <text x="80" y="330" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="normal" fill="#5dade2">NOWY SYSTEM BILETÓW</text>
+  <text x="80" y="410" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="bold" fill="#ffffff">Oparty na odległości</text>
+
+  <!-- Bus icon (from dynamic OG image) -->
+  <rect x="920" y="420" width="180" height="96" rx="16" fill="#2874a6"/>
+  <rect x="938" y="438" width="32" height="32" rx="4" fill="#aed6f1"/>
+  <rect x="994" y="438" width="32" height="32" rx="4" fill="#aed6f1"/>
+  <rect x="1050" y="438" width="32" height="32" rx="4" fill="#aed6f1"/>
+  <circle cx="960" cy="518" r="16" fill="#241f31"/>
+  <circle cx="1060" cy="518" r="16" fill="#241f31"/>
+  <text x="1010" y="577" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#7f8c8d" text-anchor="middle">zaileprzeja.de</text>
 </svg>
