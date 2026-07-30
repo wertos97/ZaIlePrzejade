@@ -148,13 +148,11 @@ function displayRoute(result) {
                 state.map.fitBounds(bounds, {
                     paddingTopLeft: [20, 72],
                     paddingBottomRight: [20, panelHeight + 10],
-                    maxZoom: 15,
                 });
             } else {
                 state.map.fitBounds(bounds, {
                     paddingTopLeft: [20, 20],
                     paddingBottomRight: [20, 20],
-                    maxZoom: 15,
                 });
             }
         }, 150);
