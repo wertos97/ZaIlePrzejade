@@ -92,6 +92,19 @@ function updateURL() {
     }
 }
 
+function updateMapSize() {
+    // On mobile, adjust map height to leave space for sidebar panel
+    if (window.innerWidth <= 768) {
+        var mapEl = document.getElementById('map');
+        var headerH = 72;
+        var sidebar = document.getElementById('sidebar');
+        var sidebarH = sidebar && !sidebar.classList.contains('expanded') ? window.innerHeight * 0.4 : 0;
+        var mapH = window.innerHeight - headerH - sidebarH;
+        mapEl.style.height = mapH + 'px';
+        if (state.map) state.map.invalidateSize();
+    }
+}
+
 function initMap() {
     state.map = L.map('map', {
         zoomControl: true,
@@ -111,6 +124,10 @@ function initMap() {
     }).addTo(state.map);
 
     state.routeLayer = L.layerGroup().addTo(state.map);
+
+    // Adjust map size on mobile
+    updateMapSize();
+    window.addEventListener('resize', function() { updateMapSize(); });
 }
 
 function setupEventListeners() {
@@ -184,8 +201,7 @@ function setupEventListeners() {
     if (sidebarToggle) {
         sidebarToggle.addEventListener('click', function() {
             sidebar.classList.toggle('expanded');
-            // Toggle sidebar-open class on map for CSS bottom adjustment
-            if (mapEl) mapEl.classList.toggle('sidebar-open', sidebar.classList.contains('expanded'));
+            updateMapSize();
             setTimeout(function() { state.map.invalidateSize(); }, 450);
         });
     }
