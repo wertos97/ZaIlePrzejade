@@ -139,13 +139,6 @@ function displayRoute(result) {
     if (state.shouldFitBounds && result.path && result.path.length > 0) {
         state.shouldFitBounds = false;
         const bounds = L.latLngBounds(result.path.map(s => [s.lat, s.lon]));
-        // Calculate appropriate maxZoom based on route distance
-        const distKm = result.total_distance || 0;
-        let maxZoom = 15;
-        if (distKm < 1) maxZoom = 14;
-        else if (distKm < 3) maxZoom = 15;
-        else if (distKm < 10) maxZoom = 14;
-        else maxZoom = 13;
         // Delay fitBounds to allow DOM to update (panel rendering)
         setTimeout(function() {
             state.map.invalidateSize();
@@ -153,15 +146,15 @@ function displayRoute(result) {
                 const panelEl = document.getElementById('mobile-result');
                 const panelHeight = panelEl.offsetHeight || (window.innerHeight * 0.45);
                 state.map.fitBounds(bounds, {
-                    paddingTopLeft: [0, 72],
-                    paddingBottomRight: [0, panelHeight + 10],
-                    maxZoom: maxZoom,
+                    paddingTopLeft: [20, 72],
+                    paddingBottomRight: [20, panelHeight + 10],
+                    maxZoom: 15,
                 });
             } else {
                 state.map.fitBounds(bounds, {
-                    paddingTopLeft: [0, 52],
-                    paddingBottomRight: [340, 20],
-                    maxZoom: maxZoom,
+                    paddingTopLeft: [20, 20],
+                    paddingBottomRight: [20, 20],
+                    maxZoom: 15,
                 });
             }
         }, 150);
