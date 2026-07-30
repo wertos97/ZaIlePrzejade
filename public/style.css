@@ -763,6 +763,11 @@ body {
         top: 72px;
         left: 0;
         right: 0;
+        bottom: 40vh;
+        transition: bottom 0.4s ease;
+    }
+
+    #map.sidebar-open {
         bottom: 0;
     }
 

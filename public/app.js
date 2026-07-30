@@ -180,9 +180,12 @@ function setupEventListeners() {
     // Mobile sidebar toggle button - expand/collapse
     const sidebarToggle = document.getElementById('sidebar-toggle');
     const sidebar = document.getElementById('sidebar');
+    const mapEl = document.getElementById('map');
     if (sidebarToggle) {
         sidebarToggle.addEventListener('click', function() {
             sidebar.classList.toggle('expanded');
+            // Toggle sidebar-open class on map for CSS bottom adjustment
+            if (mapEl) mapEl.classList.toggle('sidebar-open', sidebar.classList.contains('expanded'));
             setTimeout(function() { state.map.invalidateSize(); }, 450);
         });
     }
