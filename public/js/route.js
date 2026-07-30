@@ -144,10 +144,10 @@ function displayRoute(result) {
             state.map.invalidateSize();
             if (isMobile) {
                 const panelEl = document.getElementById('mobile-result');
-                const panelHeight = panelEl.offsetHeight || (window.innerHeight * 0.45);
+                const panelHeight = panelEl.offsetHeight || Math.round(window.innerHeight * 0.5);
                 state.map.fitBounds(bounds, {
                     paddingTopLeft: [20, 72],
-                    paddingBottomRight: [20, panelHeight + 10],
+                    paddingBottomRight: [20, panelHeight + 20],
                 });
             } else {
                 state.map.fitBounds(bounds, {
