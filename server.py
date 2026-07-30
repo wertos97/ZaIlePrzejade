@@ -1013,10 +1013,12 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
 def main():
     port = int(os.environ.get('PORT', 8080))
-    # Warmup cache with popular routes
-    _warmup_cache()
     
     server = ThreadedHTTPServer(('0.0.0.0', port), MPKRequestHandler)
+    
+    # Warmup cache in background thread (non-blocking)
+    import threading
+    threading.Thread(target=_warmup_cache, daemon=True).start()
     print(f"\nServer running at http://localhost:{port}")
     print(f"Serving static files from: {PUBLIC_DIR}")
     print(f"API endpoints:")
@@ -1028,6 +1030,7 @@ def main():
     print(f"  /api/shapes?route_id=<id> - Get route shape")
     print(f"  /api/routes - All routes")
     print(f"  /api/stop?id=<id> - Get stop info")
+    print(f"  /api/health - Health check")
     print(f"\nOptimizations: threading, route cache ({_FIND_CACHE_MAX} pathfinding + {_ROUTE_CACHE_MAX} routes), gzip compression")
     print()
     try:
