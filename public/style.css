@@ -1070,7 +1070,6 @@ body {
 
     .mode-equal-sm {
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
         width: 24px;
@@ -1079,20 +1078,10 @@ body {
         background: #e8f4fd;
         border: 1px solid #c0d8e8;
         flex-shrink: 0;
-        gap: 3px;
-        position: relative;
         animation: equalFadeIn 0.5s ease-out;
-    }
-
-    .mode-equal-sm::before,
-    .mode-equal-sm::after {
-        content: '';
-        display: block;
-        width: 12px;
-        height: 2px;
-        background: #1a5276;
-        border-radius: 1px;
-        flex-shrink: 0;
+        color: #1a5276;
+        font-size: 0.9em;
+        font-weight: bold;
     }
 
     .btn-mode-sm-close {

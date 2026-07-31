@@ -39,6 +39,9 @@ const state = {
 // Single color for all stops
 const STOP_COLOR = '#3498db';
 
+// Keyboard navigation state for search results
+var searchSelectedIndex = { from: -1, to: -1 };
+
 // ============================================================
 // Initialization
 // ============================================================
@@ -421,13 +424,10 @@ function handleSearch(input, resultsId, field) {
     const query = input.value.trim();
     const resultsEl = document.getElementById(resultsId);
 
-    // Track selected index for keyboard navigation
-    input._selectedIndex = input._selectedIndex || -1;
-
     if (query.length < 2) {
         resultsEl.classList.remove('show');
         resultsEl.innerHTML = '';
-        input._selectedIndex = -1;
+        searchSelectedIndex[field] = -1;
         return;
     }
 
@@ -438,7 +438,7 @@ function handleSearch(input, resultsId, field) {
             const results = await response.json();
 
             resultsEl.innerHTML = '';
-            input._selectedIndex = -1;
+            searchSelectedIndex[field] = -1;
             if (results.length === 0) {
                 resultsEl.innerHTML = '<div class="search-item" style="color: #999; text-align: center; padding: 12px;">😕 Nie znaleziono przystanku<br><span style="font-size: 0.85em;">Spróbuj inną nazwę</span></div>';
             } else {
@@ -458,7 +458,7 @@ function handleSearch(input, resultsId, field) {
                         state[field === 'from' ? 'fromStop' : 'toStop'] = group;
                         input.value = group.name;
                         resultsEl.classList.remove('show');
-                        input._selectedIndex = -1;
+                        searchSelectedIndex[field] = -1;
                         updateSelectedStops();
                         if (state.fromStop && state.toStop) {
                             findRoute();
@@ -475,37 +475,41 @@ function handleSearch(input, resultsId, field) {
 }
 
 function navigateSearchResults(input, resultsId, field, direction) {
-    const resultsEl = document.getElementById(resultsId);
-    const items = resultsEl.querySelectorAll('.search-item[data-index]');
+    var resultsEl = document.getElementById(resultsId);
+    if (!resultsEl || !resultsEl.classList.contains('show')) return;
+    var items = resultsEl.querySelectorAll('.search-item[data-index]');
     if (items.length === 0) return;
 
-    const input_ = input;
-    if (input_._selectedIndex === undefined) input_._selectedIndex = -1;
-
     // Remove current highlight
-    if (input_._selectedIndex >= 0 && input_._selectedIndex < items.length) {
-        items[input_._selectedIndex].classList.remove('search-item-active');
+    var curIdx = searchSelectedIndex[field];
+    if (curIdx >= 0 && curIdx < items.length) {
+        items[curIdx].classList.remove('search-item-active');
     }
 
     // Calculate new index
     if (direction === 'down') {
-        input_._selectedIndex = (input_._selectedIndex + 1) % items.length;
+        searchSelectedIndex[field] = (searchSelectedIndex[field] + 1) % items.length;
     } else {
-        input_._selectedIndex = input_._selectedIndex <= 0 ? items.length - 1 : input_._selectedIndex - 1;
+        searchSelectedIndex[field] = searchSelectedIndex[field] <= 0 ? items.length - 1 : searchSelectedIndex[field] - 1;
     }
 
     // Apply new highlight
-    items[input_._selectedIndex].classList.add('search-item-active');
-    items[input_._selectedIndex].scrollIntoView({ block: 'nearest' });
+    var newIdx = searchSelectedIndex[field];
+    items[newIdx].classList.add('search-item-active');
+    items[newIdx].scrollIntoView({ block: 'nearest' });
 }
 
 function selectHighlightedResult(input, resultsId, field) {
-    const resultsEl = document.getElementById(resultsId);
-    const items = resultsEl.querySelectorAll('.search-item[data-index]');
-    const idx = input._selectedIndex !== undefined ? input._selectedIndex : -1;
+    var resultsEl = document.getElementById(resultsId);
+    if (!resultsEl || !resultsEl.classList.contains('show')) return;
+    var items = resultsEl.querySelectorAll('.search-item[data-index]');
+    var idx = searchSelectedIndex[field];
 
     if (idx >= 0 && idx < items.length) {
         items[idx].click();
+    } else if (items.length > 0) {
+        // If nothing highlighted, select first item
+        items[0].click();
     }
 }
 
