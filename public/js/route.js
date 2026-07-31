@@ -27,14 +27,15 @@ async function findRoute() {
     }
 
     // Show loading indicator
-    const loadingEl = document.getElementById('loading-indicator');
-    loadingEl.style.display = 'flex';
-
-    // Show full-screen loading overlay on mobile
     const isMobile = window.innerWidth <= 768;
+    const loadingEl = document.getElementById('loading-indicator');
     const loadingOverlay = document.getElementById('loading-overlay');
+
+    // On mobile, only show full-screen overlay; on desktop show inline spinner
     if (isMobile && loadingOverlay) {
         loadingOverlay.classList.add('show');
+    } else {
+        loadingEl.style.display = 'flex';
     }
 
     try {
@@ -50,7 +51,7 @@ async function findRoute() {
         if (shortResult.error) {
             loadingEl.style.display = 'none';
             if (isMobile && loadingOverlay) loadingOverlay.classList.remove('show');
-            showToast(shortResult.error);
+            showToast(shortResult.error + ' Kliknij trasę ponownie, aby spróbować.', 5000);
             return;
         }
 

@@ -121,9 +121,19 @@ function setupEventListeners() {
     fromInput.addEventListener('input', function(e) {
         handleSearch(e.target, 'from-results', 'from');
     });
+    fromInput.addEventListener('keydown', function(e) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); navigateSearchResults(fromInput, 'from-results', 'from', 'down'); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); navigateSearchResults(fromInput, 'from-results', 'from', 'up'); }
+        else if (e.key === 'Enter') { e.preventDefault(); selectHighlightedResult(fromInput, 'from-results', 'from'); }
+    });
 
     toInput.addEventListener('input', function(e) {
         handleSearch(e.target, 'to-results', 'to');
+    });
+    toInput.addEventListener('keydown', function(e) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); navigateSearchResults(toInput, 'to-results', 'to', 'down'); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); navigateSearchResults(toInput, 'to-results', 'to', 'up'); }
+        else if (e.key === 'Enter') { e.preventDefault(); selectHighlightedResult(toInput, 'to-results', 'to'); }
     });
 
     document.addEventListener('click', function(e) {
@@ -288,6 +298,7 @@ function showCustomPopup(group, latlng) {
         <div class="stop-popup-header">${escapeHtml(group.name)}</div>
         <div class="stop-popup-btn" data-action="from">🚀 Wybierz jako początek</div>
         <div class="stop-popup-btn" data-action="to">🎯 Wybierz jako koniec</div>
+        <div class="stop-popup-btn stop-popup-cancel" data-action="cancel">✕ Anuluj</div>
     `;
     
     customPopupEl.querySelector('[data-action="from"]').addEventListener('click', function(e) {
@@ -310,6 +321,11 @@ function showCustomPopup(group, latlng) {
         if (state.fromStop && state.toStop) {
             findRoute();
         }
+    });
+
+    customPopupEl.querySelector('[data-action="cancel"]').addEventListener('click', function(e) {
+        e.stopPropagation();
+        closeCustomPopup();
     });
     
     document.body.appendChild(customPopupEl);
@@ -405,9 +421,13 @@ function handleSearch(input, resultsId, field) {
     const query = input.value.trim();
     const resultsEl = document.getElementById(resultsId);
 
+    // Track selected index for keyboard navigation
+    input._selectedIndex = input._selectedIndex || -1;
+
     if (query.length < 2) {
         resultsEl.classList.remove('show');
         resultsEl.innerHTML = '';
+        input._selectedIndex = -1;
         return;
     }
 
@@ -418,12 +438,14 @@ function handleSearch(input, resultsId, field) {
             const results = await response.json();
 
             resultsEl.innerHTML = '';
+            input._selectedIndex = -1;
             if (results.length === 0) {
-                resultsEl.innerHTML = '<div class="search-item" style="color: #999;">Brak wyników</div>';
+                resultsEl.innerHTML = '<div class="search-item" style="color: #999; text-align: center; padding: 12px;">😕 Nie znaleziono przystanku<br><span style="font-size: 0.85em;">Spróbuj inną nazwę</span></div>';
             } else {
-                results.forEach(group => {
+                results.forEach((group, idx) => {
                     const item = document.createElement('div');
                     item.className = 'search-item';
+                    item.dataset.index = idx;
                     const modeLabels = group.modes.map(m => getModeLabel(m).replace(/[^a-zA-Ząęćłńóśźż]/g, '')).join(', ');
                     item.innerHTML = `
                         <div class="name">${escapeHtml(group.name)}</div>
@@ -436,6 +458,7 @@ function handleSearch(input, resultsId, field) {
                         state[field === 'from' ? 'fromStop' : 'toStop'] = group;
                         input.value = group.name;
                         resultsEl.classList.remove('show');
+                        input._selectedIndex = -1;
                         updateSelectedStops();
                         if (state.fromStop && state.toStop) {
                             findRoute();
@@ -449,6 +472,41 @@ function handleSearch(input, resultsId, field) {
             console.error('Search error:', error);
         }
     }, 300);
+}
+
+function navigateSearchResults(input, resultsId, field, direction) {
+    const resultsEl = document.getElementById(resultsId);
+    const items = resultsEl.querySelectorAll('.search-item[data-index]');
+    if (items.length === 0) return;
+
+    const input_ = input;
+    if (input_._selectedIndex === undefined) input_._selectedIndex = -1;
+
+    // Remove current highlight
+    if (input_._selectedIndex >= 0 && input_._selectedIndex < items.length) {
+        items[input_._selectedIndex].classList.remove('search-item-active');
+    }
+
+    // Calculate new index
+    if (direction === 'down') {
+        input_._selectedIndex = (input_._selectedIndex + 1) % items.length;
+    } else {
+        input_._selectedIndex = input_._selectedIndex <= 0 ? items.length - 1 : input_._selectedIndex - 1;
+    }
+
+    // Apply new highlight
+    items[input_._selectedIndex].classList.add('search-item-active');
+    items[input_._selectedIndex].scrollIntoView({ block: 'nearest' });
+}
+
+function selectHighlightedResult(input, resultsId, field) {
+    const resultsEl = document.getElementById(resultsId);
+    const items = resultsEl.querySelectorAll('.search-item[data-index]');
+    const idx = input._selectedIndex !== undefined ? input._selectedIndex : -1;
+
+    if (idx >= 0 && idx < items.length) {
+        items[idx].click();
+    }
 }
 
 // ============================================================

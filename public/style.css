@@ -201,8 +201,10 @@ body {
     border-bottom: 1px solid #eee;
 }
 
-.search-results .search-item:hover {
+.search-results .search-item:hover,
+.search-results .search-item.search-item-active {
     background: #f0f8ff;
+    border-left: 3px solid #2874a6;
 }
 
 .search-results .search-item:last-child {
@@ -658,6 +660,17 @@ body {
 .stop-popup-btn:hover {
     background: #f0f8ff;
     color: #1a5276;
+}
+
+.stop-popup-cancel {
+    color: #888;
+    text-align: center;
+    font-size: 0.8em;
+}
+
+.stop-popup-cancel:hover {
+    background: #fef2f2;
+    color: #e74c3c;
 }
 
 /* Map marker overrides */
