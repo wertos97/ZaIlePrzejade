@@ -49,6 +49,40 @@ Wynik trafia do katalogu `previews/`.
 Aplikacja jest gotowa do deploymentu na [Render](https://render.com).
 Wystarczy połączyć repozytorium GitHub i wybrać "Deploy from Git".
 
+## Skrypty serwera (auto-update i self-recovery)
+
+Repozytorium zawiera skrypty do utrzymania serwera w ruchu:
+
+- **`autoupdate.sh`** — sprawdza co 2 minuty (przez cron) czy na GitHubie są nowe commity, weryfikuje spójność danych i zdrowie serwera. W razie potrzeby aktualizuje kod i restartuje serwer.
+- **`restart.sh`** — zatrzymuje i uruchamia serwer ponownie.
+- **`common.sh`** — współdzielone funkcje używane przez powyższe skrypty.
+
+### Konfiguracja
+
+Skrypty czytają konfigurację z pliku `server.env` (ignorowanego przez git). Skopiuj szablon i dostosuj:
+
+```bash
+cp server.env.example server.env
+```
+
+Dostępne zmienne (wszystkie opcjonalne):
+- `PORT` — port serwera (domyślnie `8080`)
+- `HEALTH_URL` — URL do sprawdzania zdrowia (domyślnie `http://127.0.0.1:$PORT/api/health`)
+- `GIT_BRANCH` — gałąź git do śledzenia (domyślnie bieżąca)
+- `RUN_IN_BACKGROUND` — czy uruchamiać serwer w tle (`true`/`false`)
+
+> **Uwaga:** `server.env` zawiera szczegóły Twojego serwera (np. port) i **nigdy nie powinien trafić do repo** — jest w `.gitignore`.
+
+### Cron (co 2 minuty)
+
+```cron
+*/2 * * * * /ścieżka/do/autoupdate.sh
+```
+
+### Bezpieczeństwo aktualizacji
+
+Skrypty **nie nadpisują** własnych plików ani konfiguracji serwera podczas aktualizacji z GitHub. Chronione pliki to: `autoupdate.sh`, `restart.sh`, `common.sh`, `server.env`, `server.env.example`, `start.sh`, `stop.sh`, `generate-assets.sh`, `preview-logo.sh`, logi, `venv/` i `data/`.
+
 ## Technologie
 
 - Python (tylko biblioteka standardowa)

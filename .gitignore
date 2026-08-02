@@ -21,6 +21,15 @@ Thumbs.db
 *.swp
 *.swo
 
-# Server scripts (local use only)
+# Server scripts (local use only - not shared)
 start.sh
 stop.sh
+
+# Local server configuration (contains server-specific details - NEVER commit)
+server.env
+
+# Logs
+*.log
+
+# Python virtual environment
+venv/
