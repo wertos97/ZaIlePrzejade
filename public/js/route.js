@@ -39,34 +39,37 @@ async function findRoute() {
     }
 
     try {
-        // Fetch both modes simultaneously
-        const [shortResponse, convenientResponse] = await Promise.all([
-            fetch(`/api/find-route?from=${state.fromStop.id}&to=${state.toStop.id}&mode=short`),
-            fetch(`/api/find-route?from=${state.fromStop.id}&to=${state.toStop.id}&mode=convenient`),
-        ]);
+        // Fetch only the currently selected mode (reduces server load by ~50%)
+        // The other mode is fetched lazily when the user switches modes.
+        const response = await fetch(`/api/find-route?from=${state.fromStop.id}&to=${state.toStop.id}&mode=${state.routeMode}`);
+        const result = await response.json();
 
-        const shortResult = await shortResponse.json();
-        const convenientResult = await convenientResponse.json();
-
-        if (shortResult.error) {
+        if (result.error) {
             loadingEl.style.display = 'none';
             if (isMobile && loadingOverlay) loadingOverlay.classList.remove('show');
-            showToast(shortResult.error + ' Kliknij trasę ponownie, aby spróbować.', 5000);
+            showToast(result.error + ' Kliknij trasę ponownie, aby spróbować.', 5000);
             return;
         }
 
-        // Cache both results
-        state.routeCache[routeKey] = {
-            short: shortResult,
-            convenient: convenientResult,
-        };
-
-        const result = state.routeMode === 'short' ? shortResult : convenientResult;
+        // Cache the fetched mode
+        if (!state.routeCache[routeKey]) {
+            state.routeCache[routeKey] = {};
+        }
+        state.routeCache[routeKey][state.routeMode] = result;
 
         // This is a new route - fit bounds on next draw
         state.shouldFitBounds = true;
 
-        updateEqualityIndicators(shortResult, convenientResult);
+        // Update equality indicator only if we have both modes cached
+        const cached = state.routeCache[routeKey];
+        if (cached.short && cached.convenient) {
+            updateEqualityIndicators(cached.short, cached.convenient);
+        } else {
+            // Hide equality indicator until we have both modes
+            document.getElementById('mode-equal').style.display = 'none';
+            document.getElementById('mobile-mode-equal').style.display = 'none';
+        }
+
         displayRoute(result);
         updateURL();
     } catch (error) {
@@ -79,8 +82,14 @@ async function findRoute() {
 }
 
 function updateEqualityIndicators(shortResult, convenientResult) {
+    // If either mode is missing, hide the equality indicator
+    if (!shortResult || !convenientResult || shortResult.error || convenientResult.error) {
+        document.getElementById('mode-equal').style.display = 'none';
+        document.getElementById('mobile-mode-equal').style.display = 'none';
+        return;
+    }
+
     const equal = (
-        !convenientResult.error &&
         Math.abs(shortResult.total_distance - convenientResult.total_distance) < 0.001 &&
         (shortResult.transfers || []).length === (convenientResult.transfers || []).length
     );

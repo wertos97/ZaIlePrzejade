@@ -8,6 +8,10 @@
 # jest ładowana z pliku `server.env` (ignorowanego przez git).
 # ============================================================
 
+# --- PATH dla cron (cron działa w minimalnym środowisku bez pełnego PATH) ---
+# Ustaw jawnie, aby skrypty znalazły git, curl, python3, fuser, pgrep, nohup
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
 # --- Ścieżki ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/server.env"
