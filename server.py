@@ -1024,6 +1024,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 except (ValueError, TypeError):
                     self.serve_json({'error': 'Invalid distance parameter'})
                     return
+                # Reject NaN/Infinity which could cause invalid results
+                if not math.isfinite(distance):
+                    self.serve_json({'error': 'Invalid distance parameter'})
+                    return
                 if distance < 0:
                     distance = 0.0
                 cost_reg, cost_red = calculate_cost(distance)
@@ -1094,6 +1098,12 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('X-XSS-Protection', '1; mode=block')
 
+    def end_headers(self):
+        """Send security headers on ALL responses (including static files)."""
+        # Add security headers to every response (static files, API, errors)
+        self._security_headers()
+        super().end_headers()
+
     def serve_json(self, data, cache=False, status=200):
         """Serve JSON response with optional gzip compression."""
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
@@ -1107,14 +1117,12 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_header('Content-Encoding', 'gzip')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-cache')
-            self._security_headers()
             self.end_headers()
         else:
             self.send_response(status)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-cache')
-            self._security_headers()
             self.end_headers()
         self._send_body(body)
 
@@ -1154,7 +1162,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_header('Content-Encoding', 'gzip')
             self.send_header('Content-Length', str(len(body_gz)))
             self.send_header('Cache-Control', 'public, max-age=60')
-            self._security_headers()
             self.end_headers()
             self._send_body(body_gz)
         else:
@@ -1162,7 +1169,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'public, max-age=60')
-            self._security_headers()
             self.end_headers()
             self._send_body(body)
 
@@ -1171,7 +1177,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-Type', 'text/plain; charset=utf-8')
         self.send_header('Content-Length', '0')
-        self._security_headers()
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
 
