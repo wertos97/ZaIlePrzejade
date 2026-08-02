@@ -48,7 +48,7 @@
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous" />
     <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css" />
 </head>
@@ -56,8 +56,13 @@
     <!-- Header -->
     <header class="header">
         <div class="header-left">
-            <h1>Za Ile Przejadę?</h1>
-            <p class="subtitle">Kalkulator cen biletów MPK Kraków 2027</p>
+            <div class="header-title">
+                <img src="/logo.svg" alt="Logo" class="header-logo">
+                <div>
+                    <h1>Za Ile Przejadę?</h1>
+                    <p class="subtitle">Kalkulator cen biletów MPK Kraków 2027</p>
+                </div>
+            </div>
         </div>
         <div class="header-right">
             <button class="btn-header" id="btn-info" aria-label="Informacja o aplikacji">ℹ️ O co chodzi?</button>
@@ -227,9 +232,9 @@
     </div>
 
     <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous" defer></script>
     <!-- App JS -->
-    <script src="app.js"></script>
-    <script src="js/route.js"></script>
+    <script src="app.js" defer></script>
+    <script src="js/route.js" defer></script>
 </body>
 </html>

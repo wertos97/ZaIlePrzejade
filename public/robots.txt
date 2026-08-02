@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /api/
+Disallow: /favicon.svg
+Disallow: /logo.svg
+Disallow: /og-image.svg
+
+Sitemap: https://zaileprzeja.de/sitemap.xml

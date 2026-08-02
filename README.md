@@ -22,6 +22,28 @@ python server.py
 
 Serwer uruchomi się na `http://localhost:8080`.
 
+## Logo i asset'y
+
+Logo aplikacji znajduje się w `public/logo.svg` i jest **jedynym źródłem prawdy**. Aby zmiana logo propagowała się do faviconu i statycznego obrazu OG, uruchom:
+
+```bash
+bash generate-assets.sh
+```
+
+Skrypt regeneruje:
+- `public/favicon.svg` — favicon z logo osadzonym inline
+- `public/og-image.svg` — statyczny obraz OG z logo osadzonym inline
+
+Dynamiczny obraz OG (`/api/og-image`) czyta `logo.svg` w czasie działania serwera, więc aktualizuje się automatycznie bez uruchamiania skryptu.
+
+Aby wygenerować podglądy wszystkich assetów (w tym dynamicznego OG), uruchom:
+
+```bash
+bash preview-logo.sh
+```
+
+Wynik trafia do katalogu `previews/`.
+
 ## Deployment
 
 Aplikacja jest gotowa do deploymentu na [Render](https://render.com).

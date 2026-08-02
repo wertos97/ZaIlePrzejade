@@ -1,0 +1,29 @@
+# Garść faktów
+
+Żeby lepiej zrozumieć o co chodzi i dlaczego taki kalkulator powstał:
+
+Zgodnie z oficjalnym komunikatem MPK S.A. w Krakowie ([źródło](https://www.facebook.com/photo/?fbid=1445327380951786&set=a.612767970874402)):
+
+> Od przyszłego roku bilety MPK w Krakowie będziemy liczyć na odległość.
+
+## Jak to będzie działać?
+
+Generalnie to "się okaze", ale...
+
+👉 **Płacisz za to, ile kilometrów faktycznie przejedziesz.** Nie za czas, nie za liczbę przystanków — tylko za dystans.
+
+## Nowy cennik
+
+- ➡️ Do 3,5 km: **4 zł** normalny / **2 zł** ulgowy
+- ➡️ Powyżej 3,5 km: każde rozpoczęte 500 m to **+0,50 zł** / **+0,25 zł**
+- ➡️ Maksymalnie zapłacisz **9 zł** / **4,50 zł** za przejazd
+
+Jest też jeden plus — dzienny limit wydatków **20 zł**. Po osiągnięciu tej kwoty kolejne przejazdy tego dnia są gratis, tak jakbyś miał bilet dzienny.
+
+Nowy system ma być dostępny w aplikacji mKraków. No i tyle — jedzie się na odległość.
+
+---
+
+⚠️ Sytuacja i powyższe stwierdzenia mogą zmienić się w każdej chwili. Sprawdzaj oficjalne komunikaty!
+
+**Koniecznie przeczytaj "Uwaga"!**

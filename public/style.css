@@ -34,6 +34,18 @@ body {
     min-width: 0;
 }
 
+.header-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.header-logo {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+}
+
 .header-left h1 {
     font-size: 1.15em;
     margin-bottom: 1px;
@@ -609,7 +621,68 @@ body {
     overflow-y: auto;
     line-height: 1.6;
     font-size: 0.9em;
-    white-space: pre-wrap;
+}
+
+.modal-body h1 {
+    font-size: 1.3em;
+    color: #1a5276;
+    margin: 16px 0 8px 0;
+    padding-bottom: 6px;
+    border-bottom: 2px solid #e0e0e0;
+}
+
+.modal-body h2 {
+    font-size: 1.15em;
+    color: #1a5276;
+    margin: 14px 0 6px 0;
+}
+
+.modal-body h3 {
+    font-size: 1.05em;
+    color: #333;
+    margin: 12px 0 4px 0;
+}
+
+.modal-body p {
+    margin: 8px 0;
+}
+
+.modal-body strong {
+    color: #1a5276;
+}
+
+.modal-body a {
+    color: #2874a6;
+    text-decoration: underline;
+}
+
+.modal-body a:hover {
+    color: #1a5276;
+}
+
+.modal-body blockquote {
+    border-left: 3px solid #2874a6;
+    padding: 8px 12px;
+    margin: 10px 0;
+    background: #f0f8ff;
+    border-radius: 0 4px 4px 0;
+    color: #555;
+    font-style: italic;
+}
+
+.modal-body ul {
+    padding-left: 20px;
+    margin: 8px 0;
+}
+
+.modal-body li {
+    margin: 4px 0;
+}
+
+.modal-body hr {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 16px 0;
 }
 
 /* Custom popup for stop selection */

@@ -6,11 +6,15 @@ Serves static files and provides API endpoints for route finding and cost calcul
 
 import functools
 import gzip
+import html
 import io
 import json
 import math
 import os
 import heapq
+import re
+import threading
+import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
@@ -18,8 +22,50 @@ from collections import defaultdict
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-    """HTTPServer that handles each request in a new thread."""
+    """HTTPServer that handles each request in a new thread, with a concurrency limit."""
     daemon_threads = True
+    # Limit concurrent requests to protect the 256MB RAM / low-CPU environment
+    request_queue_size = 64
+    _active_requests = 0
+    _active_lock = threading.Lock()
+    MAX_CONCURRENT = 20
+
+    def process_request(self, request, client_address):
+        """Limit concurrent requests to prevent resource exhaustion."""
+        with self._active_lock:
+            if self._active_requests >= self.MAX_CONCURRENT:
+                # Too many concurrent requests - reject immediately with 503
+                try:
+                    request.sendall(b'HTTP/1.1 503 Service Unavailable\r\n'
+                                    b'Content-Type: text/plain; charset=utf-8\r\n'
+                                    b'Content-Length: 0\r\n'
+                                    b'Connection: close\r\n'
+                                    b'Retry-After: 1\r\n'
+                                    b'\r\n')
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        request.close()
+                    except OSError:
+                        pass
+                return
+            self._active_requests += 1
+
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            with self._active_lock:
+                self._active_requests -= 1
+            raise
+
+    def process_request_thread(self, request, client_address):
+        """Run the request in a thread, decrementing the active counter when done."""
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            with self._active_lock:
+                self._active_requests -= 1
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROCESSED_DIR = os.path.join(BASE_DIR, 'processed')
@@ -122,6 +168,9 @@ for stop_id, edges in adjacency_raw.items():
 
 print(f"  Built stop pair route lookup with {len(stop_pair_routes)} entries")
 
+# Free memory: adjacency_raw is no longer needed after building adjacency and stop_pair_routes
+del adjacency_raw
+
 # ============================================================
 # Build search index for fast stop name lookups
 # ============================================================
@@ -149,6 +198,9 @@ for s in stops_list:
 
 print(f"  Built search index with {len(_stop_search_index)} prefixes")
 
+# Free memory: stops_list is no longer needed after building all stop structures
+del stops_list
+
 # ============================================================
 # Ticket pricing configuration
 # ============================================================
@@ -168,7 +220,27 @@ MAX_COST_REDUCED = pricing['max_cost_reduced']
 
 print(f"  Loaded pricing from {PRICING_PATH}")
 
+# Load logo SVG for OG image generation
+_logo_svg_path = os.path.join(PUBLIC_DIR, 'logo.svg')
+with open(_logo_svg_path, encoding='utf-8') as f:
+    _logo_svg_content = f.read()
 
+
+def _clean_logo_svg(content):
+    """Clean logo SVG: strip XML declaration, Inkscape/Sodipodi metadata,
+    and empty defs. Keeps style= attributes (they may override fill colors)."""
+    content = re.sub(r'<\?xml[^>]*\?>', '', content, count=1)
+    content = re.sub(r'<sodipodi:namedview.*?</sodipodi:namedview>', '', content, flags=re.S)
+    content = re.sub(r'<inkscape:grid[^>]*/>', '', content)
+    content = re.sub(r'<defs[^>]*>\s*</defs>', '', content)
+    content = re.sub(r'<defs[^>]*/>', '', content)
+    content = re.sub(r'\s+id="[^"]*"', '', content)
+    content = re.sub(r'\n\s*\n+', '\n', content)
+    return content.strip()
+
+
+_logo_svg_content = _clean_logo_svg(_logo_svg_content)
+print(f"  Loaded logo from {_logo_svg_path}")
 # ============================================================
 # Warmup: pre-compute routes for popular stop pairs at startup
 # ============================================================
@@ -222,14 +294,40 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return math.sqrt(dlat * dlat + dlon * dlon)
 
 
-# --- Pathfinding cache (bounded dict, thread-safe via GIL) ---
+# --- Pathfinding cache (bounded by size, thread-safe via GIL) ---
 _FIND_CACHE_MAX = 10000
+_FIND_CACHE_MAX_BYTES = 20 * 1024 * 1024  # 20 MB max
 _find_cache = {}
+_find_cache_bytes = 0
+
+def _cache_put_find(key, value):
+    """Store a value in the find cache, evicting oldest entries if over size limit."""
+    global _find_cache_bytes
+    # Estimate size of the cached value (rough but effective)
+    size = len(json.dumps(value, ensure_ascii=False)) if value[0] is not None else 64
+    if size > _FIND_CACHE_MAX_BYTES:
+        return  # Don't cache very large results
+    if key in _find_cache:
+        _find_cache_bytes -= _find_cache[key][1]
+    # Evict oldest entries if over budget
+    while _find_cache_bytes + size > _FIND_CACHE_MAX_BYTES and _find_cache:
+        oldest_key = next(iter(_find_cache))
+        _find_cache_bytes -= _find_cache[oldest_key][1]
+        del _find_cache[oldest_key]
+    _find_cache[key] = (value, size)
+    _find_cache_bytes += size
+
+def _cache_get_find(key):
+    """Retrieve a value from the find cache."""
+    entry = _find_cache.get(key)
+    if entry is not None:
+        return entry[0]
+    return None
 
 def find_shortest_path(start_id, end_id):
     """Find shortest path with cache."""
     cache_key = (start_id, end_id)
-    cached = _find_cache.get(cache_key)
+    cached = _cache_get_find(cache_key)
     if cached is not None:
         return cached
 
@@ -268,8 +366,7 @@ def find_shortest_path(start_id, end_id):
             path_edges.reverse()
             real_total = sum(e['distance'] for e in path_edges if e is not None)
             result = reconstruct_path(prev, start_id, end_id, route, real_total), None
-            if len(_find_cache) < _FIND_CACHE_MAX:
-                _find_cache[cache_key] = result
+            _cache_put_find(cache_key, result)
             return result
 
         for edge in adjacency.get(stop, []):
@@ -292,8 +389,7 @@ def find_shortest_path(start_id, end_id):
                 heapq.heappush(pq, (estimated, new_pen, new_real, next_stop, next_route))
 
     result = None, "Nie znaleziono trasy między tymi przystankami"
-    if len(_find_cache) < _FIND_CACHE_MAX:
-        _find_cache[cache_key] = result
+    _cache_put_find(cache_key, result)
     return result
 
 
@@ -586,9 +682,53 @@ BLOCKED_PATHS = (
     '/favicon.ico',
 )
 
-# Pre-computed static JSON responses (cached at startup)
+# Pre-computed static JSON responses (cached at startup, both plain and gzip)
 _cached_stops_json = None
 _cached_routes_json = None
+_cached_stops_json_gz = None
+_cached_routes_json_gz = None
+
+
+def html_escape(s):
+    """Escape a string for safe insertion into HTML."""
+    return html.escape(str(s), quote=True)
+
+
+# ============================================================
+# Rate limiting (simple token bucket per IP)
+# ============================================================
+_RATE_LIMIT_WINDOW = 10.0      # seconds
+_RATE_LIMIT_MAX = 30           # max requests per window per IP
+_RATE_LIMIT_EXPENSIVE_MAX = 5  # max expensive requests per window per IP
+_rate_limits = {}              # ip -> deque of timestamps
+_rate_limits_lock = threading.Lock()
+
+
+def _rate_limit_ok(ip, expensive=False):
+    """Check if a request from this IP is within rate limits."""
+    now = time.time()
+    with _rate_limits_lock:
+        timestamps = _rate_limits.get(ip)
+        if timestamps is None:
+            timestamps = []
+            _rate_limits[ip] = timestamps
+
+        # Remove old timestamps
+        while timestamps and timestamps[0] < now - _RATE_LIMIT_WINDOW:
+            timestamps.pop(0)
+
+        limit = _RATE_LIMIT_EXPENSIVE_MAX if expensive else _RATE_LIMIT_MAX
+        if len(timestamps) >= limit:
+            return False
+
+        timestamps.append(now)
+
+        # Prevent unbounded growth of the rate limit dict
+        if len(_rate_limits) > 10000:
+            # Drop entries that have no recent activity
+            for k in [k for k, v in _rate_limits.items() if not v or v[-1] < now - _RATE_LIMIT_WINDOW * 2]:
+                del _rate_limits[k]
+        return True
 
 
 class MPKRequestHandler(SimpleHTTPRequestHandler):
@@ -601,6 +741,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
 
     def do_HEAD(self):
+        # HEAD should not send a body - set a flag and reuse do_GET logic
+        self._head_only = True
         self.do_GET()
 
     def do_POST(self):
@@ -620,6 +762,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.send_header('Allow', 'GET, HEAD, OPTIONS')
         self.end_headers()
 
+    def _send_body(self, body):
+        """Write the response body, unless this is a HEAD request."""
+        if not getattr(self, '_head_only', False):
+            self.wfile.write(body)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -629,8 +776,31 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.handle_api(path, query)
             return
 
+        # Rate limit static file requests (protects against crawler floods)
+        client_ip = self.client_address[0] if self.client_address else 'unknown'
+        if not _rate_limit_ok(client_ip):
+            self.send_error_page(429)
+            return
+
         if path in BLOCKED_PATHS or any(path.startswith(p) for p in BLOCKED_PREFIXES):
             self.send_error_page(404)
+            return
+
+        # Serve the generated favicon.svg (clean, logo embedded inline)
+        if path == '/favicon.svg':
+            favicon_path = os.path.join(PUBLIC_DIR, 'favicon.svg')
+            if os.path.isfile(favicon_path):
+                with open(favicon_path, 'r', encoding='utf-8') as f:
+                    body = f.read().encode('utf-8')
+            else:
+                # Fallback: serve cleaned logo content
+                body = _logo_svg_content.encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/svg+xml')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'public, max-age=86400')
+            self.end_headers()
+            self._send_body(body)
             return
 
         if path == '/' or path == '':
@@ -671,6 +841,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             with open(file_path, 'r', encoding='utf-8') as f:
                 html = f.read()
             
+            # Validate mode to prevent injection via query string
+            if mode not in ('short', 'convenient'):
+                mode = 'short'
+            
             from_name = "Przystanek początkowy"
             to_name = "Przystanek końcowy"
             
@@ -682,10 +856,17 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             if to_group:
                 to_name = to_group['name']
             
-            og_image_url = f"https://zaileprzeja.de/api/og-image?from={from_stop}&to={to_stop}&mode={mode}"
-            current_url = f"https://zaileprzeja.de/?from={from_stop}&to={to_stop}&mode={mode}"
-            title = f"Za Ile Przejadę? {from_name} → {to_name}"
-            description = f"Oblicz koszt przejazdu z {from_name} do {to_name} w nowym systemie biletów MPK Kraków."
+            # Escape all values inserted into HTML to prevent XSS
+            from_name_esc = html_escape(from_name)
+            to_name_esc = html_escape(to_name)
+            from_stop_esc = html_escape(from_stop)
+            to_stop_esc = html_escape(to_stop)
+            mode_esc = html_escape(mode)
+            
+            og_image_url = f"https://zaileprzeja.de/api/og-image?from={from_stop_esc}&to={to_stop_esc}&mode={mode_esc}"
+            current_url = f"https://zaileprzeja.de/?from={from_stop_esc}&to={to_stop_esc}&mode={mode_esc}"
+            title = f"Za Ile Przejadę? {from_name_esc} → {to_name_esc}"
+            description = f"Oblicz koszt przejazdu z {from_name_esc} do {to_name_esc} w nowym systemie biletów MPK Kraków."
             
             html = html.replace(
                 '<meta property="og:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">',
@@ -728,7 +909,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(body)
+            self._send_body(body)
             
         except Exception:
             super().do_GET()
@@ -736,11 +917,20 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     def handle_api(self, path, query):
         """Handle API requests."""
         try:
+            # Rate limit API requests (expensive endpoints get a stricter limit)
+            client_ip = self.client_address[0] if self.client_address else 'unknown'
+            expensive = path in ('/api/find-route', '/api/og-image')
+            if not _rate_limit_ok(client_ip, expensive=expensive):
+                self.serve_json({'error': 'Zbyt wiele zapytań. Spróbuj ponownie za chwilę.'}, status=429)
+                return
+
             if path == '/api/stops':
                 self.serve_json_cached(path)
 
             elif path == '/api/stops/search':
                 q = query.get('q', [''])[0].lower().strip()
+                if len(q) > 100:
+                    q = q[:100]
                 if len(q) < 2:
                     self.serve_json([])
                     return
@@ -782,6 +972,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
             elif path == '/api/stop-platforms':
                 group_id = query.get('id', [''])[0]
+                if len(group_id) > 64:
+                    group_id = group_id[:64]
                 if not group_id or not group_id.startswith('group_'):
                     self.serve_json({'error': 'Invalid stop group ID'})
                     return
@@ -803,6 +995,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 to_stop = query.get('to', [''])[0]
                 mode = query.get('mode', ['short'])[0]
 
+                if len(from_stop) > 64:
+                    from_stop = from_stop[:64]
+                if len(to_stop) > 64:
+                    to_stop = to_stop[:64]
+
                 if not from_stop or not to_stop:
                     self.serve_json({'error': 'Missing from or to parameter'})
                     return
@@ -820,7 +1017,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
             elif path == '/api/cost':
                 try:
-                    distance = float(query.get('distance', ['0'])[0])
+                    distance_str = query.get('distance', ['0'])[0]
+                    if len(distance_str) > 32:
+                        distance_str = distance_str[:32]
+                    distance = float(distance_str)
                 except (ValueError, TypeError):
                     self.serve_json({'error': 'Invalid distance parameter'})
                     return
@@ -835,6 +1035,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
             elif path == '/api/shapes':
                 route_id = query.get('route_id', [''])[0]
+                if len(route_id) > 64:
+                    route_id = route_id[:64]
                 if not route_id:
                     self.serve_json({'error': 'Missing route_id parameter'})
                     return
@@ -849,6 +1051,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
             elif path == '/api/stop':
                 stop_id = query.get('id', [''])[0]
+                if len(stop_id) > 64:
+                    stop_id = stop_id[:64]
                 if not stop_id:
                     self.serve_json({'error': 'Missing id parameter'})
                     return
@@ -862,6 +1066,12 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 from_stop = query.get('from', [''])[0]
                 to_stop = query.get('to', [''])[0]
                 mode = query.get('mode', ['short'])[0]
+                if len(from_stop) > 64:
+                    from_stop = from_stop[:64]
+                if len(to_stop) > 64:
+                    to_stop = to_stop[:64]
+                if mode not in ('short', 'convenient'):
+                    mode = 'short'
                 svg = self.generate_og_image_svg(from_stop, to_stop, mode)
                 body = svg.encode('utf-8')
                 self.send_response(200)
@@ -869,7 +1079,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 self.send_header('Content-Length', str(len(body)))
                 self.send_header('Cache-Control', 'public, max-age=3600')
                 self.end_headers()
-                self.wfile.write(body)
+                self._send_body(body)
 
             else:
                 self.serve_json({'error': 'Unknown API endpoint'})
@@ -877,7 +1087,14 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self.serve_json({'error': 'Internal server error'})
 
-    def serve_json(self, data, cache=False):
+    def _security_headers(self):
+        """Add common security headers to a response."""
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('X-XSS-Protection', '1; mode=block')
+
+    def serve_json(self, data, cache=False, status=200):
         """Serve JSON response with optional gzip compression."""
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
         
@@ -885,23 +1102,25 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         accept = self.headers.get('Accept-Encoding', '')
         if len(body) > 1024 and 'gzip' in accept:
             body = gzip.compress(body, compresslevel=6)
-            self.send_response(200)
+            self.send_response(status)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Encoding', 'gzip')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-cache')
+            self._security_headers()
             self.end_headers()
         else:
-            self.send_response(200)
+            self.send_response(status)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-cache')
+            self._security_headers()
             self.end_headers()
-        self.wfile.write(body)
+        self._send_body(body)
 
     def serve_json_cached(self, path):
-        """Serve pre-computed JSON for static endpoints."""
-        global _cached_stops_json, _cached_routes_json
+        """Serve pre-computed JSON for static endpoints (gzip pre-compressed)."""
+        global _cached_stops_json, _cached_routes_json, _cached_stops_json_gz, _cached_routes_json_gz
         
         if path == '/api/stops':
             if _cached_stops_json is None:
@@ -916,38 +1135,43 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                         'platform_count': len(g['platforms']),
                     })
                 _cached_stops_json = json.dumps(result, ensure_ascii=False).encode('utf-8')
+                _cached_stops_json_gz = gzip.compress(_cached_stops_json, compresslevel=6)
             body = _cached_stops_json
+            body_gz = _cached_stops_json_gz
         elif path == '/api/routes':
             if _cached_routes_json is None:
                 _cached_routes_json = json.dumps(routes_list, ensure_ascii=False).encode('utf-8')
+                _cached_routes_json_gz = gzip.compress(_cached_routes_json, compresslevel=6)
             body = _cached_routes_json
+            body_gz = _cached_routes_json_gz
         else:
             return
         
         accept = self.headers.get('Accept-Encoding', '')
         if 'gzip' in accept:
-            body = gzip.compress(body, compresslevel=6)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Encoding', 'gzip')
-            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Content-Length', str(len(body_gz)))
             self.send_header('Cache-Control', 'public, max-age=60')
+            self._security_headers()
             self.end_headers()
+            self._send_body(body_gz)
         else:
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'public, max-age=60')
+            self._security_headers()
             self.end_headers()
-        self.wfile.write(body)
+            self._send_body(body)
 
     def send_error_page(self, code):
         """Send a minimal error response."""
         self.send_response(code)
         self.send_header('Content-Type', 'text/plain; charset=utf-8')
         self.send_header('Content-Length', '0')
-        self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('X-Frame-Options', 'DENY')
+        self._security_headers()
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
 
@@ -969,11 +1193,32 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 cost_text = f"{result['cost_regular']:.2f} / {result['cost_reduced']:.2f} zł"
 
         def esc(s):
-            return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+            return html.escape(str(s), quote=True)
+
+        def truncate_name(name, max_chars=26):
+            """Truncate a stop name with '...' if it exceeds max_chars.
+            Truncates at a word boundary for a cleaner result."""
+            if len(name) <= max_chars:
+                return name
+            # Cut at max_chars, then back off to the last space
+            cut = name[:max_chars - 3]
+            last_space = cut.rfind(' ')
+            if last_space > max_chars * 0.5:
+                cut = cut[:last_space]
+            return cut.rstrip() + '...'
+
+        # Truncate long names so they fit within the image (max ~820px at 55px font)
+        from_name = truncate_name(from_name)
+        to_name = truncate_name(to_name)
 
         from_name_esc = esc(from_name)
         to_name_esc = esc(to_name)
         cost_text_esc = esc(cost_text)
+
+        # For names that are still long after truncation, force-fit to 820px width
+        # (prevents overflow past the logo area on the right)
+        from_fit = ' textLength="820" lengthAdjust="spacingAndGlyphs"' if len(from_name) > 24 else ''
+        to_fit = ' textLength="820" lengthAdjust="spacingAndGlyphs"' if len(to_name) > 24 else ''
 
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">\n'
@@ -986,18 +1231,21 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             '  <rect width="1200" height="630" fill="url(#bg)"/>\n'
             '\n'
             '  <text x="80" y="77" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#5dade2">SKĄD</text>\n'
-            f'  <text x="80" y="145" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1">{from_name_esc}</text>\n'
+            f'  <text x="80" y="145" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1"{from_fit}>{from_name_esc}</text>\n'
             '  <text x="80" y="230" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#5dade2">DOKĄD</text>\n'
-            f'  <text x="80" y="298" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1">{to_name_esc}</text>\n'
+            f'  <text x="80" y="298" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1"{to_fit}>{to_name_esc}</text>\n'
             '  <line x1="80" y1="346" x2="240" y2="346" stroke="#5dade2" stroke-width="4"/>\n'
             '  <text x="80" y="431" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="normal" fill="#5dade2">CENA BILETU</text>\n'
             f'  <text x="80" y="548" font-family="Arial, Helvetica, sans-serif" font-size="120" font-weight="bold" fill="#ffffff">{cost_text_esc}</text>\n'
-            '  <rect x="920" y="420" width="180" height="96" rx="16" fill="#2874a6"/>\n'
-            '  <rect x="938" y="438" width="32" height="32" rx="4" fill="#aed6f1"/>\n'
-            '  <rect x="994" y="438" width="32" height="32" rx="4" fill="#aed6f1"/>\n'
-            '  <rect x="1050" y="438" width="32" height="32" rx="4" fill="#aed6f1"/>\n'
-            '  <circle cx="960" cy="518" r="16" fill="#241f31"/>\n'
-            '  <circle cx="1060" cy="518" r="16" fill="#241f31"/>\n'
+            f'  <g transform="translate(930,400) scale(2.5)">\n'
+        )
+        # Extract inner elements from logo.svg (strip <svg> wrapper)
+        import re
+        logo_inner = re.sub(r'<svg[^>]*>', '', _logo_svg_content, count=1)
+        logo_inner = re.sub(r'</svg>', '', logo_inner)
+        svg += f'  {logo_inner.strip()}\n'
+        svg += '  </g>\n'
+        svg += (
             '  <text x="1010" y="577" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#7f8c8d" text-anchor="middle">zaileprzeja.de</text>\n'
             '</svg>'
         )

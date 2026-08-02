@@ -265,15 +265,65 @@ function setRouteMode(mode) {
 }
 
 // ============================================================
+// Simple Markdown parser
+// ============================================================
+
+function parseMarkdown(md) {
+    var html = md;
+    // Escape HTML (must be first)
+    html = html.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
+    // Headers
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+    // Horizontal rule
+    html = html.replace(/^---$/gm, '<hr>');
+    // Bold
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Italic
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // Links [text](url)
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    // Blockquote
+    html = html.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+    // Unordered list items
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    // Wrap consecutive <li> in <ul>
+    html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+    // Paragraphs (double newline)
+    html = html.replace(/\n\n/g, '</p><p>');
+    // Single newline to <br>
+    html = html.replace(/\n/g, '<br>');
+    // Wrap in paragraph
+    html = '<p>' + html + '</p>';
+    // Clean up empty paragraphs
+    html = html.replace(/<p>\s*<\/p>/g, '');
+    html = html.replace(/<p>\s*(<h[1-3]>)/g, '$1');
+    html = html.replace(/(<\/h[1-3]>)\s*<\/p>/g, '$1');
+    html = html.replace(/<p>\s*(<hr>)/g, '$1');
+    html = html.replace(/(<hr>)\s*<\/p>/g, '$1');
+    html = html.replace(/<p>\s*(<ul>)/g, '$1');
+    html = html.replace(/(<\/ul>)\s*<\/p>/g, '$1');
+    html = html.replace(/<p>\s*(<blockquote>)/g, '$1');
+    html = html.replace(/(<\/blockquote>)\s*<\/p>/g, '$1');
+    return html;
+}
+
+// ============================================================
 // Modal
 // ============================================================
 
 async function showModal(title, file) {
     try {
-        const response = await fetch('/' + file);
-        const text = await response.text();
+        var mdFile = file.replace(/\.txt$/, '.md');
+        var response = await fetch('/' + mdFile);
+        if (!response.ok) {
+            response = await fetch('/' + file);
+        }
+        var text = await response.text();
+        var isMd = mdFile.endsWith('.md');
         document.getElementById('modal-title').textContent = title;
-        document.getElementById('modal-body').textContent = text;
+        document.getElementById('modal-body').innerHTML = isMd ? parseMarkdown(text) : text;
         document.getElementById('modal-overlay').style.display = 'block';
         document.getElementById('modal').style.display = 'flex';
     } catch (error) {
@@ -468,6 +518,12 @@ function handleSearch(input, resultsId, field) {
                 });
             }
             resultsEl.classList.add('show');
+            // Auto-highlight first result
+            var firstItem = resultsEl.querySelector('.search-item[data-index]');
+            if (firstItem) {
+                firstItem.classList.add('search-item-active');
+                searchSelectedIndex[field] = 0;
+            }
         } catch (error) {
             console.error('Search error:', error);
         }

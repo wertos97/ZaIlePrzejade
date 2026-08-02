@@ -1,0 +1,56 @@
+[2026-08-02 16:40:49] 🔄 Restartowanie serwera na porcie 8080...
+[2026-08-02 16:40:52] 🚀 Proces server.py został zrestartowany w tle.
+[2026-08-02 16:41:47] 🔄 Restartowanie serwera na porcie 8080...
+[2026-08-02 16:41:50] 🚀 Proces server.py został zrestartowany w tle.
+[2026-08-02 16:42:16] ℹ️ Status: OK. Serwer odpowiada na /api/health (200 OK), brak nowych aktualizacji.
+[2026-08-02 16:42:18] ==========================================
+[2026-08-02 16:42:18] 🚀 Rozpoczynanie auto-naprawy / aktualizacji.
+[2026-08-02 16:42:18] 📌 Powód: Serwer nie odpowiada na http://127.0.0.1:8080/api/health.
+[2026-08-02 16:42:18] ==========================================
+[2026-08-02 16:42:18] 📥 Pobieranie najnowszej wersji kodu z GitHub...
+HEAD is now at 6c15be2 poprawki ux 2
+Removing autoupdate.sh
+Removing generate-assets.sh
+Removing lib/
+Removing preview-logo.sh
+Removing previews/
+Removing public/author.md
+Removing public/info.md
+Removing public/logo.svg
+Removing public/robots.txt
+Removing public/sitemap.xml
+Removing public/warning.md
+Removing restart.sh
+Removing server.env.example
+[2026-08-02 16:42:19] ⚠️ Brak środowiska venv. Tworzenie nowego...
+The virtual environment was not created successfully because ensurepip is not
+available.  On Debian/Ubuntu systems, you need to install the python3-venv
+package using the following command.
+
+    apt install python3.12-venv
+
+You may need to use sudo with that command.  After installing the python3-venv
+package, recreate your virtual environment.
+
+Failing command: /home/wati/Documents/mpk/venv/bin/python3
+
+[2026-08-02 16:42:20] ⏳ Czekanie na załadowanie indeksów w RAM i odpowiedź z http://127.0.0.1:8080/api/health (max 30s)...
+[2026-08-02 16:42:22] ==========================================
+[2026-08-02 16:42:22] 🎉 SUKCES: Serwer pomyślnie przeszedł test /api/health!
+[2026-08-02 16:42:22] 📌 Commit: 6c15be2 - poprawki ux 2 (2 days ago) <wertos97>
+[2026-08-02 16:42:22] ==========================================
+[2026-08-02 16:44:54] ==========================================
+[2026-08-02 16:44:54] 🚀 Rozpoczynanie auto-naprawy / aktualizacji.
+[2026-08-02 16:44:54] 📌 Powód: Serwer nie odpowiada na http://127.0.0.1:8080/api/health.
+[2026-08-02 16:44:54] ==========================================
+[2026-08-02 16:44:54] 📥 Pobieranie najnowszej wersji kodu z GitHub...
+HEAD is now at 6c15be2 poprawki ux 2
+Removing autoupdate.sh
+[2026-08-02 16:44:55] ⏳ Czekanie na załadowanie indeksów w RAM i odpowiedź z http://127.0.0.1:8080/api/health (max 30s)...
+[2026-08-02 16:44:57] ==========================================
+[2026-08-02 16:44:57] 🎉 SUKCES: Serwer pomyślnie przeszedł test /api/health!
+[2026-08-02 16:44:57] 📌 Commit: 6c15be2 - poprawki ux 2 (2 days ago) <wertos97>
+[2026-08-02 16:44:57] ==========================================
+[2026-08-02 16:49:54] 🔄 Restartowanie serwera na porcie 8080...
+[2026-08-02 16:49:57] 🚀 Proces server.py został zrestartowany w tle.
+[2026-08-02 16:50:23] ℹ️ Status: OK. Serwer odpowiada na /api/health (200 OK), brak nowych aktualizacji.

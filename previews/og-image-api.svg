@@ -7,16 +7,15 @@
   </defs>
   <rect width="1200" height="630" fill="url(#bg)"/>
 
-  <text x="80" y="77" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#5dade2">ZA ILE PRZEJADĘ?</text>
-  <text x="80" y="155" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1">Kalkulator cen biletów</text>
-  <text x="80" y="225" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1">MPK Kraków 2027</text>
-  <line x1="80" y1="270" x2="240" y2="270" stroke="#5dade2" stroke-width="4"/>
-  <text x="80" y="340" font-family="Arial, Helvetica, sans-serif" font-size="46" font-weight="normal" fill="#bdc3c7">Oblicz koszt przejazdu</text>
-  <text x="80" y="395" font-family="Arial, Helvetica, sans-serif" font-size="46" font-weight="normal" fill="#bdc3c7">w nowym systemie biletów</text>
-
-  <!-- Bus logo (from logo.svg, scaled) -->
+  <text x="80" y="77" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#5dade2">SKĄD</text>
+  <text x="80" y="145" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1">Grodzki Urząd Pracy</text>
+  <text x="80" y="230" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#5dade2">DOKĄD</text>
+  <text x="80" y="298" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="bold" fill="#ecf0f1">Rondo Kocmyrzowskie...</text>
+  <line x1="80" y1="346" x2="240" y2="346" stroke="#5dade2" stroke-width="4"/>
+  <text x="80" y="431" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="normal" fill="#5dade2">CENA BILETU</text>
+  <text x="80" y="548" font-family="Arial, Helvetica, sans-serif" font-size="120" font-weight="bold" fill="#ffffff">4.00 / 2.00 zł</text>
   <g transform="translate(930,400) scale(2.5)">
-<!-- Bus body -->
+  <!-- Bus body -->
   <rect
      x="5"
      y="10"

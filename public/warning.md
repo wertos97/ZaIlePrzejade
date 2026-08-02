@@ -1,0 +1,22 @@
+# ⚠️ Ważna sprawa!
+
+Hej, dzięki, że tu jesteś!
+
+Ta aplikacja to **NIE jest oficjalne narzędzie MPK S.A. w Krakowie.** Nie mam z nimi nic wspólnego, ani z urzędem miasta Kraków ani z żadnym innym organem miasta. Jestem po prostu mieszkańcem Krakowa z minimalną umiejętnością kodowania z AI i trochę większą świadomością UX. Lubię wizualizować dane i tak zrobiłem też z nadchodzącymi cenami biletów, żeby zobaczyć jak te nowe ceny będą wyglądać w praktyce.
+
+## Co musisz wiedzieć?
+
+📏 **Dystanse** które tu widzisz są obliczane na podstawie danych GTFS od MPK (pobrane 24.07.2026) i pokazują przystanki, linie i trasy które tego dnia były zapisane w bazie jako funkcjonujące (będę te dane aktualizować gdy zajdzie taka potrzeba). To są dane rozkładowe, więc rzeczywista trasa autobusu czy tramwaju może się różnić. Lokalizacje przystanków są uśrednione, żeby system sensowniej wybierał trasy, wrzuć więc w obliczenia margines błędu. Zwłaszcza, że dla aplikacji przejazdy między przystankami są w linii prostej (sorry, nie chciałem tu pisać alternatywy dla google maps xd). Wyliczone ceny traktuj jako poglądowe — na pewno będą się różnić od tego, co pokaże oficjalna aplikacja mKraków gdy dostanie już oficjalny "kalkulator".
+
+🚩 **Interpretacja** nadchodządych przepisów jest moja własna —
+zakłada ona, dość optymistycznie, że "limit maksymalnej opłaty za pojedynczy przejazd – 9 zł dla biletu normalnego i 4,50 zł dla ulgowego" dotyczy całej przejechanej trasy. Przykładowo, jadąc z punktu A do punktu B z dwoma przesiadkami, gdzie trasa drugiego przejazdu, czyli tego po pierwszej przesiadce i przed drugą, wynosi 9 km, zakładam, że przejechany dystans sumuje się. Więc gdy licząc od początku naszej podróży dobije się do tych 8,5 km czyli 9 zł to jazda dalej "na tym samym bilecie" jest "darmowa". Dużo tu domysłów... A ta mniej optymistyczna interpretacja, która jest dla mnie jakoś bardziej prawdopodobna, to taka, że wsiadając do druiej przesiadki kilometry liczymy od nowa. No cóż, okaże się.
+
+🎯 **Ta strona** ma Ci pomóc zorientować się ile mniej więcej kilometrów pokonujesz codziennie do pracy, szkoły czy na zakupy. Żebyś miał pojęcie, ile przyjdzie Ci płacić w nowym systemie. Ja mieszkam na południu Krakowa i już samo dotarcie do ogólnego "centrum" dobija cenę biletu do maksymalnych 9 zł.
+
+❌ **Nie sugeruj się** tymi wycenami przy planowaniu budżetu — miasto i MPK na pewno udostępnią oficjalne narzędzia w aplikacji mKraków i to one będą wiążące.
+
+📢 Jak chcesz sprawdzić oficjalne info — zajrzyj na stronę MPK Kraków albo do aplikacji mKraków.
+
+---
+
+Dzięki za przeczytanie!
