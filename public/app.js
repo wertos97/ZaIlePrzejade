@@ -270,8 +270,8 @@ function setRouteMode(mode) {
 
 function parseMarkdown(md) {
     var html = md;
-    // Escape HTML (must be first)
-    html = html.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
+    // Escape HTML (must be first) - prevent XSS from markdown content
+    html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     // Headers
     html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
     html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');

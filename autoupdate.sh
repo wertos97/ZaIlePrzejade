@@ -75,6 +75,7 @@ sync_with_git() {
         --exclude='venv/' \
         --exclude='data/' \
         --exclude='__pycache__/' \
+        --exclude='public/vendor/' \
         --exclude='common.sh' \
         --exclude='server.env' \
         --exclude='server.env.example' \
