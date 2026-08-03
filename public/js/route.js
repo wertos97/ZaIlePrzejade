@@ -268,10 +268,9 @@ function drawRouteOnMap(result) {
                     <span class="segment-label-cost">${costText}</span>
                     <span class="segment-label-dist">${distKm} km</span>
                 </div>`,
-                // Fixed size so Leaflet knows the icon dimensions (prevents clipping)
-                iconSize: [90, 40],
-                // Anchor at bottom-center so the label sits just above the end stop
-                iconAnchor: [45, 40],
+                // Auto-size to content; CSS uses width:max-content
+                iconSize: [0, 0],
+                iconAnchor: [0, 0],
             });
 
             L.marker([lastCoord[0], lastCoord[1]], { icon: icon, interactive: false }).addTo(state.routeLayer);
