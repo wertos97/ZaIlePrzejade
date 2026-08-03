@@ -261,7 +261,7 @@ function drawRouteOnMap(result) {
             const midLon = (firstCoord[1] + lastCoord[1]) / 2;
 
             const distKm = seg.distance ? seg.distance.toFixed(1) : '0.0';
-            const costText = `${seg.cost_regular.toFixed(2)} zł`;
+            const costText = seg.cost_regular !== undefined ? `${seg.cost_regular.toFixed(2)} zł` : '? zł';
 
             const icon = L.divIcon({
                 className: 'segment-label',
@@ -332,7 +332,7 @@ function buildStepsHtml(result) {
             }
             const routeLabel = routeNames.join(', ');
 
-            const segCost = segment.cost_regular ? segment.cost_regular.toFixed(2) : '0.00';
+            const segCost = segment.cost_regular !== undefined ? segment.cost_regular.toFixed(2) : '?';
             html += `
                 <div class="route-step">
                     <div class="step-header">
