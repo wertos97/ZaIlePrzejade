@@ -239,6 +239,43 @@ function drawRouteOnMap(result) {
             fillOpacity: 1,
         }).addTo(state.routeLayer);
     });
+
+    // Draw price/distance labels above each segment (ride)
+    if (result.segments && result.segments.length > 0) {
+        // Build stop_id -> coordinates lookup from path
+        const coordLookup = {};
+        path.forEach(s => {
+            if (s.stop_id) coordLookup[s.stop_id] = [s.lat, s.lon];
+        });
+
+        result.segments.forEach(seg => {
+            if (!seg.stops || seg.stops.length < 2) return;
+            const firstId = seg.stops[0];
+            const lastId = seg.stops[seg.stops.length - 1];
+            const firstCoord = coordLookup[firstId];
+            const lastCoord = coordLookup[lastId];
+            if (!firstCoord || !lastCoord) return;
+
+            // Midpoint of the segment
+            const midLat = (firstCoord[0] + lastCoord[0]) / 2;
+            const midLon = (firstCoord[1] + lastCoord[1]) / 2;
+
+            const distKm = seg.distance ? seg.distance.toFixed(1) : '0.0';
+            const costText = `${seg.cost_regular.toFixed(2)} zł`;
+
+            const icon = L.divIcon({
+                className: 'segment-label',
+                html: `<div class="segment-label-box">
+                    <span class="segment-label-cost">${costText}</span>
+                    <span class="segment-label-dist">${distKm} km</span>
+                </div>`,
+                iconSize: [0, 0],
+                iconAnchor: [0, 0],
+            });
+
+            L.marker([midLat, midLon], { icon: icon, interactive: false }).addTo(state.routeLayer);
+        });
+    }
 }
 
 function displayResult(result) {
@@ -295,11 +332,12 @@ function buildStepsHtml(result) {
             }
             const routeLabel = routeNames.join(', ');
 
+            const segCost = segment.cost_regular ? segment.cost_regular.toFixed(2) : '0.00';
             html += `
                 <div class="route-step">
                     <div class="step-header">
                         <span class="step-title">${modeIcon} Przejazd</span>
-                        <span class="step-distance">${segment.distance.toFixed(2)} km</span>
+                        <span class="step-distance">${segment.distance.toFixed(2)} km · ${segCost} zł</span>
                     </div>
                     <div class="step-routes">Linie: ${escapeHtml(routeLabel)}</div>
                     <div class="step-detail">

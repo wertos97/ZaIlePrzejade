@@ -482,6 +482,21 @@ body {
     color: #e74c3c;
 }
 
+.price-daily {
+    font-weight: bold;
+    color: #27ae60;
+}
+
+.price-note {
+    margin-top: 8px;
+    padding: 8px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    font-size: 0.82em;
+    color: #666;
+    line-height: 1.4;
+}
+
 /* Result */
 .result-summary {
     margin-bottom: 15px;
@@ -765,6 +780,39 @@ body {
 /* Cleaner map - hide unnecessary OSM features */
 .leaflet-tile-pane {
     filter: saturate(0.8) contrast(0.9);
+}
+
+/* Segment price/distance labels on map */
+.segment-label {
+    background: transparent;
+    border: none;
+}
+
+.segment-label-box {
+    background: rgba(26, 82, 118, 0.9);
+    color: white;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 0.75em;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.3;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    white-space: nowrap;
+    transform: translate(-50%, -100%);
+    margin-top: -8px;
+}
+
+.segment-label-cost {
+    display: block;
+    color: #fff;
+}
+
+.segment-label-dist {
+    display: block;
+    font-size: 0.8em;
+    color: #aed6f1;
+    font-weight: 500;
 }
 
 /* Toast notification */

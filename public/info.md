@@ -16,11 +16,17 @@ Generalnie to "się okaze", ale...
 
 - ➡️ Do 3,5 km: **4 zł** normalny / **2 zł** ulgowy
 - ➡️ Powyżej 3,5 km: każde rozpoczęte 500 m to **+0,50 zł** / **+0,25 zł**
-- ➡️ Maksymalnie zapłacisz **9 zł** / **4,50 zł** za przejazd
+- ➡️ Maksymalnie zapłacisz **9 zł** / **4,50 zł** za jeden przejazd
 
-Jest też jeden plus — dzienny limit wydatków **20 zł**. Po osiągnięciu tej kwoty kolejne przejazdy tego dnia są gratis, tak jakbyś miał bilet dzienny.
+## Jak liczymy przesiadki?
 
-Nowy system ma być dostępny w aplikacji mKraków. No i tyle — jedzie się na odległość.
+Każdy **przejazd** (od wejścia do pojazdu do przesiadki) to **osobny bilet** liczony od zera. Czyli jeśli jedziesz z przesiadką, płacisz za każdy przejazd osobno — nie sumujemy dystansu całej trasy.
+
+Przykład: jedziesz 2 km tramwajem (4 zł), przesiadasz się i jedziesz 1 km autobusem (4 zł). Razem: **8 zł**, a nie 4 zł za całą trasę.
+
+## Limit dzienny
+
+Jest też plus — dzienny limit wydatków **20 zł** normalny / **10 zł** ulgowy. Po osiągnięciu tej kwoty kolejne przejazdy tego dnia są **gratis**, tak jakbyś miał bilet dzienny. Przy przesiadkach szybciej dobijasz do limitu.
 
 ---
 

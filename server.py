@@ -217,6 +217,8 @@ SEGMENT_COST_REGULAR = pricing['segment_cost_regular']
 SEGMENT_COST_REDUCED = pricing['segment_cost_reduced']
 MAX_COST_REGULAR = pricing['max_cost_regular']
 MAX_COST_REDUCED = pricing['max_cost_reduced']
+MAX_DAILY_COST_REGULAR = pricing['max_daily_cost_regular']
+MAX_DAILY_COST_REDUCED = pricing['max_daily_cost_reduced']
 
 print(f"  Loaded pricing from {PRICING_PATH}")
 
@@ -275,6 +277,24 @@ def calculate_cost(distance_km):
     cost_regular = min(cost_regular, MAX_COST_REGULAR)
     cost_reduced = min(cost_reduced, MAX_COST_REDUCED)
     return round(cost_regular, 2), round(cost_reduced, 2)
+
+
+def calculate_route_cost(segments):
+    """Calculate total route cost as the sum of individual segment (ride) costs.
+
+    Each segment (ride between transfers) is a separate ticket, priced from zero.
+    The daily limit caps the total cost (after reaching it, further rides are free).
+    """
+    total_regular = 0.0
+    total_reduced = 0.0
+    for seg in segments:
+        reg, red = calculate_cost(seg.get('distance', 0.0))
+        total_regular += reg
+        total_reduced += red
+    # Apply daily limit
+    total_regular = min(total_regular, MAX_DAILY_COST_REGULAR)
+    total_reduced = min(total_reduced, MAX_DAILY_COST_REDUCED)
+    return round(total_regular, 2), round(total_reduced, 2)
 
 
 # ============================================================
@@ -568,6 +588,11 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
                     seg_dist += haversine_km(lat1, lon1, lat2, lon2)
             segment['distance'] = round(seg_dist, 4)
 
+        # Each segment is a separate ticket, priced from zero
+        seg_reg, seg_red = calculate_cost(segment.get('distance', 0.0))
+        segment['cost_regular'] = seg_reg
+        segment['cost_reduced'] = seg_red
+
     normalized_distance = 0.0
     for i in range(len(path_stops) - 1):
         s1 = path_stops[i]
@@ -575,12 +600,15 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
         if not s2.get('is_transfer') and not s1.get('is_transfer'):
             normalized_distance += haversine_km(s1['lat'], s1['lon'], s2['lat'], s2['lon'])
 
-    cost_regular, cost_reduced = calculate_cost(normalized_distance)
+    # Total cost = sum of individual segment (ride) costs, capped by daily limit
+    cost_regular, cost_reduced = calculate_route_cost(segments)
 
     return {
         'total_distance': round(normalized_distance, 4),
         'cost_regular': cost_regular,
         'cost_reduced': cost_reduced,
+        'max_daily_cost_regular': MAX_DAILY_COST_REGULAR,
+        'max_daily_cost_reduced': MAX_DAILY_COST_REDUCED,
         'path': path_stops,
         'segments': segments,
         'transfers': transfers,
