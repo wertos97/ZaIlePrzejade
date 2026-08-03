@@ -275,7 +275,7 @@ Wynik trafia do katalogu `previews/`.
 
 ## 📄 Licencja
 
-Projekt jest udostępniany na licencji **MIT**. Dane GTFS pochodzą z MPK Kraków i podlegają ich własnym warunkom.
+Projekt jest udostępniany na licencji **MIT** — zobacz [LICENSE](LICENSE). Dane GTFS pochodzą z MPK Kraków i podlegają ich własnym warunkom.
 
 ---
 
