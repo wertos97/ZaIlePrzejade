@@ -72,6 +72,13 @@ PROCESSED_DIR = os.path.join(BASE_DIR, 'processed')
 PUBLIC_DIR = os.path.join(BASE_DIR, 'public')
 
 # ============================================================
+# Application version (for tracking which code the server runs)
+# ============================================================
+# Bump this whenever you want to verify the server has the latest code.
+# The version is exposed via /api/version and the X-App-Version header.
+APP_VERSION = "1.4.0"
+
+# ============================================================
 # Load processed data
 # ============================================================
 print("Loading processed data...")
@@ -1103,6 +1110,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             elif path == '/api/health':
                 self.serve_json({'status': 'ok'})
 
+            elif path == '/api/version':
+                self.serve_json({'version': APP_VERSION})
+
             elif path == '/api/routes':
                 self.serve_json_cached(path)
 
@@ -1155,6 +1165,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         """Send security headers on ALL responses (including static files)."""
         # Add security headers to every response (static files, API, errors)
         self._security_headers()
+        # Add app version header for easy verification of deployed code
+        self.send_header('X-App-Version', APP_VERSION)
         super().end_headers()
 
     def serve_json(self, data, cache=False, status=200):
