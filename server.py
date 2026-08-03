@@ -728,7 +728,7 @@ def html_escape(s):
 _RATE_LIMIT_WINDOW = 10.0      # seconds
 _RATE_LIMIT_MAX = 30           # max requests per window per IP
 _RATE_LIMIT_EXPENSIVE_MAX = 10 # max expensive requests per window per IP
-_rate_limits = {}              # ip -> deque of timestamps
+_rate_limits = {}              # ip -> {'normal': deque, 'expensive': deque}
 _rate_limits_lock = threading.Lock()
 
 
@@ -748,13 +748,21 @@ def _get_client_ip(handler):
 
 
 def _rate_limit_ok(ip, expensive=False):
-    """Check if a request from this IP is within rate limits."""
+    """Check if a request from this IP is within rate limits.
+
+    Normal and expensive requests use SEPARATE buckets, so loading static
+    assets (which counts toward the normal bucket) does not exhaust the
+    expensive bucket used by /api/find-route and /api/og-image.
+    """
     now = time.time()
     with _rate_limits_lock:
-        timestamps = _rate_limits.get(ip)
-        if timestamps is None:
-            timestamps = []
-            _rate_limits[ip] = timestamps
+        buckets = _rate_limits.get(ip)
+        if buckets is None:
+            buckets = {'normal': [], 'expensive': []}
+            _rate_limits[ip] = buckets
+
+        key = 'expensive' if expensive else 'normal'
+        timestamps = buckets[key]
 
         # Remove old timestamps
         while timestamps and timestamps[0] < now - _RATE_LIMIT_WINDOW:
@@ -769,7 +777,9 @@ def _rate_limit_ok(ip, expensive=False):
         # Prevent unbounded growth of the rate limit dict
         if len(_rate_limits) > 10000:
             # Drop entries that have no recent activity
-            for k in [k for k, v in _rate_limits.items() if not v or v[-1] < now - _RATE_LIMIT_WINDOW * 2]:
+            for k in [k for k, v in _rate_limits.items()
+                      if (not v['normal'] or v['normal'][-1] < now - _RATE_LIMIT_WINDOW * 2)
+                      and (not v['expensive'] or v['expensive'][-1] < now - _RATE_LIMIT_WINDOW * 2)]:
                 del _rate_limits[k]
         return True
 
