@@ -41,10 +41,15 @@ async function findRoute() {
     try {
         // Fetch only the currently selected mode (reduces server load by ~50%)
         // The other mode is fetched lazily when the user switches modes.
-        const response = await fetch(`/api/find-route?from=${state.fromStop.id}&to=${state.toStop.id}&mode=${state.routeMode}`);
+        const url = `/api/find-route?from=${state.fromStop.id}&to=${state.toStop.id}&mode=${state.routeMode}`;
+        console.log('[DEBUG] findRoute: wysyłam żądanie', url);
+        const response = await fetch(url);
+        console.log('[DEBUG] findRoute: status odpowiedzi =', response.status);
         const result = await response.json();
+        console.log('[DEBUG] findRoute: odpowiedź =', result);
 
         if (result.error) {
+            console.warn('[DEBUG] findRoute: serwer zwrócił błąd:', result.error);
             loadingEl.style.display = 'none';
             if (isMobile && loadingOverlay) loadingOverlay.classList.remove('show');
             showToast(result.error + ' Kliknij trasę ponownie, aby spróbować.', 5000);
