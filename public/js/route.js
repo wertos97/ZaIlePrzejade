@@ -245,7 +245,7 @@ function drawRouteOnMap(result) {
         }).addTo(state.routeLayer);
     });
 
-    // Draw price/distance labels above each segment (ride)
+    // Draw price/distance labels at the END of each segment (ride)
     if (result.segments && result.segments.length > 0) {
         // Build stop_id -> coordinates lookup from path
         const coordLookup = {};
@@ -255,15 +255,9 @@ function drawRouteOnMap(result) {
 
         result.segments.forEach(seg => {
             if (!seg.stops || seg.stops.length < 2) return;
-            const firstId = seg.stops[0];
             const lastId = seg.stops[seg.stops.length - 1];
-            const firstCoord = coordLookup[firstId];
             const lastCoord = coordLookup[lastId];
-            if (!firstCoord || !lastCoord) return;
-
-            // Midpoint of the segment
-            const midLat = (firstCoord[0] + lastCoord[0]) / 2;
-            const midLon = (firstCoord[1] + lastCoord[1]) / 2;
+            if (!lastCoord) return;
 
             const distKm = seg.distance ? seg.distance.toFixed(1) : '0.0';
             const costText = seg.cost_regular !== undefined ? `${seg.cost_regular.toFixed(2)} zł` : '? zł';
@@ -274,11 +268,13 @@ function drawRouteOnMap(result) {
                     <span class="segment-label-cost">${costText}</span>
                     <span class="segment-label-dist">${distKm} km</span>
                 </div>`,
-                iconSize: [0, 0],
-                iconAnchor: [0, 0],
+                // Fixed size so Leaflet knows the icon dimensions (prevents clipping)
+                iconSize: [90, 40],
+                // Anchor at bottom-center so the label sits just above the end stop
+                iconAnchor: [45, 40],
             });
 
-            L.marker([midLat, midLon], { icon: icon, interactive: false }).addTo(state.routeLayer);
+            L.marker([lastCoord[0], lastCoord[1]], { icon: icon, interactive: false }).addTo(state.routeLayer);
         });
     }
 }
