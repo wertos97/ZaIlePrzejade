@@ -727,9 +727,24 @@ def html_escape(s):
 # ============================================================
 _RATE_LIMIT_WINDOW = 10.0      # seconds
 _RATE_LIMIT_MAX = 30           # max requests per window per IP
-_RATE_LIMIT_EXPENSIVE_MAX = 5  # max expensive requests per window per IP
+_RATE_LIMIT_EXPENSIVE_MAX = 10 # max expensive requests per window per IP
 _rate_limits = {}              # ip -> deque of timestamps
 _rate_limits_lock = threading.Lock()
+
+
+def _get_client_ip(handler):
+    """Get the real client IP, respecting X-Forwarded-For (set by Cloudflare/reverse proxy).
+
+    When behind Cloudflare, client_address is the Cloudflare edge IP shared by all
+    users, which would cause everyone to share the same rate-limit bucket.
+    """
+    forwarded = handler.headers.get('X-Forwarded-For', '')
+    if forwarded:
+        # X-Forwarded-For can be a comma-separated list; the first is the client
+        first = forwarded.split(',')[0].strip()
+        if first:
+            return first
+    return handler.client_address[0] if handler.client_address else 'unknown'
 
 
 def _rate_limit_ok(ip, expensive=False):
@@ -805,7 +820,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             return
 
         # Rate limit static file requests (protects against crawler floods)
-        client_ip = self.client_address[0] if self.client_address else 'unknown'
+        client_ip = _get_client_ip(self)
         if not _rate_limit_ok(client_ip):
             self.send_error_page(429)
             return
@@ -946,7 +961,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         """Handle API requests."""
         try:
             # Rate limit API requests (expensive endpoints get a stricter limit)
-            client_ip = self.client_address[0] if self.client_address else 'unknown'
+            client_ip = _get_client_ip(self)
             expensive = path in ('/api/find-route', '/api/og-image')
             if not _rate_limit_ok(client_ip, expensive=expensive):
                 self.serve_json({'error': 'Zbyt wiele zapytań. Spróbuj ponownie za chwilę.'}, status=429)
