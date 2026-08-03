@@ -384,11 +384,25 @@ function showCustomPopup(group, latlng) {
     document.body.appendChild(customPopupEl);
     
     // Position popup near the click position
-    const clientX = latlng.originalEvent ? latlng.originalEvent.clientX : (latlng.containerPoint ? latlng.containerPoint.x + 340 : window.innerWidth / 2);
-    const clientY = latlng.originalEvent ? latlng.originalEvent.clientY : (latlng.latlng ? 200 : window.innerHeight / 2);
+    // On mobile there's no sidebar offset; on desktop the sidebar is 340px wide
+    const isMobile = window.innerWidth <= 768;
+    let clientX, clientY;
+    if (latlng.originalEvent) {
+        clientX = latlng.originalEvent.clientX;
+        clientY = latlng.originalEvent.clientY;
+    } else if (latlng.containerPoint) {
+        clientX = latlng.containerPoint.x + (isMobile ? 0 : 340);
+        clientY = latlng.containerPoint.y;
+    } else {
+        clientX = window.innerWidth / 2;
+        clientY = window.innerHeight / 2;
+    }
     
-    customPopupEl.style.left = Math.min(clientX, window.innerWidth - 220) + 'px';
-    customPopupEl.style.top = Math.min(clientY, window.innerHeight - 130) + 'px';
+    // Clamp popup within viewport (accounting for popup size)
+    const popupWidth = 220;
+    const popupHeight = 130;
+    customPopupEl.style.left = Math.max(8, Math.min(clientX, window.innerWidth - popupWidth - 8)) + 'px';
+    customPopupEl.style.top = Math.max(8, Math.min(clientY, window.innerHeight - popupHeight - 8)) + 'px';
 }
 
 function closeCustomPopup() {
@@ -578,6 +592,17 @@ function selectStop(group, e) {
     showCustomPopup(group, e);
 }
 
+function collapseMobileSidebar() {
+    // On mobile, collapse the sidebar so the map is visible after selecting a stop
+    if (window.innerWidth <= 768) {
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar && sidebar.classList.contains('expanded')) {
+            sidebar.classList.remove('expanded');
+            setTimeout(function() { state.map.invalidateSize(); }, 450);
+        }
+    }
+}
+
 function updateSelectedStops() {
     // Update marker colors and visibility
     state.markers.forEach(marker => {
@@ -612,5 +637,8 @@ function updateSelectedStops() {
             });
         }
     });
+
+    // On mobile, collapse the sidebar so the map is visible after selecting a stop
+    collapseMobileSidebar();
 }
 
