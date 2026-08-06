@@ -185,7 +185,10 @@
     <!-- Right Panel - Route Result (desktop) -->
     <aside class="right-panel" id="right-panel" style="display: none;">
         <div class="panel">
-            <h2>Wynik</h2>
+            <div class="result-header">
+                <h2>Wynik</h2>
+                <button class="btn-share" id="btn-share" aria-label="Udostępnij trasę">🔗 Udostępnij</button>
+            </div>
             <div id="route-result">
                 <div class="result-summary">
                     <div class="result-row">
@@ -254,6 +257,24 @@
             </div>
         </div>
         <div class="route-steps" id="mobile-route-steps"></div>
+    </div>
+
+    <!-- Share Modal -->
+    <div class="modal-overlay" id="share-overlay" style="display: none;"></div>
+    <div class="modal share-modal" id="share-modal" style="display: none;">
+        <div class="modal-header">
+            <span class="modal-title">Udostępnij trasę</span>
+            <button class="modal-close" id="share-close" aria-label="Zamknij">✕</button>
+        </div>
+        <div class="modal-body share-body">
+            <div class="share-preview">
+                <img id="share-og-image" src="" alt="Podgląd trasy" />
+            </div>
+            <div class="share-link-box">
+                <input type="text" id="share-link" readonly aria-label="Link do trasy" />
+            </div>
+            <button class="btn btn-share-copy" id="share-copy">📋 Kopiuj link</button>
+        </div>
     </div>
 
     <!-- Modal overlay -->

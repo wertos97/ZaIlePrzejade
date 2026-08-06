@@ -523,6 +523,99 @@ body {
     color: #7f8c8d;
 }
 
+/* Result header with share button */
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #e0e0e0;
+}
+
+.result-header h2 {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.btn-share {
+    background: #e8f4fd;
+    border: 1px solid #c0d8e8;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 0.8em;
+    font-weight: 600;
+    color: #1a5276;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.btn-share:hover {
+    background: #d0e8f8;
+    border-color: #2874a6;
+}
+
+/* Share modal */
+.share-modal {
+    width: 480px;
+}
+
+.share-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.share-preview {
+    width: 100%;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e0e0e0;
+    background: #f8f9fa;
+}
+
+.share-preview img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.share-link-box {
+    display: flex;
+    align-items: center;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background: #f8f9fa;
+    padding: 0 10px;
+}
+
+.share-link-box input {
+    width: 100%;
+    border: none;
+    background: transparent;
+    padding: 10px 0;
+    font-size: 0.85em;
+    color: #333;
+    outline: none;
+    font-family: inherit;
+}
+
+.btn-share-copy {
+    background: #2874a6;
+    color: white;
+    font-size: 0.95em;
+    font-weight: 600;
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 0;
+}
+
+.btn-share-copy:hover {
+    background: #1a5276;
+}
+
 .route-steps {
     margin-top: 10px;
 }

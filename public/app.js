@@ -191,6 +191,12 @@ function setupEventListeners() {
     document.getElementById('modal-close').addEventListener('click', closeModal);
     document.getElementById('modal-overlay').addEventListener('click', closeModal);
 
+    // Share modal
+    document.getElementById('btn-share').addEventListener('click', openShareModal);
+    document.getElementById('share-close').addEventListener('click', closeShareModal);
+    document.getElementById('share-overlay').addEventListener('click', closeShareModal);
+    document.getElementById('share-copy').addEventListener('click', copyShareLink);
+
     // Mobile sidebar toggle button - expand/collapse
     const sidebarToggle = document.getElementById('sidebar-toggle');
     const sidebar = document.getElementById('sidebar');
@@ -334,6 +340,65 @@ async function showModal(title, file) {
 function closeModal() {
     document.getElementById('modal-overlay').style.display = 'none';
     document.getElementById('modal').style.display = 'none';
+}
+
+// ============================================================
+// Share modal
+// ============================================================
+
+function openShareModal() {
+    if (!state.fromStop || !state.toStop) return;
+
+    // Build the shareable URL (absolute, with current mode)
+    var url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set('from', state.fromStop.id);
+    url.searchParams.set('to', state.toStop.id);
+    url.searchParams.set('mode', state.routeMode);
+    var shareUrl = url.toString();
+
+    // Set the link input
+    document.getElementById('share-link').value = shareUrl;
+
+    // Set the OG image preview (dynamic)
+    var ogImageUrl = '/api/og-image?from=' + encodeURIComponent(state.fromStop.id) +
+        '&to=' + encodeURIComponent(state.toStop.id) +
+        '&mode=' + encodeURIComponent(state.routeMode);
+    document.getElementById('share-og-image').src = ogImageUrl;
+
+    // Show the modal
+    document.getElementById('share-overlay').style.display = 'block';
+    document.getElementById('share-modal').style.display = 'flex';
+}
+
+function closeShareModal() {
+    document.getElementById('share-overlay').style.display = 'none';
+    document.getElementById('share-modal').style.display = 'none';
+}
+
+function copyShareLink() {
+    var linkInput = document.getElementById('share-link');
+    linkInput.select();
+    linkInput.setSelectionRange(0, 99999);
+
+    try {
+        // Try the modern clipboard API first
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(linkInput.value).then(function() {
+                showToast('Link skopiowany do schowka!');
+            }).catch(function() {
+                // Fallback to execCommand
+                document.execCommand('copy');
+                showToast('Link skopiowany do schowka!');
+            });
+        } else {
+            // Fallback for older browsers
+            document.execCommand('copy');
+            showToast('Link skopiowany do schowka!');
+        }
+    } catch (error) {
+        console.error('Copy error:', error);
+        showToast('Nie udało się skopiować linku');
+    }
 }
 
 // ============================================================
