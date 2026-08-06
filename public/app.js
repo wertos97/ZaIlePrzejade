@@ -197,6 +197,13 @@ function setupEventListeners() {
     document.getElementById('share-overlay').addEventListener('click', closeShareModal);
     document.getElementById('share-copy').addEventListener('click', copyShareLink);
 
+    // Share button at the end of route steps (mobile) - generated dynamically, use event delegation
+    document.addEventListener('click', function(e) {
+        if (e.target && e.target.id === 'btn-share-mobile') {
+            openShareModal();
+        }
+    });
+
     // Mobile sidebar toggle button - expand/collapse
     const sidebarToggle = document.getElementById('sidebar-toggle');
     const sidebar = document.getElementById('sidebar');

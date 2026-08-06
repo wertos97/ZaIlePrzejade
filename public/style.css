@@ -616,6 +616,23 @@ body {
     background: #1a5276;
 }
 
+/* Share button at the end of route steps (mobile only) */
+.btn-share-mobile {
+    display: none;
+    background: #2874a6;
+    color: white;
+    font-size: 0.95em;
+    font-weight: 600;
+    padding: 12px;
+    border-radius: 6px;
+    margin-top: 10px;
+    margin-bottom: 0;
+}
+
+.btn-share-mobile:hover {
+    background: #1a5276;
+}
+
 .route-steps {
     margin-top: 10px;
 }
@@ -1246,6 +1263,10 @@ body {
 
     .mobile-result .route-step .step-header .step-distance {
         font-size: 0.75em;
+    }
+
+    .btn-share-mobile {
+        display: block;
     }
 
     .mobile-mode-bar {

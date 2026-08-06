@@ -371,6 +371,11 @@ function buildStepsHtml(result) {
         });
     }
 
+    // Share button at the end of the route steps (mobile)
+    html += `
+        <button class="btn btn-share-mobile" id="btn-share-mobile" aria-label="Udostępnij trasę">🔗 Udostępnij</button>
+    `;
+
     return html;
 }
 
