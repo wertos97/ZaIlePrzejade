@@ -24,6 +24,10 @@ Każdy **przejazd** (od wejścia do pojazdu do przesiadki) to **osobny bilet** l
 
 Przykład: jedziesz 2 km tramwajem (4 zł), przesiadasz się i jedziesz 1 km autobusem (4 zł). Razem: **8 zł**, a nie 4 zł za całą trasę.
 
+## Czas przejazdu
+
+Aplikacja pokazuje też **szacunkowy czas przejazdu** (z czasem przesiadki dwóch minut). Czas liczony jest na podstawie oficjalnych rozkładów jazdy (GTFS) — to suma czasów przejazdu między przystankami na wybranej trasie.
+
 ## Limit dzienny
 
 Jest też plus — dzienny limit wydatków **20 zł** normalny / **10 zł** ulgowy. Po osiągnięciu tej kwoty kolejne przejazdy tego dnia są **gratis**, tak jakbyś miał bilet dzienny. Przy przesiadkach szybciej dobijasz do limitu.

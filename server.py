@@ -154,6 +154,7 @@ for stop_id, edges in adjacency_raw.items():
         reverse_edge = {
             'to': stop_id,
             'distance': edge['distance'],
+            'time': edge.get('time'),
             'route_id': edge['route_id'],
             'direction': edge['direction'],
             'mode': edge['mode'],
@@ -471,6 +472,7 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
                     'mode': edge['mode'],
                     'headsign': edge['headsign'],
                     'distance': 0.0,
+                    'time': 0,
                     'stops': [prev_stop],
                     'end_stop': stop_id,
                 }
@@ -493,12 +495,16 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
                     'mode': edge['mode'],
                     'headsign': edge['headsign'],
                     'distance': 0.0,
+                    'time': 0,
                     'stops': [prev_stop],
                     'end_stop': stop_id,
                 }
 
             current_segment['end_stop'] = stop_id
             current_segment['stops'].append(stop_id)
+            # Accumulate travel time from the edge (seconds)
+            if edge and edge.get('time') is not None:
+                current_segment['time'] += edge['time']
 
     if current_segment is not None:
         segments.append(current_segment)
@@ -517,6 +523,7 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
             else:
                 merged['stops'].extend(next_seg['stops'])
             merged['distance'] += next_seg['distance']
+            merged['time'] += next_seg.get('time', 0)
             merged['end_stop'] = next_seg['end_stop']
         merged_segments.append(merged)
         i += 1
@@ -610,8 +617,13 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
     # Total cost = sum of individual segment (ride) costs, capped by daily limit
     cost_regular, cost_reduced = calculate_route_cost(segments)
 
+    # Total travel time = sum of segment travel times (seconds).
+    # Transfers (waiting) are NOT included - this is raw travel time only.
+    total_time = sum(seg.get('time', 0) for seg in segments)
+
     return {
         'total_distance': round(normalized_distance, 4),
+        'total_time': total_time,
         'cost_regular': cost_regular,
         'cost_reduced': cost_reduced,
         'max_daily_cost_regular': MAX_DAILY_COST_REGULAR,
@@ -648,6 +660,7 @@ def find_route_between_groups(from_group_id, to_group_id, mode):
         cost_reg, cost_red = calculate_cost(0)
         result = ({
             'total_distance': 0,
+            'total_time': 0,
             'cost_regular': cost_reg,
             'cost_reduced': cost_red,
             'path': [{

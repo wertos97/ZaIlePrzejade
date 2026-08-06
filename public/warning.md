@@ -6,7 +6,7 @@ Ta aplikacja to **NIE jest oficjalne narzędzie MPK S.A. w Krakowie.** Nie mam z
 
 ## Co musisz wiedzieć?
 
-📏 **Dystanse** które tu widzisz są obliczane na podstawie danych GTFS od MPK (pobrane 24.07.2026) i pokazują przystanki, linie i trasy które tego dnia były zapisane w bazie jako funkcjonujące (będę te dane aktualizować gdy zajdzie taka potrzeba). To są dane rozkładowe, więc rzeczywista trasa autobusu czy tramwaju może się różnić. Lokalizacje przystanków są uśrednione, żeby system sensowniej wybierał trasy, wrzuć więc w obliczenia margines błędu. Zwłaszcza, że dla aplikacji przejazdy między przystankami są w linii prostej (sorry, nie chciałem tu pisać alternatywy dla google maps xd). Wyliczone ceny traktuj jako poglądowe — na pewno będą się różnić od tego, co pokaże oficjalna aplikacja mKraków gdy dostanie już oficjalny "kalkulator".
+📏 **Dystanse** które tu widzisz są obliczane na podstawie danych GTFS od MPK (pobrane 06.08.2026) i pokazują przystanki, linie i trasy które tego dnia były zapisane w bazie jako funkcjonujące (będę te dane aktualizować gdy zajdzie taka potrzeba). To są dane rozkładowe, więc rzeczywista trasa autobusu czy tramwaju może się różnić. Lokalizacje przystanków są uśrednione, żeby system sensowniej wybierał trasy, wrzuć więc w obliczenia margines błędu. Zwłaszcza, że dla aplikacji przejazdy między przystankami są w linii prostej (sorry, nie chciałem tu pisać alternatywy dla google maps xd). Wyliczone ceny traktuj jako poglądowe — na pewno będą się różnić od tego, co pokaże oficjalna aplikacja mKraków gdy dostanie już oficjalny "kalkulator".
 
 ❌ **Nie sugeruj się** tymi wycenami przy planowaniu budżetu — miasto i MPK na pewno udostępnią oficjalne narzędzia w aplikacji mKraków i to one będą wiążące.
 

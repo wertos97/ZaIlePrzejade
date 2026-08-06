@@ -6,6 +6,23 @@ const ROUTE_COLORS = [
     '#e67e22', '#9b59b6', '#34495e', '#16a085', '#c0392b',
 ];
 
+// Format a duration in seconds as "X min" or "1 h 5 min"
+function formatDuration(seconds) {
+    if (!seconds || seconds <= 0 || !isFinite(seconds)) {
+        return null;
+    }
+    const totalMinutes = Math.round(seconds / 60);
+    if (totalMinutes < 60) {
+        return `${totalMinutes} min`;
+    }
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (minutes === 0) {
+        return `${hours} h`;
+    }
+    return `${hours} h ${minutes} min`;
+}
+
 async function findRoute() {
     if (!state.fromStop || !state.toStop) {
         return;
@@ -281,6 +298,11 @@ function drawRouteOnMap(result) {
 function displayResult(result) {
     document.getElementById('result-distance').textContent =
         `${result.total_distance.toFixed(2)} km`;
+    const totalTimeText = formatDuration(result.total_time);
+    const timeEl = document.getElementById('result-time');
+    if (timeEl) {
+        timeEl.textContent = totalTimeText ? `· ${totalTimeText}` : '';
+    }
     document.getElementById('result-regular').textContent =
         `${result.cost_regular.toFixed(2)} zł`;
     document.getElementById('result-reduced').textContent =
@@ -288,6 +310,10 @@ function displayResult(result) {
 
     document.getElementById('mobile-result-distance').textContent =
         `${result.total_distance.toFixed(2)} km`;
+    const mobileTimeEl = document.getElementById('mobile-result-time');
+    if (mobileTimeEl) {
+        mobileTimeEl.textContent = totalTimeText ? `· ${totalTimeText}` : '';
+    }
     document.getElementById('mobile-result-regular').textContent =
         `${result.cost_regular.toFixed(2)} zł`;
     document.getElementById('mobile-result-reduced').textContent =
@@ -333,11 +359,13 @@ function buildStepsHtml(result) {
             const routeLabel = routeNames.join(', ');
 
             const segCost = segment.cost_regular !== undefined ? segment.cost_regular.toFixed(2) : '?';
+            const segTime = formatDuration(segment.time);
+            const segTimeText = segTime ? ` · ${segTime}` : '';
             html += `
                 <div class="route-step">
                     <div class="step-header">
                         <span class="step-title">${modeIcon} Przejazd</span>
-                        <span class="step-distance">${segment.distance.toFixed(2)} km · ${segCost} zł</span>
+                        <span class="step-distance">${segment.distance.toFixed(2)} km${segTimeText} · ${segCost} zł</span>
                     </div>
                     <div class="step-routes">Linie: ${escapeHtml(routeLabel)}</div>
                     <div class="step-detail">

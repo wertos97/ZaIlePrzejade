@@ -12,17 +12,23 @@ import csv
 import json
 import math
 import os
+import sys
+import urllib.request
+import zipfile
 from collections import defaultdict
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'processed')
 
-# Feed configurations: (directory, feed_name, mode)
+# Feed configurations: (directory, feed_name, mode, zip_filename, download_url)
 FEEDS = [
-    ('T_tram', 'tram', 'tram'),
-    ('A_bus', 'bus', 'bus'),
-    ('M_mob', 'mobilis', 'bus'),
+    ('T_tram', 'tram', 'tram', 'GTFS_KRK_T.zip', 'https://gtfs.ztp.krakow.pl/GTFS_KRK_T.zip'),
+    ('A_bus', 'bus', 'bus', 'GTFS_KRK_A.zip', 'https://gtfs.ztp.krakow.pl/GTFS_KRK_A.zip'),
+    ('M_mob', 'mobilis', 'bus', 'GTFS_KRK_M.zip', 'https://gtfs.ztp.krakow.pl/GTFS_KRK_M.zip'),
 ]
+
+# Default transfer time in seconds (2 minutes)
+DEFAULT_TRANSFER_TIME = 120
 
 # Krakow center coordinates for map initialization
 KRAKOW_LAT = 50.0647
@@ -55,6 +61,57 @@ def read_csv(filepath):
         return list(reader)
 
 
+def parse_time_to_seconds(time_str):
+    """Convert GTFS time (HH:MM:SS) to seconds since midnight. Returns None if invalid."""
+    if not time_str:
+        return None
+    parts = time_str.strip().split(':')
+    if len(parts) != 3:
+        return None
+    try:
+        h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+        return h * 3600 + m * 60 + s
+    except (ValueError, TypeError):
+        return None
+
+
+def download_gtfs():
+    """
+    Download the latest GTFS feeds from ZTP Kraków and extract them into data/.
+    Skips download if the zip file already exists (allows offline processing).
+    """
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    for feed_dir, feed_name, mode, zip_filename, url in FEEDS:
+        zip_path = os.path.join(DATA_DIR, zip_filename)
+        extract_dir = os.path.join(DATA_DIR, feed_dir)
+
+        # Download if the zip doesn't exist yet
+        if not os.path.exists(zip_path):
+            print(f"  Downloading {zip_filename} from {url}...")
+            try:
+                urllib.request.urlretrieve(url, zip_path)
+                print(f"    Downloaded {zip_filename}")
+            except Exception as e:
+                print(f"    ERROR downloading {zip_filename}: {e}")
+                print(f"    Continuing with existing data (if any).")
+                continue
+        else:
+            print(f"  {zip_filename} already exists, skipping download.")
+
+        # Extract if the directory doesn't exist or is empty
+        if not os.path.isdir(extract_dir) or not os.listdir(extract_dir):
+            print(f"  Extracting {zip_filename}...")
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zf:
+                    zf.extractall(extract_dir)
+                print(f"    Extracted to {extract_dir}")
+            except Exception as e:
+                print(f"    ERROR extracting {zip_filename}: {e}")
+        else:
+            print(f"  {feed_dir} already extracted, skipping.")
+
+
 def get_stop_code_prefix(stop_code):
     """Extract the stop number prefix from a stop code (e.g., '101-03' -> '101')."""
     if not stop_code:
@@ -77,7 +134,7 @@ def process_stops():
     code_to_stops = defaultdict(list)
     prefix_to_stops = defaultdict(list)
 
-    for feed_dir, feed_name, mode in FEEDS:
+    for feed_dir, feed_name, mode, zip_filename, url in FEEDS:
         filepath = os.path.join(DATA_DIR, feed_dir, 'stops.txt')
         if not os.path.exists(filepath):
             print(f"  Warning: {filepath} not found")
@@ -119,7 +176,7 @@ def process_stops():
 def process_routes():
     """Process routes from all feeds."""
     routes = {}
-    for feed_dir, feed_name, mode in FEEDS:
+    for feed_dir, feed_name, mode, zip_filename, url in FEEDS:
         filepath = os.path.join(DATA_DIR, feed_dir, 'routes.txt')
         if not os.path.exists(filepath):
             continue
@@ -150,7 +207,7 @@ def process_trips_and_connections(stops, routes):
     edges = []
     edge_lookup = set()  # For deduplication
 
-    for feed_dir, feed_name, mode in FEEDS:
+    for feed_dir, feed_name, mode, zip_filename, url in FEEDS:
         stop_times_path = os.path.join(DATA_DIR, feed_dir, 'stop_times.txt')
         trips_path = os.path.join(DATA_DIR, feed_dir, 'trips.txt')
 
@@ -182,6 +239,8 @@ def process_trips_and_connections(stops, routes):
             stop_id = st['stop_id']
             stop_seq = int(st.get('stop_sequence', '0'))
             shape_dist = parse_float(st.get('shape_dist_traveled', ''))
+            arrival = parse_time_to_seconds(st.get('arrival_time', ''))
+            departure = parse_time_to_seconds(st.get('departure_time', ''))
 
             if stop_id not in stops:
                 continue
@@ -190,6 +249,8 @@ def process_trips_and_connections(stops, routes):
                 'stop_id': stop_id,
                 'sequence': stop_seq,
                 'shape_dist': shape_dist,
+                'arrival': arrival,
+                'departure': departure,
             })
 
         print(f"    Found {len(trip_stops)} trips with stop data")
@@ -226,6 +287,16 @@ def process_trips_and_connections(stops, routes):
                         to_stop_data['lat'], to_stop_data['lon']
                     )
 
+                # Calculate travel time (seconds) between stops:
+                # departure from current stop -> arrival at next stop
+                travel_time = None
+                dep_time = stop_list[i].get('departure')
+                arr_time = stop_list[i + 1].get('arrival')
+                if dep_time is not None and arr_time is not None:
+                    travel_time = arr_time - dep_time
+                    if travel_time < 0:
+                        travel_time = None  # Invalid (crosses midnight or bad data)
+
                 # Deduplicate edges
                 edge_key = (from_stop, to_stop, route_id, direction)
                 if edge_key in edge_lookup:
@@ -236,6 +307,7 @@ def process_trips_and_connections(stops, routes):
                     'from': from_stop,
                     'to': to_stop,
                     'distance': round(dist, 4),
+                    'time': travel_time,
                     'route_id': route_id,
                     'direction': direction,
                     'mode': mode,
@@ -290,6 +362,7 @@ def add_transfer_edges(edges, stops, prefix_to_stops):
                     'from': from_stop,
                     'to': to_stop,
                     'distance': 0.0,
+                    'time': DEFAULT_TRANSFER_TIME,
                     'route_id': 'transfer',
                     'direction': '',
                     'mode': 'transfer',
@@ -308,6 +381,7 @@ def build_adjacency_list(edges):
         adj[edge['from']].append({
             'to': edge['to'],
             'distance': edge['distance'],
+            'time': edge.get('time'),
             'route_id': edge['route_id'],
             'direction': edge['direction'],
             'mode': edge['mode'],
@@ -323,7 +397,7 @@ def process_shapes(routes):
     """
     route_shapes = {}
 
-    for feed_dir, feed_name, mode in FEEDS:
+    for feed_dir, feed_name, mode, zip_filename, url in FEEDS:
         shapes_path = os.path.join(DATA_DIR, feed_dir, 'shapes.txt')
         trips_path = os.path.join(DATA_DIR, feed_dir, 'trips.txt')
 
@@ -376,6 +450,9 @@ def main():
     print("=" * 60)
     print("Processing GTFS data for MPK Kraków")
     print("=" * 60)
+
+    print("\n0. Downloading latest GTFS data...")
+    download_gtfs()
 
     print("\n1. Processing stops...")
     stops, code_to_stops, prefix_to_stops = process_stops()
