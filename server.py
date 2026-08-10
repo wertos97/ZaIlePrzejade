@@ -95,6 +95,14 @@ with open(os.path.join(PROCESSED_DIR, 'routes.json'), encoding='utf-8') as f:
 with open(os.path.join(PROCESSED_DIR, 'shapes.json'), encoding='utf-8') as f:
     route_shapes = json.load(f)
 
+# Feed metadata (version, validity period, publisher) - optional
+_metadata_path = os.path.join(PROCESSED_DIR, 'metadata.json')
+if os.path.isfile(_metadata_path):
+    with open(_metadata_path, encoding='utf-8') as f:
+        feed_metadata = json.load(f)
+else:
+    feed_metadata = {}
+
 print(f"  Loaded {len(stops_list)} stops, {len(routes_list)} routes")
 
 # ============================================================
@@ -607,6 +615,10 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
         segment['cost_regular'] = seg_reg
         segment['cost_reduced'] = seg_red
 
+        # Attach the real-world shape (polyline) for this segment so the map
+        # can draw the actual road/track geometry instead of a straight line.
+        segment['shape'] = _extract_shape_segment(segment['route_id'], segment['stops'])
+
     normalized_distance = 0.0
     for i in range(len(path_stops) - 1):
         s1 = path_stops[i]
@@ -632,6 +644,67 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
         'segments': segments,
         'transfers': transfers,
     }
+
+
+def _haversine_pair(p1, p2):
+    """Distance in km between two (lat, lon) tuples."""
+    lat1, lon1 = p1
+    lat2, lon2 = p2
+    return haversine_km(lat1, lon1, lat2, lon2)
+
+
+def _nearest_shape_index(shape_points, lat, lon, start_idx, end_idx):
+    """Find the index in shape_points (within [start_idx, end_idx]) closest to (lat, lon)."""
+    best_idx = start_idx
+    best_dist = float('inf')
+    for i in range(start_idx, end_idx):
+        d = _haversine_pair(shape_points[i], (lat, lon))
+        if d < best_dist:
+            best_dist = d
+            best_idx = i
+    return best_idx
+
+
+def _extract_shape_segment(route_id, stops):
+    """Extract the portion of a route's shape between the first and last stop of a segment.
+
+    shape_points are (lat, lon) tuples. We find the shape index nearest to the first
+    stop and the shape index nearest to the last stop, then return the points
+    between them. If the route shape runs in the opposite direction, we reverse
+    the slice. Returns a list of [lat, lon] pairs, or [] if no shape is found.
+    """
+    shape_points = route_shapes.get(route_id)
+    if not shape_points or len(stops) < 2:
+        return []
+    # Resolve coordinates for first and last stop
+    first_id = stops[0]
+    last_id = stops[-1]
+    first_stop = stops_by_id.get(first_id, {})
+    last_stop = stops_by_id.get(last_id, {})
+    if not first_stop or not last_stop:
+        return []
+    f_lat = first_stop.get('lat')
+    f_lon = first_stop.get('lon')
+    l_lat = last_stop.get('lat')
+    l_lon = last_stop.get('lon')
+    if f_lat is None or l_lat is None:
+        return []
+
+    n = len(shape_points)
+    i0 = _nearest_shape_index(shape_points, f_lat, f_lon, 0, n)
+    i1 = _nearest_shape_index(shape_points, l_lat, l_lon, 0, n)
+
+    if i1 < i0:
+        i0, i1 = i1, i0
+
+    if i1 - i0 < 2:
+        # Too few points: fall back to the whole shape so we at least draw a real line
+        if n >= 2:
+            return [list(p) for p in shape_points]
+        return []
+
+    # Include the endpoints themselves to keep continuity
+    return [list(p) for p in shape_points[i0:i1 + 1]]
 
 
 # --- Group-to-group route cache ---
@@ -1125,6 +1198,15 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
             elif path == '/api/version':
                 self.serve_json({'version': APP_VERSION})
+
+            elif path == '/api/data-info':
+                self.serve_json({
+                    'version': feed_metadata.get('version', ''),
+                    'start_date': feed_metadata.get('start_date', ''),
+                    'end_date': feed_metadata.get('end_date', ''),
+                    'publisher': feed_metadata.get('publisher', ''),
+                    'url': feed_metadata.get('url', ''),
+                })
 
             elif path == '/api/routes':
                 self.serve_json_cached(path)

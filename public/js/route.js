@@ -197,44 +197,43 @@ function drawRouteOnMap(result) {
 
     const drawPoints = path.filter(s => !s.is_transfer);
 
-    let currentRouteId = null;
-    let currentPoints = [];
+    // Build a lookup: stop_id -> {lat, lon} for all non-transfer stops
+    const coordLookup = {};
+    drawPoints.forEach(s => {
+        // route.js path items use 'stop_id'
+        if (s.stop_id) coordLookup[s.stop_id] = [s.lat, s.lon];
+    });
+
+    // Draw real-world geometry for each segment (ride) using its shape.
+    // Fall back to straight lines between the segment's stops if no shape is available.
     let colorIndex = 0;
 
-    for (let i = 0; i < drawPoints.length; i++) {
-        const stop = drawPoints[i];
-        const routeId = stop.route_id;
+    if (result.segments && result.segments.length > 0) {
+        result.segments.forEach(seg => {
+            let points = [];
 
-        if (routeId && routeId !== currentRouteId) {
-            if (currentPoints.length > 1) {
+            if (seg.shape && Array.isArray(seg.shape) && seg.shape.length >= 2) {
+                // Real geometry: shape is a list of [lat, lon] pairs
+                points = seg.shape.map(pt => [pt[0], pt[1]]);
+            } else if (seg.stops && seg.stops.length >= 2) {
+                // Fallback: straight line through the stops that have coordinates
+                seg.stops.forEach(sid => {
+                    const coord = coordLookup[sid] || (result.path || []).find(p => p.stop_id === sid);
+                    if (coord) points.push(coord);
+                });
+            }
+
+            if (points.length >= 2) {
                 const color = ROUTE_COLORS[colorIndex % ROUTE_COLORS.length];
-                L.polyline(currentPoints, {
+                L.polyline(points, {
                     color: color,
                     weight: 5,
-                    opacity: 0.7,
+                    opacity: 0.75,
                     smoothFactor: 1,
                 }).addTo(state.routeLayer);
                 colorIndex++;
             }
-            if (currentPoints.length > 0) {
-                currentPoints = [currentPoints[currentPoints.length - 1], [stop.lat, stop.lon]];
-            } else {
-                currentPoints = [[stop.lat, stop.lon]];
-            }
-            currentRouteId = routeId;
-        } else {
-            currentPoints.push([stop.lat, stop.lon]);
-        }
-    }
-
-    if (currentPoints.length > 1) {
-        const color = ROUTE_COLORS[colorIndex % ROUTE_COLORS.length];
-        L.polyline(currentPoints, {
-            color: color,
-            weight: 5,
-            opacity: 0.7,
-            smoothFactor: 1,
-        }).addTo(state.routeLayer);
+        });
     }
 
     // Draw stop markers on route
@@ -264,12 +263,6 @@ function drawRouteOnMap(result) {
 
     // Draw price/distance labels at the END of each segment (ride)
     if (result.segments && result.segments.length > 0) {
-        // Build stop_id -> coordinates lookup from path
-        const coordLookup = {};
-        path.forEach(s => {
-            if (s.stop_id) coordLookup[s.stop_id] = [s.lat, s.lon];
-        });
-
         result.segments.forEach(seg => {
             if (!seg.stops || seg.stops.length < 2) return;
             const lastId = seg.stops[seg.stops.length - 1];

@@ -115,6 +115,34 @@ function initMap() {
 
     state.routeLayer = L.layerGroup().addTo(state.map);
 
+    // Add data version attribution in the bottom-left corner (Leaflet style),
+    // without moving the OSM/CARTO attribution (which stays bottom-right).
+    const dataInfoEl = document.createElement('div');
+    dataInfoEl.className = 'leaflet-control leaflet-control-attribution data-version';
+    dataInfoEl.style.cssText = 'position: absolute; left: 0px; bottom: 1px; z-index: 1000; background: rgba(255,255,255,0.8); padding: 0 5px; font-size: 11px; color: #333;';
+    dataInfoEl.textContent = 'Dane: …';
+    document.getElementById('map').appendChild(dataInfoEl);
+
+    // Fetch and display the GTFS data version
+    fetch('/api/data-info')
+        .then(r => r.json())
+        .then(info => {
+            let versionText = '';
+            if (info.version) {
+                versionText = `Dane: ${info.version}`;
+            }
+            if (info.start_date && info.end_date) {
+                const fmt = d => `${d.slice(6, 8)}.${d.slice(4, 6)}.${d.slice(0, 4)}`;
+                versionText += versionText ? ` (${fmt(info.start_date)}–${fmt(info.end_date)})` : `Dane: ${fmt(info.start_date)}–${fmt(info.end_date)}`;
+            }
+            if (versionText) {
+                dataInfoEl.textContent = versionText;
+            } else {
+                dataInfoEl.remove();
+            }
+        })
+        .catch(() => { dataInfoEl.remove(); /* ignore - attribution is optional */ });
+
 }
 
 function setupEventListeners() {

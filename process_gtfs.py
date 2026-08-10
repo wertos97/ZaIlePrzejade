@@ -112,6 +112,41 @@ def download_gtfs():
             print(f"  {feed_dir} already extracted, skipping.")
 
 
+def read_feed_metadata():
+    """Read feed metadata (version and validity period) from the first available
+    feed's feed_info.txt. Returns a dict with feed_version, start_date, end_date,
+    and publisher info. Falls back to defaults if feed_info.txt is missing."""
+    for feed_dir, _, _, _, _ in FEEDS:
+        feed_info_path = os.path.join(DATA_DIR, feed_dir, 'feed_info.txt')
+        if os.path.isfile(feed_info_path):
+            try:
+                with open(feed_info_path, encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        return {
+                            'publisher': row.get('feed_publisher_name', '').strip(),
+                            'url': row.get('feed_publisher_url', '').strip(),
+                            'lang': row.get('feed_lang', '').strip(),
+                            'start_date': row.get('feed_start_date', '').strip(),
+                            'end_date': row.get('feed_end_date', '').strip(),
+                            'version': row.get('feed_version', '').strip(),
+                            'contact_email': row.get('feed_contact_email', '').strip(),
+                            'contact_url': row.get('feed_contact_url', '').strip(),
+                        }
+            except (OSError, csv.Error):
+                pass
+    return {
+        'publisher': '',
+        'url': '',
+        'lang': '',
+        'start_date': '',
+        'end_date': '',
+        'version': '',
+        'contact_email': '',
+        'contact_url': '',
+    }
+
+
 def get_stop_code_prefix(stop_code):
     """Extract the stop number prefix from a stop code (e.g., '101-03' -> '101')."""
     if not stop_code:
@@ -517,6 +552,12 @@ def main():
     with open(os.path.join(OUTPUT_DIR, 'transfers.json'), 'w') as f:
         json.dump(prefix_lookup, f, ensure_ascii=False)
     print(f"  Saved transfers.json ({len(prefix_lookup)} transfer groups)")
+
+    # Save feed metadata (version, validity period, publisher)
+    metadata = read_feed_metadata()
+    with open(os.path.join(OUTPUT_DIR, 'metadata.json'), 'w') as f:
+        json.dump(metadata, f, ensure_ascii=False)
+    print(f"  Saved metadata.json (version: {metadata.get('version', '') or 'unknown'})")
 
     print("\n" + "=" * 60)
     print("Processing complete!")
