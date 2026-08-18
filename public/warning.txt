@@ -1,14 +1,14 @@
 Hej, dzięki, że tu jesteś! Ważna sprawa!
 
-Ta aplikacja to NIE jest oficjalne narzędzie MPK S.A. w Krakowie. Nie mam z nimi nic wspólnego, ani z uęrzdem miasta Kraków ani z żadnym innym organem miasta. Jestem po prostu mieszkańcem Krakowa z minimalną umiejętnością kodowania z AI i trochę większą świadomością UX. Lubię wizualizować dane i tak zrobiłem też z nadchodzącymi cenami biletów, żeby zobaczyć jak te nowe ceny będą wyglądać w praktyce.
+Ta aplikacja to NIE jest oficjalne narzędzie ZTP (Zarządu Transportu Publicznego) ani MPK S.A. w Krakowie. Nie mam z nimi nic wspólnego, ani z urzędem miasta Kraków ani z żadnym innym organem miasta. Jestem po prostu mieszkańcem Krakowa z minimalną umiejętnością kodowania z AI i trochę większą świadomością UX. Lubię wizualizować dane i tak zrobiłem też z nadchodzącymi cenami biletów, żeby zobaczyć jak te nowe ceny będą wyglądać w praktyce.
 
 Co musisz wiedzieć:
-📏 Dystanse które tu widzisz są obliczane na podstawie danych GTFS od MPK pobrane 24.07.2026 i pokazują przystanki, linie i trasy które tego dnia były zapisane w bazie jako funkcjonujące (będę te dane aktualizować gdy zajdzie taka potrzeba). To są dane rozkładowe, więc rzeczywista trasa autobusu czy tramwaju może się różnić. Lokalizacje przystanków są uśrednione, żeby system sensowniej wybierał trasy, wrzuć więc w obliczenia margines błędu. Zwłaszcza, że dla aplikacji przejazdy między przystankami są w linii prostej (sorry, nie chciałem tu pisać alternatywy dla google maps xd). Wyliczone ceny traktuj jako poglądowe - na pewno będą się różnić od tego, co pokaże oficjalna aplikacja mKraków gdy dostanie już oficjalny "kalkulator".
+📏 Dystanse które tu widzisz są obliczane na podstawie danych GTFS publikowanych przez ZTP pobrane 24.07.2026 i pokazują przystanki, linie i trasy które tego dnia były zapisane w bazie jako funkcjonujące (będę te dane aktualizować gdy zajdzie taka potrzeba). To są dane rozkładowe, więc rzeczywista trasa autobusu czy tramwaju może się różnić. Lokalizacje przystanków są uśrednione, żeby system sensowniej wybierał trasy, wrzuć więc w obliczenia margines błędu. Zwłaszcza, że dla aplikacji przejazdy między przystankami są w linii prostej (sorry, nie chciałem tu pisać alternatywy dla google maps xd). Wyliczone ceny traktuj jako poglądowe - na pewno będą się różnić od tego, co pokaże oficjalna aplikacja mKraków gdy dostanie już oficjalny "kalkulator".
 
 🎯 Ta strona ma Ci pomóc zorientować się ile mniej więcej kilometrów pokonujesz codziennie do pracy, szkoły czy na zakupy. Żebyś miał pojęcie, ile przyjdzie Ci płacić w nowym systemie. Ja mieszkam na południu Krakowa i już samo dotarcie do ogólnego "centrum" dobija cenę biletu do maksymalnych 9 zł.
 
-❌ Nie sugeruj się tymi wycenami przy planowaniu budżetu - miasto i MPK na pewno udostępnią oficjalne narzędzia w aplikacji mKraków i to one będą wiążące.
+❌ Nie sugeruj się tymi wycenami przy planowaniu budżetu - miasto i ZTP na pewno udostępnią oficjalne narzędzia w aplikacji mKraków i to one będą wiążące.
 
-📢 Jak chcesz sprawdzić oficjalne info - zajrzyj na stronę MPK Kraków albo do aplikacji mKraków.
+📢 Jak chcesz sprawdzić oficjalne info - zajrzyj na stronę ZTP Kraków albo do aplikacji mKraków.
 
 Dzięki za przeczytanie!

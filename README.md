@@ -5,7 +5,7 @@
 <h1 align="center">🚌🚊 Za Ile Przejadę?</h1>
 
 <p align="center">
-  <strong>Kalkulator cen biletów MPK Kraków 2027</strong><br/>
+  <strong>Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027</strong><br/>
   Oblicz koszt podróży komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.
 </p>
 
@@ -38,7 +38,7 @@
 
 ## 💰 Model cen (2027)
 
-Nowy system biletów MPK Kraków oparty jest na **odległości**. Każdy przejazd (segment między przesiadkami) to **osobny bilet**, wyceniany od zera.
+Nowy system biletów komunikacji miejskiej w Krakowie oparty jest na **odległości**. Każdy przejazd (segment między przesiadkami) to **osobny bilet**, wyceniany od zera.
 
 | Parametr | Wartość |
 |----------|---------|
@@ -83,7 +83,7 @@ Konfiguracja cen znajduje się w [`pricing.json`](pricing.json) i jest ładowana
 - **Backend**: Python 3 (tylko biblioteka standardowa — zero zależności)
 - **Frontend**: HTML/CSS/JavaScript (vanilla)
 - **Mapy**: Leaflet.js (hostowany lokalnie)
-- **Dane**: GTFS MPK Kraków → przetworzone do JSON (`process_gtfs.py`)
+- **Dane**: GTFS publikowane przez ZTP Kraków → przetworzone do JSON (`process_gtfs.py`)
 
 ### Optymalizacje (dla małego VPS: 256MB RAM, 3GB dysk)
 
@@ -275,7 +275,7 @@ Wynik trafia do katalogu `previews/`.
 
 ## 📄 Licencja
 
-Projekt jest udostępniany na licencji **MIT** — zobacz [LICENSE](LICENSE). Dane GTFS pochodzą z MPK Kraków i podlegają ich własnym warunkom.
+Projekt jest udostępniany na licencji **MIT** — zobacz [LICENSE](LICENSE). Dane GTFS pochodzą z ZTP Kraków i podlegają ich własnym warunkom.
 
 ---
 

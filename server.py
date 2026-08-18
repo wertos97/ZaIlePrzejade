@@ -236,6 +236,10 @@ MAX_COST_REDUCED = pricing['max_cost_reduced']
 MAX_DAILY_COST_REGULAR = pricing['max_daily_cost_regular']
 MAX_DAILY_COST_REDUCED = pricing['max_daily_cost_reduced']
 
+# Transfer (waiting) time added per transfer, in seconds (5 minutes)
+# Kept in sync with DEFAULT_TRANSFER_TIME in process_gtfs.py
+TRANSFER_TIME_SECONDS = 300
+
 print(f"  Loaded pricing from {PRICING_PATH}")
 
 # Load logo SVG for OG image generation
@@ -546,8 +550,23 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
                 for p2 in stops_grouped.get(second_group, {}).get('platforms', []):
                     routes = stop_pair_routes.get((p1['id'], p2['id']), [])
                     first_pair_routes.update(routes)
+
+            # Only keep routes that actually serve this segment's mode (bus/tram/mobilis).
+            # Otherwise a bus segment could advertise tram lines that share the same
+            # physical stop pair but do NOT travel the drawn route.
+            seg_mode = segment.get('mode')
+            if seg_mode:
+                filtered_routes = set()
+                for rid in first_pair_routes:
+                    r_info = routes_by_id.get(rid, {})
+                    # route_id in edges may be prefixed (e.g. "route_59"); match on mode
+                    if r_info.get('mode') == seg_mode:
+                        filtered_routes.add(rid)
+                first_pair_routes = filtered_routes
+
             if first_pair_routes:
-                segment['all_routes'] = sorted(first_pair_routes)
+                segment['all_routes'] = sorted(first_pair_routes,
+                                               key=lambda rid: routes_by_id.get(rid, {}).get('short_name', rid))
             else:
                 segment['all_routes'] = [segment['route_id']] if segment['route_id'] else []
         else:
@@ -629,9 +648,10 @@ def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
     # Total cost = sum of individual segment (ride) costs, capped by daily limit
     cost_regular, cost_reduced = calculate_route_cost(segments)
 
-    # Total travel time = sum of segment travel times (seconds).
-    # Transfers (waiting) are NOT included - this is raw travel time only.
+    # Total travel time = sum of segment travel times (seconds) plus a fixed
+    # transfer/waiting allowance for each transfer (default 5 minutes).
     total_time = sum(seg.get('time', 0) for seg in segments)
+    total_time += TRANSFER_TIME_SECONDS * len(transfers)
 
     return {
         'total_distance': round(normalized_distance, 4),
@@ -1012,10 +1032,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             og_image_url = f"https://zaileprzeja.de/api/og-image?from={from_stop_esc}&to={to_stop_esc}&mode={mode_esc}"
             current_url = f"https://zaileprzeja.de/?from={from_stop_esc}&to={to_stop_esc}&mode={mode_esc}"
             title = f"Za Ile Przejadę? {from_name_esc} → {to_name_esc}"
-            description = f"Oblicz koszt przejazdu z {from_name_esc} do {to_name_esc} w nowym systemie biletów MPK Kraków."
+            description = f"Oblicz koszt przejazdu z {from_name_esc} do {to_name_esc} w nowym systemie biletów komunikacji miejskiej w Krakowie."
             
             html = html.replace(
-                '<meta property="og:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">',
+                '<meta property="og:title" content="Za Ile Przejadę? - Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027">',
                 f'<meta property="og:title" content="{title}">'
             )
             html = html.replace(
@@ -1031,7 +1051,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 f'<meta property="og:image" content="{og_image_url}">'
             )
             html = html.replace(
-                '<meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator cen biletów MPK Kraków 2027">',
+                '<meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027">',
                 f'<meta name="twitter:title" content="{title}">'
             )
             html = html.replace(

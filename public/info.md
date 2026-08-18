@@ -2,9 +2,9 @@
 
 Żeby lepiej zrozumieć o co chodzi i dlaczego taki kalkulator powstał:
 
-Zgodnie z oficjalnym komunikatem MPK S.A. w Krakowie ([źródło](https://www.facebook.com/photo/?fbid=1445327380951786&set=a.612767970874402)):
+Biletami w krakowskiej komunikacji miejskiej zarządza **ZTP (Zarząd Transportu Publicznego)**, a MPK S.A. jest jednym z przewoźników. Zgodnie z oficjalnym komunikatem ([źródło](https://www.facebook.com/photo/?fbid=1445327380951786&set=a.612767970874402)):
 
-> Od przyszłego roku bilety MPK w Krakowie będziemy liczyć na odległość.
+> Od przyszłego roku bilety komunikacji miejskiej w Krakowie będziemy liczyć na odległość.
 
 ## Jak to będzie działać?
 
@@ -26,7 +26,7 @@ Przykład: jedziesz 2 km tramwajem (4 zł), przesiadasz się i jedziesz 1 km aut
 
 ## Czas przejazdu
 
-Aplikacja pokazuje też **szacunkowy czas przejazdu** (z czasem przesiadki dwóch minut). Czas liczony jest na podstawie oficjalnych rozkładów jazdy (GTFS) — to suma czasów przejazdu między przystankami na wybranej trasie.
+Aplikacja pokazuje też **szacunkowy czas przejazdu** (z czasem przesiadki pięciu minut). Czas liczony jest na podstawie oficjalnych rozkładów jazdy (GTFS) — to suma czasów przejazdu między przystankami na wybranej trasie.
 
 ## Limit dzienny
 

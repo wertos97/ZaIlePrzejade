@@ -1,10 +1,10 @@
 # Aplikacja "Za Ile Przejadę?"
 
-**Kalkulator cen biletów MPK Kraków 2027**
+**Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027**
 
 Aplikacja została stworzona w celu obliczania kosztów podróży komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości, który ma wejść w życie w 2027 roku.
 
-Dane linii i przystanków pochodzą z ogólnodostępnych rozkładów GTFS MPK Kraków (dostęp 06.08.2026).
+Dane linii i przystanków pochodzą z ogólnodostępnych rozkładów GTFS publikowanych przez ZTP Kraków (dostęp 06.08.2026).
 
 ---
 

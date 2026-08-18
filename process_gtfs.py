@@ -27,8 +27,8 @@ FEEDS = [
     ('M_mob', 'mobilis', 'bus', 'GTFS_KRK_M.zip', 'https://gtfs.ztp.krakow.pl/GTFS_KRK_M.zip'),
 ]
 
-# Default transfer time in seconds (2 minutes)
-DEFAULT_TRANSFER_TIME = 120
+# Default transfer time in seconds (5 minutes, added per transfer)
+DEFAULT_TRANSFER_TIME = 300
 
 # Krakow center coordinates for map initialization
 KRAKOW_LAT = 50.0647
