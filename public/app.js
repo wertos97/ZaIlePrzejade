@@ -205,15 +205,15 @@ function setupEventListeners() {
 
     // Modal buttons
     document.getElementById('btn-info').addEventListener('click', function() {
-        showModal('O co chodzi?', 'info.txt');
+        showModal('O co chodzi?', 'info.md');
     });
 
     document.getElementById('btn-warning').addEventListener('click', function() {
-        showModal('Uwaga', 'warning.txt');
+        showModal('Uwaga', 'warning.md');
     });
 
     document.getElementById('btn-author').addEventListener('click', function() {
-        showModal('Od autora', 'author.txt');
+        showModal('Od autora', 'author.md');
     });
 
     document.getElementById('modal-close').addEventListener('click', closeModal);
@@ -356,15 +356,13 @@ function parseMarkdown(md) {
 
 async function showModal(title, file) {
     try {
-        var mdFile = file.replace(/\.txt$/, '.md');
-        var response = await fetch('/' + mdFile);
+        var response = await fetch('/' + file);
         if (!response.ok) {
-            response = await fetch('/' + file);
+            throw new Error('HTTP ' + response.status);
         }
         var text = await response.text();
-        var isMd = mdFile.endsWith('.md');
         document.getElementById('modal-title').textContent = title;
-        document.getElementById('modal-body').innerHTML = isMd ? parseMarkdown(text) : text;
+        document.getElementById('modal-body').innerHTML = parseMarkdown(text);
         document.getElementById('modal-overlay').style.display = 'block';
         document.getElementById('modal').style.display = 'flex';
     } catch (error) {

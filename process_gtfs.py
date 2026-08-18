@@ -75,10 +75,11 @@ def parse_time_to_seconds(time_str):
         return None
 
 
-def download_gtfs():
+def download_gtfs(force=False):
     """
     Download the latest GTFS feeds from ZTP Kraków and extract them into data/.
-    Skips download if the zip file already exists (allows offline processing).
+    By default skips download if the zip file already exists (allows offline
+    processing). With force=True, always re-downloads and re-extracts.
     """
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -86,8 +87,8 @@ def download_gtfs():
         zip_path = os.path.join(DATA_DIR, zip_filename)
         extract_dir = os.path.join(DATA_DIR, feed_dir)
 
-        # Download if the zip doesn't exist yet
-        if not os.path.exists(zip_path):
+        # Download if the zip doesn't exist yet, or force is requested
+        if force or not os.path.exists(zip_path):
             print(f"  Downloading {zip_filename} from {url}...")
             try:
                 urllib.request.urlretrieve(url, zip_path)
@@ -99,8 +100,8 @@ def download_gtfs():
         else:
             print(f"  {zip_filename} already exists, skipping download.")
 
-        # Extract if the directory doesn't exist or is empty
-        if not os.path.isdir(extract_dir) or not os.listdir(extract_dir):
+        # Extract if the directory doesn't exist, is empty, or force is requested
+        if force or not os.path.isdir(extract_dir) or not os.listdir(extract_dir):
             print(f"  Extracting {zip_filename}...")
             try:
                 with zipfile.ZipFile(zip_path, 'r') as zf:
@@ -479,15 +480,55 @@ def process_shapes(routes):
     return route_shapes
 
 
+def update_public_texts():
+    """Update the data-access dates in the public markdown files (author/warning)
+    to today's date, so the site always reflects when the GTFS data was fetched.
+
+    Replaces dates in DD.MM.YYYY format inside the "dostęp"/"pobrane" phrases in
+    public/author.md and public/warning.md.
+    """
+    import re
+    from datetime import date
+
+    today = date.today().strftime('%d.%m.%Y')
+    public_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public')
+    files = ['author.md', 'warning.md']
+
+    # Match a date in DD.MM.YYYY format that follows "dostęp " or "pobrane "
+    # (optionally inside parentheses). We replace only the date token.
+    pattern = re.compile(r'((?:dostęp|pobrane)\s+)(\d{2}\.\d{2}\.\d{4})')
+
+    updated = 0
+    for fname in files:
+        path = os.path.join(public_dir, fname)
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding='utf-8') as f:
+            content = f.read()
+        new_content, n = pattern.subn(lambda m: m.group(1) + today, content)
+        if n > 0:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            updated += n
+            print(f"  Updated {fname}: {n} date(s) -> {today}")
+
+    if updated == 0:
+        print("  No dates found to update in public text files.")
+    return updated
+
+
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    # Parse CLI args: --force forces re-download of GTFS feeds
+    force = '--force' in sys.argv
 
     print("=" * 60)
     print("Processing GTFS data for MPK Kraków")
     print("=" * 60)
 
     print("\n0. Downloading latest GTFS data...")
-    download_gtfs()
+    download_gtfs(force=force)
 
     print("\n1. Processing stops...")
     stops, code_to_stops, prefix_to_stops = process_stops()
@@ -558,6 +599,10 @@ def main():
     with open(os.path.join(OUTPUT_DIR, 'metadata.json'), 'w') as f:
         json.dump(metadata, f, ensure_ascii=False)
     print(f"  Saved metadata.json (version: {metadata.get('version', '') or 'unknown'})")
+
+    # Update the data-access dates in the public text files to today
+    print("\n8. Updating public text dates...")
+    update_public_texts()
 
     print("\n" + "=" * 60)
     print("Processing complete!")
