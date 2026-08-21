@@ -21,7 +21,7 @@
 - 🗺️ **Wybór przystanków na mapie** (Leaflet)
 - 💰 **Obliczanie dystansu i kosztu przejazdu** wg nowego systemu biletów
 - 🛤️ **Dwa tryby nawigacji**:
-  - **Krótka trasa** — najkrótszy dystans
+  - **Tania trasa** — najtańszy przejazd (każdy segment to osobny bilet, więc najtańsze nie zawsze = najkrótsze)
   - **Wygodna trasa** — najmniej przesiadek
 - 📍 **Wyświetlanie trasy na mapie** z ceną i dystansem nad każdym przejazdem
 - 📱 **Responsywny interfejs** (mobile + desktop)
@@ -85,10 +85,10 @@ Konfiguracja cen znajduje się w [`pricing.json`](pricing.json) i jest ładowana
 - **Mapy**: Leaflet.js (hostowany lokalnie)
 - **Dane**: GTFS publikowane przez ZTP Kraków → przetworzone do JSON (`process_gtfs.py`)
 
-### Optymalizacje (dla małego VPS: 256MB RAM, 3GB dysk)
+### Optymalizacje
 
-- 🧵 **Threading** z limitem 20 równoczesnych żądań (ochrona przed przeciążeniem)
-- 💾 **Cache tras** (ograniczony rozmiarem, ~20MB) — powtarzające się zapytania są natychmiastowe
+- 🧵 **Threading** z limitem równoczesnych żądań (ochrona przed przeciążeniem)
+- 💾 **Cache tras** (ograniczony rozmiarem) — powtarzające się zapytania są natychmiastowe
 - 🗜️ **Gzip compression** dla odpowiedzi JSON > 1KB
 - ⚡ **Pre-komputowane odpowiedzi** dla `/api/stops` i `/api/routes`
 - 🔥 **Warmup cache** przy starcie (popularne pary przystanków)
@@ -228,7 +228,8 @@ Wynik trafia do katalogu `previews/`.
 ## 📁 Struktura projektu
 
 ```
-├── server.py              # Główny serwer HTTP (stdlib only)
+├── server.py              # Punkt wejścia (uruchamia serwer)
+├── server/                # Pakiet: data, cost, handler, pathfinding (stdlib only)
 ├── process_gtfs.py        # Przetwarzanie GTFS → JSON
 ├── pricing.json           # Konfiguracja cen
 ├── autoupdate.sh          # Auto-aktualizacja i self-recovery
@@ -243,43 +244,6 @@ Wynik trafia do katalogu `previews/`.
 ├── data/                  # Surowe dane GTFS
 └── previews/              # Podglądy assetów
 ```
+## 🧪 Testy
 
-## 📜 Changelog
-
-### v1.4.0
-- 🆕 Nowy model cen: bilety per przejazd (segment) + limit dzienny 20/10 zł
-- 🆕 Śledzenie wersji: `/api/version` + nagłówek `X-App-Version`
-- 🆕 Debug w konsoli przeglądarki (status odpowiedzi, odpowiedź serwera)
-- 🔧 Rate limiting: osobne buckety dla statycznych i kosztownych żądań
-- 🔧 `_get_client_ip` — rozpoznawanie prawdziwego IP (X-Forwarded-For)
-- 🔧 `findRoute` — 1 żądanie zamiast 2 (mniejsze obciążenie)
-- 🎨 Etykiety z ceną i dystansem nad segmentami na mapie
-
-### v1.3.0
-- 🆕 SEO: canonical URL, JSON-LD structured data, ulepszony description
-- 🆕 `sitemap.xml`, poprawki `robots.txt`
-- 🆕 Panel cennika z limitem dziennym
-
-### v1.2.0
-- 🆕 Dynamiczne OG image (`/api/og-image`)
-- 🆕 Wykrywanie botów i serwowanie dedykowanych meta
-- 🔧 Leaflet hostowany lokalnie (bez CDN)
-
-### v1.1.0
-- 🆕 Auto-aktualizacje (`autoupdate.sh`) i self-recovery
-- 🆕 Skrypty `restart.sh`, `common.sh`
-- 🔧 Rate limiting per IP
-
-### v1.0.0
-- 🎉 Pierwsza wersja: wyszukiwanie przystanków, trasy, koszty, mapa
-
-## 📄 Licencja
-
-Projekt jest udostępniany na licencji **MIT** — zobacz [LICENSE](LICENSE). Dane GTFS pochodzą z ZTP Kraków i podlegają ich własnym warunkom.
-
----
-
-<p align="center">
-  Zbudowane z ❤️ dla Krakowa<br/>
-  <a href="https://zaileprzeja.de">zaileprzeja.de</a>
-</p>
+Opis testów (sposób uruchamiania i pokrycie) znajduje się w [`tests/README.md`](tests/README.md).

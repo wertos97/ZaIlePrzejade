@@ -36,7 +36,7 @@
             var params = new URLSearchParams(window.location.search);
             var from = params.get('from');
             var to = params.get('to');
-            var mode = params.get('mode') || 'short';
+            var mode = params.get('mode') || 'cheap';
             
             if (from && to) {
                 var ogImageUrl = 'https://zaileprzeja.de/api/og-image?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&mode=' + encodeURIComponent(mode);
@@ -54,9 +54,9 @@
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <!-- Leaflet CSS (local) -->
-    <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=1.0.0" />
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=1.0.0" />
     <!-- Structured data (Schema.org) -->
     <script type="application/ld+json">
     {
@@ -127,10 +127,10 @@
             <div class="mode-selector">
                 <label>Tryb nawigacji:</label>
                 <div class="mode-buttons">
-                    <button class="btn-mode btn-mode-active" id="mode-short" data-mode="short">
-                        <span class="mode-icon">⚡</span>
-                        <span class="mode-label">Krótka trasa</span>
-                        <span class="mode-desc">Najkrótsza odległość</span>
+                    <button class="btn-mode btn-mode-active" id="mode-cheap" data-mode="cheap">
+                        <span class="mode-icon">💸</span>
+                        <span class="mode-label">Tania trasa</span>
+                        <span class="mode-desc">Najtańszy przejazd</span>
                     </button>
                     <div class="mode-equal" id="mode-equal" style="display: none;">
                         <span class="mode-equal-icon">=</span>
@@ -232,8 +232,8 @@
                 </svg>
             </button>
             <div class="mobile-mode-bar" id="mobile-mode-bar">
-                <button class="btn-mode-sm btn-mode-sm-active" id="mobile-mode-short" data-mode="short">
-                    ⚡ Krótka
+                <button class="btn-mode-sm btn-mode-sm-active" id="mobile-mode-cheap" data-mode="cheap">
+                    💸 Tania
                 </button>
                 <span class="mode-equal-sm" id="mobile-mode-equal" style="display: none;">=</span>
                 <button class="btn-mode-sm" id="mobile-mode-convenient" data-mode="convenient">
@@ -296,9 +296,9 @@
     </div>
 
     <!-- Leaflet JS (local) -->
-    <script src="vendor/leaflet/leaflet.js" defer></script>
+    <script src="vendor/leaflet/leaflet.js?v=1.0.0" defer></script>
     <!-- App JS -->
-    <script src="app.js" defer></script>
-    <script src="js/route.js" defer></script>
+    <script src="app.js?v=1.0.0" defer></script>
+    <script src="js/route.js?v=1.0.0" defer></script>
 </body>
 </html>

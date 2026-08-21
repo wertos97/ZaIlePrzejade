@@ -94,9 +94,38 @@ start_server() {
     fi
 }
 
+# --- Rotacja logów (dysk 3GB — nie pozwól, by logi go zjadły) ---
+# Wywoływana przy restarcie: jeśli log > 5MB, zostaje skompresowany do .1.gz
+# i rozpoczyna się od nowa; stare kopie (5+) są usuwane.
+rotate_logs() {
+    local LOG="$1"
+    if [ ! -f "$LOG" ]; then
+        return 0
+    fi
+    local SIZE
+    SIZE=$(wc -c < "$LOG" 2>/dev/null || echo 0)
+    if [ "$SIZE" -lt 5242880 ]; then
+        return 0
+    fi
+    # zsuń stare kopie
+    for i in 4 3 2 1; do
+        if [ -f "$LOG.$i.gz" ]; then
+            mv -f "$LOG.$i.gz" "$LOG.$((i+1)).gz" 2>/dev/null || true
+        fi
+    done
+    if command -v gzip >/dev/null 2>&1; then
+        gzip -c "$LOG" > "$LOG.1.gz" 2>/dev/null || cp "$LOG" "$LOG.1"
+    else
+        cp "$LOG" "$LOG.1"
+    fi
+    : > "$LOG"
+}
+
 # --- Restart serwera (stop + start) ---
 restart_server() {
     stop_server
+    rotate_logs "$SCRIPT_DIR/server.log"
+    rotate_logs "$SCRIPT_DIR/autoupdate.log"
     start_server
     sleep 2
     if pgrep -f "server.py" > /dev/null; then

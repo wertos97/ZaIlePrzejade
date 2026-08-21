@@ -36,7 +36,7 @@ async function findRoute() {
         const cached = state.routeCache[routeKey];
         const result = cached[state.routeMode];
         if (result) {
-            updateEqualityIndicators(cached.short, cached.convenient);
+            updateEqualityIndicators(cached.cheap, cached.convenient);
             displayRoute(result);
             updateURL();
             return;
@@ -56,43 +56,52 @@ async function findRoute() {
     }
 
     try {
-        // Fetch only the currently selected mode (reduces server load by ~50%)
-        // The other mode is fetched lazily when the user switches modes.
-        const url = `/api/find-route?from=${state.fromStop.id}&to=${state.toStop.id}&mode=${state.routeMode}`;
-        console.log('[DEBUG] findRoute: wysyłam żądanie', url);
+        const fromId = state.fromStop.id;
+        const toId = state.toStop.id;
+
+        const url = `/api/find-route?from=${fromId}&to=${toId}`;
         const response = await fetch(url);
-        console.log('[DEBUG] findRoute: status odpowiedzi =', response.status);
         const result = await response.json();
-        console.log('[DEBUG] findRoute: odpowiedź =', result);
 
         if (result.error) {
-            console.warn('[DEBUG] findRoute: serwer zwrócił błąd:', result.error);
             loadingEl.style.display = 'none';
             if (isMobile && loadingOverlay) loadingOverlay.classList.remove('show');
             showToast(result.error + ' Kliknij trasę ponownie, aby spróbować.', 5000);
             return;
         }
 
-        // Cache the fetched mode
-        if (!state.routeCache[routeKey]) {
-            state.routeCache[routeKey] = {};
-        }
-        state.routeCache[routeKey][state.routeMode] = result;
+        // Cache all three modes from the response
+        state.routeCache[routeKey] = {
+            short: result.short,
+            convenient: result.convenient,
+            cheap: result.cheap,
+        };
 
         // This is a new route - fit bounds on next draw
         state.shouldFitBounds = true;
 
-        // Update equality indicator only if we have both modes cached
-        const cached = state.routeCache[routeKey];
-        if (cached.short && cached.convenient) {
-            updateEqualityIndicators(cached.short, cached.convenient);
-        } else {
-            // Hide equality indicator until we have both modes
-            document.getElementById('mode-equal').style.display = 'none';
-            document.getElementById('mobile-mode-equal').style.display = 'none';
+        // Update equality indicator (cheap vs convenient)
+        updateEqualityIndicators(result.cheap, result.convenient);
+
+        // Selected mode may be unavailable for this pair — fall back to the
+        // other one instead of crashing on `result[state.routeMode]`.
+        if (!result[state.routeMode]) {
+            const altModes = state.routeMode === 'cheap'
+                ? ['convenient', 'short']
+                : state.routeMode === 'convenient'
+                    ? ['cheap', 'short']
+                    : ['cheap', 'convenient'];
+            const altMode = altModes.find(m => result[m]);
+            if (altMode) {
+                showToast('Ta trasa nie jest dostępna w tym trybie — pokazano drugi.', 4000);
+                setRouteMode(altMode);
+            } else {
+                showToast('Nie znaleziono trasy między tymi przystankami.', 5000);
+            }
+            return;
         }
 
-        displayRoute(result);
+        displayRoute(result[state.routeMode]);
         updateURL();
     } catch (error) {
         console.error('Route finding error:', error);
@@ -103,17 +112,17 @@ async function findRoute() {
     }
 }
 
-function updateEqualityIndicators(shortResult, convenientResult) {
+function updateEqualityIndicators(cheapResult, convenientResult) {
     // If either mode is missing, hide the equality indicator
-    if (!shortResult || !convenientResult || shortResult.error || convenientResult.error) {
+    if (!cheapResult || !convenientResult || cheapResult.error || convenientResult.error) {
         document.getElementById('mode-equal').style.display = 'none';
         document.getElementById('mobile-mode-equal').style.display = 'none';
         return;
     }
 
     const equal = (
-        Math.abs(shortResult.total_distance - convenientResult.total_distance) < 0.001 &&
-        (shortResult.transfers || []).length === (convenientResult.transfers || []).length
+        Math.abs(cheapResult.total_distance - convenientResult.total_distance) < 0.001 &&
+        (cheapResult.transfers || []).length === (convenientResult.transfers || []).length
     );
 
     const equalEl = document.getElementById('mode-equal');
@@ -141,11 +150,13 @@ function displayRoute(result) {
     state.hasRoute = true;
     state.routeLayer.clearLayers();
 
-    // Collect stop IDs on the route for hiding others
+    // Collect stop IDs and group IDs on the route for hiding others
     state.routeStopIds = new Set();
+    state.routeGroupIds = new Set();
     if (result.path) {
         result.path.forEach(s => {
             state.routeStopIds.add(s.stop_id);
+            if (s.group_id) state.routeGroupIds.add(s.group_id);
         });
     }
 
@@ -197,12 +208,23 @@ function drawRouteOnMap(result) {
 
     const drawPoints = path.filter(s => !s.is_transfer);
 
-    // Build a lookup: stop_id -> {lat, lon} for all non-transfer stops
+    // Build a lookup: stop_id -> {lat, lon} for all non-transfer stops.
+    // The path list is deduplicated per stop group, so also merge the exact
+    // peron positions carried by each segment.
     const coordLookup = {};
     drawPoints.forEach(s => {
         // route.js path items use 'stop_id'
         if (s.stop_id) coordLookup[s.stop_id] = [s.lat, s.lon];
     });
+    if (result.segments) {
+        result.segments.forEach(seg => {
+            if (seg.stop_positions) {
+                Object.keys(seg.stop_positions).forEach(sid => {
+                    if (!coordLookup[sid]) coordLookup[sid] = seg.stop_positions[sid];
+                });
+            }
+        });
+    }
 
     // Draw real-world geometry for each segment (ride) using its shape.
     // Fall back to straight lines between the segment's stops if no shape is available.
@@ -236,7 +258,8 @@ function drawRouteOnMap(result) {
         });
     }
 
-    // Draw stop markers on route
+    // Draw stop markers on route — these are the REAL peron positions,
+    // interactive and clickable (select as start/end).
     path.forEach((stop, index) => {
         let markerColor = '#3498db';
         let markerRadius = 5;
@@ -252,13 +275,23 @@ function drawRouteOnMap(result) {
             markerRadius = 7;
         }
 
-        L.circleMarker([stop.lat, stop.lon], {
+        const marker = L.circleMarker([stop.lat, stop.lon], {
             radius: markerRadius,
             fillColor: markerColor,
             color: '#fff',
             weight: 2,
             fillOpacity: 1,
+            interactive: true,
         }).addTo(state.routeLayer);
+
+        // The peron on the route is clickable — same stop-group popup as the
+        // overview dots (the averaged overview dot is hidden for this group).
+        const groupObj = state.stopGroups.find(g => g.id === stop.group_id);
+        if (groupObj) {
+            marker.on('click', function(e) {
+                showCustomPopup(groupObj, e);
+            });
+        }
     });
 
     // Draw price/distance labels at the END of each segment (ride)

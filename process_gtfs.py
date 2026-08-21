@@ -572,11 +572,6 @@ def main():
         json.dump(routes_list, f, ensure_ascii=False)
     print(f"  Saved routes.json ({len(routes_list)} routes)")
 
-    # Save edges (graph connections)
-    with open(os.path.join(OUTPUT_DIR, 'edges.json'), 'w') as f:
-        json.dump(edges, f, ensure_ascii=False)
-    print(f"  Saved edges.json ({len(edges)} edges)")
-
     # Save adjacency list
     adj_serializable = {k: v for k, v in adj.items()}
     with open(os.path.join(OUTPUT_DIR, 'adjacency.json'), 'w') as f:
@@ -587,12 +582,6 @@ def main():
     with open(os.path.join(OUTPUT_DIR, 'shapes.json'), 'w') as f:
         json.dump(route_shapes, f, ensure_ascii=False)
     print(f"  Saved shapes.json ({len(route_shapes)} route shapes)")
-
-    # Save stop lookup by code prefix for transfers
-    prefix_lookup = {k: list(set(v)) for k, v in prefix_to_stops.items() if len(v) > 1}
-    with open(os.path.join(OUTPUT_DIR, 'transfers.json'), 'w') as f:
-        json.dump(prefix_lookup, f, ensure_ascii=False)
-    print(f"  Saved transfers.json ({len(prefix_lookup)} transfer groups)")
 
     # Save feed metadata (version, validity period, publisher)
     metadata = read_feed_metadata()

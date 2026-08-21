@@ -33,3 +33,6 @@ server.env
 
 # Python virtual environment
 venv/
+
+# Runtime route cache (regenerated on server start)
+processed/route_cache_*.json

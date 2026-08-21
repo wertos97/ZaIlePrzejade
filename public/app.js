@@ -29,9 +29,9 @@ const state = {
     fromStop: null,
     toStop: null,
     searchTimeout: null,
-    routeMode: 'short',
+    routeMode: 'cheap',
     hasRoute: false,
-    routeCache: {}, // key: "fromId_toId", value: { short: result, convenient: result }
+    routeCache: {}, // key: "fromId_toId", value: { short, convenient, cheap }
     currentRouteKey: null,
     shouldFitBounds: true,
 };
@@ -73,8 +73,10 @@ function restoreFromURL() {
             state.toStop = toGroup;
             document.getElementById('from-search').value = fromGroup.name;
             document.getElementById('to-search').value = toGroup.name;
-            if (mode === 'convenient') {
-                setRouteMode('convenient');
+            if (mode === 'convenient' || mode === 'cheap' || mode === 'short') {
+                setRouteMode(mode);
+            } else {
+                setRouteMode('cheap');
             }
             updateSelectedStops();
             // Wait a tick for stops to be fully loaded on map
@@ -115,6 +117,20 @@ function initMap() {
 
     state.routeLayer = L.layerGroup().addTo(state.map);
 
+    // Show loading spinner while map tiles load
+    var loadingEl = document.createElement('div');
+    loadingEl.id = 'map-loading';
+    loadingEl.style.cssText = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; text-align: center; background: rgba(255,255,255,0.9); padding: 20px 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);';
+    loadingEl.innerHTML = '<div style="width: 24px; height: 24px; border: 3px solid #c0d8e8; border-top-color: #2874a6; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 8px;"></div><div style="font-size: 0.85em; color: #1a5276; font-weight: 500;">Ładowanie mapy</div>';
+    document.getElementById('map').appendChild(loadingEl);
+
+    state.map.whenReady(function() {
+        setTimeout(function() {
+            var el = document.getElementById('map-loading');
+            if (el) el.remove();
+        }, 500);
+    });
+
     // Add data version attribution in the bottom-left corner (Leaflet style),
     // without moving the OSM/CARTO attribution (which stays bottom-right).
     const dataInfoEl = document.createElement('div');
@@ -122,6 +138,11 @@ function initMap() {
     dataInfoEl.style.cssText = 'position: absolute; left: 0px; bottom: 1px; z-index: 1000; background: rgba(255,255,255,0.8); padding: 0 5px; font-size: 11px; color: #333;';
     dataInfoEl.textContent = 'Dane: …';
     document.getElementById('map').appendChild(dataInfoEl);
+
+    // Add @keyframes for map loading spinner
+    var style = document.createElement('style');
+    style.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
+    document.head.appendChild(style);
 
     // Fetch and display the GTFS data version
     fetch('/api/data-info')
@@ -142,6 +163,59 @@ function initMap() {
             }
         })
         .catch(() => { dataInfoEl.remove(); /* ignore - attribution is optional */ });
+
+    // Subtle app version + server load badge (bottom-left, above data version).
+    // Polls /api/status; a coloured dot signals load level, the title shows details.
+    const statusEl = document.createElement('div');
+    statusEl.className = 'leaflet-control leaflet-control-attribution server-status';
+    statusEl.style.cssText = 'position: absolute; left: 0px; bottom: 18px; z-index: 1000; background: rgba(255,255,255,0.8); padding: 0 6px; font-size: 10.5px; color: #555; border-radius: 3px; line-height: 1.6; white-space: nowrap;';
+    statusEl.textContent = '…';
+    document.getElementById('map').appendChild(statusEl);
+    // Hide on narrow screens — keep the map clean on mobile.
+    if (window.innerWidth <= 768) {
+        statusEl.style.display = 'none';
+    }
+
+    function updateServerStatus() {
+        fetch('/api/status')
+            .then(r => r.json())
+            .then(s => {
+                if (!s || !s.version) return;
+                const cpus = s.cpus || 1;
+                const load1 = s.load_avg && s.load_avg.length ? s.load_avg[0] : null;
+                let level = 'ok';
+                if (load1 !== null) {
+                    if (load1 >= cpus * 1.5) level = 'high';
+                    else if (load1 >= cpus * 0.8) level = 'busy';
+                }
+                if (s.active_requests >= (s.max_concurrent || 20) * 0.8) level = 'high';
+                const dot = level === 'high' ? '#e74c3c' : level === 'busy' ? '#f39c12' : '#27ae60';
+                const label = level === 'high' ? 'wysokie' : level === 'busy' ? 'podwyższone' : 'niskie';
+                statusEl.innerHTML = `v${s.version} <span style="color:${dot}">●</span> <span style="color:#888">obc.: ${label}</span>`;
+                const f = s.find_cache || {};
+                const cheap = s.cheap || {};
+                const rate = (s.counters && s.counters.rate_limited) || 0;
+                const blocked = (s.counters && s.counters.blocked) || 0;
+                statusEl.title =
+                    `Aplikacja: v${s.version}\n` +
+                    `Uptime: ${Math.floor(s.uptime_seconds / 60)} min\n` +
+                    (load1 !== null ? `Load avg (1/5/15): ${s.load_avg.join(', ')} (${cpus} CPU)\n` : 'Load avg: n/d\n') +
+                    `Aktywne żądania: ${s.active_requests}/${s.max_concurrent}\n` +
+                    (s.rss_mb ? `RAM serwera: ${s.rss_mb} MB\n` : '') +
+                    `Cache tras: ${f.route_entries || 0} / ${f.route_max || '?'}\n` +
+                    `Cache wyszukiwań: ${f.find_entries || 0} (${((f.find_bytes || 0) / 1024 / 1024).toFixed(1)} MB / ${((f.find_max_bytes || 0) / 1024 / 1024).toFixed(0)} MB)\n` +
+                    `Szukania taniej trasy: ${cheapSearchesText(s)}\n` +
+                    `Odrzucone (429/503): ${rate} / ${blocked}`;
+            })
+            .catch(() => { /* keep last value on transient errors */ });
+    }
+    // helper for the tooltip line
+    function cheapSearchesText(s) {
+        const c = s.cheap || {};
+        return `${c.searches || 0} (timeouty: ${c.timeouts || 0})`;
+    }
+    updateServerStatus();
+    setInterval(updateServerStatus, 15000);
 
 }
 
@@ -260,9 +334,18 @@ function setupEventListeners() {
         });
     }
 
+    // Escape key closes modals
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeModal();
+            closeShareModal();
+            closeCustomPopup();
+        }
+    });
+
     // Mobile mode buttons
-    document.getElementById('mobile-mode-short').addEventListener('click', function() {
-        setRouteMode('short');
+    document.getElementById('mobile-mode-cheap').addEventListener('click', function() {
+        setRouteMode('cheap');
     });
     document.getElementById('mobile-mode-convenient').addEventListener('click', function() {
         setRouteMode('convenient');
@@ -275,6 +358,7 @@ function clearRoute() {
     state.toStop = null;
     state.hasRoute = false;
     state.routeStopIds = null;
+    state.routeGroupIds = null;
     document.getElementById('from-search').value = '';
     document.getElementById('to-search').value = '';
     document.getElementById('right-panel').style.display = 'none';
@@ -515,12 +599,43 @@ function closeCustomPopup() {
 // ============================================================
 
 async function loadStops() {
-    try {
-        const response = await fetch('/api/stops');
-        const stopGroups = await response.json();
-        state.stopGroups = stopGroups;
+    let stopGroups = null;
 
-        stopGroups.forEach(group => {
+    // /api/stops is cheap; transient failures (429 burst, proxy hiccup) must
+    // not leave the map blank — retry briefly before giving up.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const response = await fetch('/api/stops');
+            if (!response.ok) {
+                throw new Error('HTTP ' + response.status);
+            }
+            const data = await response.json();
+            if (Array.isArray(data)) {
+                stopGroups = data;
+                break;
+            }
+            throw new Error('Nieoczekiwana odpowiedź serwera');
+        } catch (error) {
+            console.warn(`loadStops: próba ${attempt}/3 nieudana`, error);
+            if (attempt < 3) {
+                await new Promise(r => setTimeout(r, 500 * attempt));
+            }
+        }
+    }
+
+    if (!stopGroups) {
+        const notice = document.createElement('div');
+        notice.className = 'map-notice';
+        notice.style.cssText = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; background: rgba(255,255,255,0.95); border: 1px solid #e74c3c; color: #c0392b; padding: 14px 20px; border-radius: 8px; font-size: 0.9em; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.15); max-width: 80%;';
+        notice.textContent = 'Nie udało się załadować przystanków. Odśwież stronę, aby spróbować ponownie.';
+        document.getElementById('map').appendChild(notice);
+        console.error('loadStops: failed after 3 attempts');
+        return;
+    }
+
+    state.stopGroups = stopGroups;
+
+    stopGroups.forEach(group => {
             // Invisible larger hit area for easier clicking
             const hitArea = L.circleMarker([group.lat, group.lon], {
                 radius: 14,
@@ -532,9 +647,11 @@ async function loadStops() {
                 interactive: true,
             });
 
-            hitArea.on('click', function(e) {
+            hitArea._selectHandler = function(e) {
                 selectStop(group, e);
-            });
+            };
+            hitArea.on('click', hitArea._selectHandler);
+            hitArea._routeModeInteractive = true;
 
             hitArea.stopData = group;
             hitArea.addTo(state.map);
@@ -557,9 +674,6 @@ async function loadStops() {
         });
 
         console.log(`Loaded ${stopGroups.length} stop groups`);
-    } catch (error) {
-        console.error('Error loading stops:', error);
-    }
 }
 
 function getModeLabel(mode) {
@@ -703,16 +817,51 @@ function collapseMobileSidebar() {
 
 function updateSelectedStops() {
     // Update marker colors and visibility
+    const routeShown = !!state.hasRoute;
     state.markers.forEach(marker => {
         const group = marker.stopData;
         let color = STOP_COLOR;
         let radius = 5;
-        let opacity = 1;
+        let fillOpacity = 1;
+        let strokeOpacity = 1;
 
-        // If route is shown, hide stops not on the route
-        if (state.hasRoute && state.routeStopIds) {
-            if (!state.routeStopIds.has(group.id)) {
-                opacity = 0.15;
+        // Route shown:
+        //  - stops ON the route: averaged dot disappears COMPLETELY (fill AND
+        //    stroke) — the real peron marker on the route layer takes over.
+        //  - stops OFF the route: dimmed but visible (fill 0.15, as before).
+        let onRoute = false;
+        if (routeShown) {
+            onRoute = !!(state.routeGroupIds && state.routeGroupIds.has(group.id));
+            if (onRoute) {
+                fillOpacity = 0;
+                strokeOpacity = 0;
+            } else {
+                fillOpacity = 0.15;
+            }
+        }
+
+        // Route mode: only perons on the route are interactive (via the route
+        // layer markers). Overview hit areas stay active for off-route stops.
+        // Also kill pointer-events on on-route hit areas — otherwise the
+        // invisible circle still catches hover and shows the pointer cursor.
+        if (marker._selectHandler) {
+            const wantsClick = !routeShown || !onRoute;
+            if (wantsClick !== marker._routeModeInteractive) {
+                marker._routeModeInteractive = wantsClick;
+                if (wantsClick) {
+                    marker.on('click', marker._selectHandler);
+                } else {
+                    marker.off('click', marker._selectHandler);
+                }
+            }
+        }
+        const hitEl = marker.getElement ? marker.getElement() : null;
+        if (hitEl) {
+            const interactive = !routeShown || !onRoute;
+            if (interactive) {
+                hitEl.style.pointerEvents = '';
+            } else {
+                hitEl.style.pointerEvents = 'none';
             }
         }
 
@@ -731,7 +880,8 @@ function updateSelectedStops() {
                 fillColor: color,
                 color: '#fff',
                 weight: 2,
-                fillOpacity: opacity,
+                fillOpacity: fillOpacity,
+                opacity: strokeOpacity,
             });
         }
     });
