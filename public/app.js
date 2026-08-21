@@ -2,6 +2,55 @@
 // Main application logic
 
 // ============================================================
+// Safe DOM manipulation utilities (XSS prevention)
+// ============================================================
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function setTextContent(element, text) {
+    if (!element) return;
+    element.textContent = text;
+}
+
+function setHtmlSafely(element, html) {
+    // Safe alternative to innerHTML: parse as DOM and only allow safe elements/attributes
+    if (!element) return;
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    // Remove script elements and event handlers
+    const scripts = template.content.querySelectorAll('script');
+    scripts.forEach(s => s.remove());
+    const allElements = template.content.querySelectorAll('*');
+    allElements.forEach(el => {
+        // Remove event handler attributes
+        for (const attr of el.attributes) {
+            if (attr.name.startsWith('on')) {
+                el.removeAttribute(attr.name);
+            }
+            // Remove javascript: URLs
+            if (attr.name === 'href' || attr.name === 'src') {
+                if (attr.value.startsWith('javascript:')) {
+                    el.removeAttribute(attr.name);
+                }
+            }
+        }
+    });
+    element.innerHTML = '';
+    element.appendChild(template.content);
+}
+
+function createElementFromHtml(html) {
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    return template.content.firstElementChild;
+}
+
+// ============================================================
 // Toast notification (lightweight, no dependencies)
 // ============================================================
 
@@ -164,11 +213,12 @@ function initMap() {
         })
         .catch(() => { dataInfoEl.remove(); /* ignore - attribution is optional */ });
 
-    // Subtle app version + server load badge (bottom-left, above data version).
-    // Polls /api/status; a coloured dot signals load level, the title shows details.
+    // App version badge (bottom-left, above data version). Public users see only
+    // the application version — load/health stats are intentionally NOT shown
+    // to the public. Full server stats open via right-click on "Autor".
     const statusEl = document.createElement('div');
     statusEl.className = 'leaflet-control leaflet-control-attribution server-status';
-    statusEl.style.cssText = 'position: absolute; left: 0px; bottom: 18px; z-index: 1000; background: rgba(255,255,255,0.8); padding: 0 6px; font-size: 10.5px; color: #555; border-radius: 3px; line-height: 1.6; white-space: nowrap;';
+    statusEl.style.cssText = 'position: absolute; left: 0px; bottom: 18px; z-index: 1000; background: rgba(255,255,255,0.8); padding: 0 6px; font-size: 10.5px; color: #555; border-radius: 3px;';
     statusEl.textContent = '…';
     document.getElementById('map').appendChild(statusEl);
     // Hide on narrow screens — keep the map clean on mobile.
@@ -176,47 +226,116 @@ function initMap() {
         statusEl.style.display = 'none';
     }
 
-    function updateServerStatus() {
+    function updateVersionBadge() {
         fetch('/api/status')
             .then(r => r.json())
-            .then(s => {
-                if (!s || !s.version) return;
-                const cpus = s.cpus || 1;
-                const load1 = s.load_avg && s.load_avg.length ? s.load_avg[0] : null;
-                let level = 'ok';
-                if (load1 !== null) {
-                    if (load1 >= cpus * 1.5) level = 'high';
-                    else if (load1 >= cpus * 0.8) level = 'busy';
-                }
-                if (s.active_requests >= (s.max_concurrent || 20) * 0.8) level = 'high';
-                const dot = level === 'high' ? '#e74c3c' : level === 'busy' ? '#f39c12' : '#27ae60';
-                const label = level === 'high' ? 'wysokie' : level === 'busy' ? 'podwyższone' : 'niskie';
-                statusEl.innerHTML = `v${s.version} <span style="color:${dot}">●</span> <span style="color:#888">obc.: ${label}</span>`;
-                const f = s.find_cache || {};
-                const cheap = s.cheap || {};
-                const rate = (s.counters && s.counters.rate_limited) || 0;
-                const blocked = (s.counters && s.counters.blocked) || 0;
-                statusEl.title =
-                    `Aplikacja: v${s.version}\n` +
-                    `Uptime: ${Math.floor(s.uptime_seconds / 60)} min\n` +
-                    (load1 !== null ? `Load avg (1/5/15): ${s.load_avg.join(', ')} (${cpus} CPU)\n` : 'Load avg: n/d\n') +
-                    `Aktywne żądania: ${s.active_requests}/${s.max_concurrent}\n` +
-                    (s.rss_mb ? `RAM serwera: ${s.rss_mb} MB\n` : '') +
-                    `Cache tras: ${f.route_entries || 0} / ${f.route_max || '?'}\n` +
-                    `Cache wyszukiwań: ${f.find_entries || 0} (${((f.find_bytes || 0) / 1024 / 1024).toFixed(1)} MB / ${((f.find_max_bytes || 0) / 1024 / 1024).toFixed(0)} MB)\n` +
-                    `Szukania taniej trasy: ${cheapSearchesText(s)}\n` +
-                    `Odrzucone (429/503): ${rate} / ${blocked}`;
-            })
+            .then(s => { if (s && s.version) statusEl.textContent = 'v' + s.version; })
             .catch(() => { /* keep last value on transient errors */ });
     }
-    // helper for the tooltip line
-    function cheapSearchesText(s) {
-        const c = s.cheap || {};
-        return `${c.searches || 0} (timeouty: ${c.timeouts || 0})`;
-    }
-    updateServerStatus();
-    setInterval(updateServerStatus, 15000);
+    updateVersionBadge();
+    setInterval(updateVersionBadge, 60000);
 
+}
+
+// ------------------------------------------------------------
+// Admin server-stats panel — opened via right-click on "Autor".
+// Rendered in the map's top-right corner; hidden from public.
+// ------------------------------------------------------------
+function closeServerPanel() {
+    const el = document.getElementById('server-stats-panel');
+    if (el) el.remove();
+}
+
+function toggleServerPanel() {
+    if (document.getElementById('server-stats-panel')) { closeServerPanel(); return; }
+    fetch('/api/status')
+        .then(r => r.json())
+        .then(s => { if (s) renderServerStatsPanel(s); })
+        .catch(() => { /* keep closed on transient errors; right-click retries */ });
+}
+
+// Colour a value by thresholds: < ok green, < warm amber, else red.
+function statColor(value, ok, warm) {
+    if (typeof value !== 'number' || !isFinite(value) || value === null) return '#888';
+    return value >= warm ? '#e74c3c' : value >= ok ? '#f39c12' : '#27ae60';
+}
+
+function fmtUptime(sec) {
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+    if (h > 0) return `${h} h ${m} min`;
+    return `${m} min`;
+}
+
+function renderServerStatsPanel(s) {
+    const mapEl = document.getElementById('map');
+    const panel = document.createElement('div');
+    panel.id = 'server-stats-panel';
+    panel.style.cssText = 'position: absolute; top: 10px; right: 10px; z-index: 1100; '
+        + 'width: 268px; background: rgba(255,255,255,0.95); border: 1px solid #c8d8e8; '
+        + 'border-radius: 6px; padding: 8px 12px; font-size: 12px; font-family: monospace; '
+        + 'box-shadow: 0 2px 8px rgba(0,0,0,0.25); white-space: nowrap;';
+
+    const f = s.find_cache || {};
+    const cheap = s.cheap || {};
+    const c = s.counters || {};
+    const cpus = s.cpus || 1;
+    const load1 = s.load_avg && s.load_avg.length ? s.load_avg[0] : null;
+    const rss = s.rss_mb;
+    const activePct = (s.active_requests || 0) / (s.max_concurrent || 20);
+    const found = (cheap.searches || 0);
+    const timeouts = cheap.timeouts || 0;
+    const timeoutPct = found ? timeouts / found : 0;
+
+    const rows = document.createElement('div');
+    function row(label, value, color) {
+        const r = document.createElement('div');
+        const l = document.createElement('span');
+        l.style.cssText = 'color:#6b6b6b; display:inline-block; width:150px;';
+        l.textContent = label;
+        const v = document.createElement('span');
+        if (color) v.style.color = color;
+        v.textContent = value;
+        r.appendChild(l); r.appendChild(v);
+        rows.appendChild(r);
+    }
+
+row('Aplikacja', 'Za Ile Przejadę?', null);
+    row('Wersja', 'v' + (s.version || '?'), null);
+    row('Uptime', fmtUptime(s.uptime_seconds || 0), null);
+
+    // Real per-process CPU use vs host load average.
+    const cpu = (typeof s.process_cpu_pct === 'number') ? s.process_cpu_pct + '% / 1 w' : 'n/d';
+    row('Obciąż CPU (app)', cpu, statColor(s.process_cpu_pct, 1, 3));
+    const loadTxt = (s.load_avg && s.load_avg.length) ? s.load_avg.join(', ') + `  (${cpus} CPU)` : 'n/d';
+    row('Śr. loadavg (1/5/15)', loadTxt, (load1 !== null) ? statColor(load1, cpus * 0.8, cpus * 1.5) : null);
+
+    row('Aktywne żąd.', `${s.active_requests || 0}/${s.max_concurrent || 20}`, statColor(activePct, 0.5, 0.8));
+    row('RAM', (rss ? rss + ' MB' : 'n/d'), (rss ? statColor(rss, 300, 500) : null));
+
+    row('Cache trasa', `${f.route_entries || 0}/${f.route_max || '?'}`, null);
+    const findMb = ((f.find_bytes || 0) / 1048576).toFixed(1);
+    const findMaxMb = ((f.find_max_bytes || 0) / 1048576).toFixed(0);
+    row('Cache wyszukiwań', `${f.find_entries || 0}  (${findMb}MB/${findMaxMb}MB)`, statColor(
+        ((f.find_bytes || 0) / (f.find_max_bytes || 1)), 0.6, 0.9));
+    row('Tanie wyszukiwań', `${found}`, null);
+    row('  timeouty', `${timeouts}  (${(timeoutPct * 100).toFixed(0)}%)`, statColor(timeoutPct, 0.25, 0.6));
+    row('API total', `${c.api_total || 0}`, null);
+    row('Odrzucone 429/503', `${c.rate_limited || 0}/${c.blocked || 0}`, (c.blocked ? '#e74c3c' : null));
+
+    // Small legend for the colour levels.
+    const legend = document.createElement('div');
+    legend.style.cssText = 'margin-top:6px; font-size:10px; color:#999;';
+    legend.innerHTML = '<span style="color:#27ae60">●</span> ok &nbsp;<span style="color:#f39c12">●</span> busy &nbsp;<span style="color:#e74c3c">●</span> high';
+
+    const close = document.createElement('button');
+    close.textContent = '✕';
+    close.style.cssText = 'position:absolute; top:4px; right:6px; border:none; background:transparent; color:#888; cursor:pointer; font-size:13px;';
+    close.addEventListener('click', closeServerPanel);
+
+    panel.appendChild(rows);
+    panel.appendChild(legend);
+    panel.appendChild(close);
+    mapEl.appendChild(panel);
 }
 
 function setupEventListeners() {
@@ -242,6 +361,9 @@ function setupEventListeners() {
     });
 
     document.addEventListener('click', function(e) {
+        // Close admin stats panel when clicking away from it.
+        const sp = document.getElementById('server-stats-panel');
+        if (sp && e.target && !e.target.closest('#server-stats-panel')) closeServerPanel();
         if (!e.target.closest('.search-box')) {
             document.querySelectorAll('.search-results').forEach(el => el.classList.remove('show'));
         }
@@ -288,6 +410,13 @@ function setupEventListeners() {
 
     document.getElementById('btn-author').addEventListener('click', function() {
         showModal('Od autora', 'author.md');
+    });
+
+    // Right-click on "Autor" opens the admin-only server-stats panel
+    // (top-right of the map). Left-click keeps the normal modal.
+    document.getElementById('btn-author').addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+        toggleServerPanel();
     });
 
     document.getElementById('modal-close').addEventListener('click', closeModal);
@@ -340,6 +469,7 @@ function setupEventListeners() {
             closeModal();
             closeShareModal();
             closeCustomPopup();
+            closeServerPanel();
         }
     });
 
@@ -446,7 +576,9 @@ async function showModal(title, file) {
         }
         var text = await response.text();
         document.getElementById('modal-title').textContent = title;
-        document.getElementById('modal-body').innerHTML = parseMarkdown(text);
+        const modalBody = document.getElementById('modal-body');
+        modalBody.innerHTML = '';
+        modalBody.appendChild(createElementFromHtml(parseMarkdown(text)));
         document.getElementById('modal-overlay').style.display = 'block';
         document.getElementById('modal').style.display = 'flex';
     } catch (error) {
@@ -716,7 +848,11 @@ function handleSearch(input, resultsId, field) {
             resultsEl.innerHTML = '';
             searchSelectedIndex[field] = -1;
             if (results.length === 0) {
-                resultsEl.innerHTML = '<div class="search-item" style="color: #999; text-align: center; padding: 12px;">😕 Nie znaleziono przystanku<br><span style="font-size: 0.85em;">Spróbuj inną nazwę</span></div>';
+                const emptyMsg = document.createElement('div');
+                emptyMsg.className = 'search-item';
+                emptyMsg.style.cssText = 'color: #999; text-align: center; padding: 12px;';
+                emptyMsg.innerHTML = '😕 Nie znaleziono przystanku<br><span style="font-size: 0.85em;">Spróbuj inną nazwę</span>';
+                resultsEl.appendChild(emptyMsg);
             } else {
                 results.forEach((group, idx) => {
                     const item = document.createElement('div');

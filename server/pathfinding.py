@@ -132,19 +132,12 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return math.sqrt(dlat * dlat + dlon * dlon)
 
 
-def _haversine_pair(p1, p2):
-    """Distance in km between two (lat, lon) tuples."""
-    lat1, lon1 = p1
-    lat2, lon2 = p2
-    return haversine_km(lat1, lon1, lat2, lon2)
-
-
 def _nearest_shape_index(shape_points, lat, lon, start_idx, end_idx):
     """Find the index in shape_points (within [start_idx, end_idx]) closest to (lat, lon)."""
     best_idx = start_idx
     best_dist = float('inf')
     for i in range(start_idx, end_idx):
-        d = _haversine_pair(shape_points[i], (lat, lon))
+        d = haversine_km(shape_points[i][0], shape_points[i][1], lat, lon)
         if d < best_dist:
             best_dist = d
             best_idx = i
@@ -194,6 +187,24 @@ def _cache_get_find(key):
 _ASTAR_MAX_ITERATIONS = 200000
 _ASTAR_TIMEOUT_SECONDS = 30
 
+# Cancellation event for cooperative cancellation of long-running searches
+_search_cancel_event = threading.Event()
+
+
+def _check_cancelled():
+    """Check if search was cancelled. Returns True if cancelled."""
+    return _search_cancel_event.is_set()
+
+
+def cancel_all_searches():
+    """Signal all in-progress searches to cancel."""
+    _search_cancel_event.set()
+
+
+def reset_cancel_flag():
+    """Reset the cancellation flag for new searches."""
+    _search_cancel_event.clear()
+
 
 def find_shortest_path(start_id, end_id):
     """A* shortest path between two individual stops.
@@ -230,6 +241,12 @@ def find_shortest_path(start_id, end_id):
     start_time = time.monotonic()
 
     while pq:
+        # Cooperative cancellation check
+        if _check_cancelled():
+            result = None, "Anulowano: wyszukiwanie przerwane"
+            _cache_put_find(cache_key, result)
+            return result
+
         est_total, pen_dist, real_dist, _, stop, route = heapq.heappop(pq)
 
         state = (stop, route)
@@ -427,6 +444,12 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
     iterations = 0
 
     while pq:
+        # Cooperative cancellation check
+        if _check_cancelled():
+            result = None, "Anulowano: wyszukiwanie przerwane"
+            _cache_put_find(cache_key, result)
+            return result
+
         f_val, closed, acc, _, stop, route, parent = heapq.heappop(pq)
 
         # Prune states that already cost MORE than a known full route
@@ -974,9 +997,9 @@ def find_route_between_groups(from_group_id, to_group_id, mode='both'):
 
     Each result is itself a ``(result_dict, error_string)`` pair.
 
-    Results are cached per (from_group_id, to_group_id, mode).
+    Results are cached per (from_group_id, to_group_id, mode, feed_version).
     """
-    cache_key = (from_group_id, to_group_id, mode)
+    cache_key = (from_group_id, to_group_id, mode, _feed_version)
     with _route_cache_lock:
         cached = _route_cache.get(cache_key)
         if cached is not None:

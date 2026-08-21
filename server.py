@@ -17,6 +17,7 @@ from server.pathfinding import (
     find_cache_info, route_cache_info,
 )
 from server.handler import MPKRequestHandler, _build_stops_json, _build_routes_json
+from server.logging_config import setup_logging, get_logger, log_cache_event
 
 
 # Import threading server from stdlib and wrap it
@@ -82,16 +83,32 @@ from server.data import (
     stop_to_group, routes_by_id, route_shapes,
 )
 
+# Setup structured logging
+log_level = os.environ.get('LOG_LEVEL', 'INFO')
+log_file = os.environ.get('LOG_FILE')  # Optional: /var/log/mpk/app.log
+setup_logging(level=log_level, log_file=log_file)
+logger = get_logger('mpk.server')
+
+logger.info('Server starting', extra={'version': APP_VERSION})
+
 init_pathfinding(adjacency, stops_by_id, _sg, stop_to_group, routes_by_id, route_shapes)
 
 # Pre-build cached JSON responses
 _build_stops_json()
 _build_routes_json()
 
+log_cache_event(logger, 'find', 'startup', *find_cache_info())
+_rc_count, _rc_max, _rc_bytes, _rc_max_bytes = route_cache_info()
+log_cache_event(logger, 'route', 'startup', _rc_count, _rc_bytes, _rc_max_bytes)
+
 
 # ============================================================
 # Warmup: pre-compute routes for popular stop pairs at startup
 # ============================================================
+_warmup_done = False
+_warmup_lock = threading.Lock()
+
+
 def _warmup_cache():
     """Pre-compute routes for popular stop pairs to warm up caches.
 
@@ -99,6 +116,7 @@ def _warmup_cache():
     this thread must not steal the GIL from real requests right after boot.
     Each search yields the GIL briefly so early page loads stay fast.
     """
+    global _warmup_done
     group_ids = list(stops_grouped.keys())
     sample = random.sample(group_ids, min(40, len(group_ids)))
 
@@ -112,7 +130,16 @@ def _warmup_cache():
                 pass
             time.sleep(0.05)  # yield the GIL — don't starve live requests
 
-    print(f"  Warmed up {count} route cache entries")
+    logger.info('Cache warmup completed', extra={'entries_warmed': count})
+    with _warmup_lock:
+        _warmup_done = True
+
+
+def trigger_warmup():
+    """Start the warmup thread if not already done."""
+    with _warmup_lock:
+        if not _warmup_done:
+            threading.Thread(target=_warmup_cache, daemon=True).start()
 
 
 def main():
@@ -120,30 +147,22 @@ def main():
 
     server = ThreadedHTTPServer(('0.0.0.0', port), MPKRequestHandler)
 
-    # Warmup cache in background thread (non-blocking)
-    threading.Thread(target=_warmup_cache, daemon=True).start()
-    print(f"\nServer running at http://localhost:{port}")
-    print(f"Serving static files from: {PUBLIC_DIR}")
-    print(f"API endpoints:")
-    print(f"  /api/stops - All stops (grouped)")
-    print(f"  /api/stops/search?q=<query> - Search stops")
-    print(f"  /api/stop-platforms?id=<group_id> - Get platforms for a stop")
-    print(f"  /api/find-route?from=<id>&to=<id> - Find route (returns both short + convenient)")
-    print(f"  /api/cost?distance=<km> - Calculate cost")
-    print(f"  /api/shapes?route_id=<id> - Get route shape")
-    print(f"  /api/routes - All routes")
-    print(f"  /api/stop?id=<id> - Get stop info")
-    print(f"  /api/health - Health check")
-    fc_count, fc_bytes, fc_max = find_cache_info()
-    rc_count, rc_max, rc_bytes, rc_max_bytes = route_cache_info()
-    print(f"\nOptimizations: threading, route cache ({rc_max} routes, "
-          f"{rc_bytes // 1024}KB/{rc_max_bytes // (1024*1024)}MB), "
-          f"find cache ({fc_bytes // 1024}KB/{fc_max // (1024*1024)}MB), gzip compression")
-    print()
+    # Start background rate limit cleanup thread
+    from server.handler import _start_rate_limit_cleanup
+    _start_rate_limit_cleanup()
+
+    # Warmup is deferred until first health check passes (via trigger_warmup)
+    # to avoid stealing GIL from early requests.
+    logger.info('Server ready', extra={
+        'port': port,
+        'public_dir': PUBLIC_DIR,
+        'version': APP_VERSION,
+    })
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nServer stopped.")
+        logger.info('Server shutting down')
         server.shutdown()
 
 

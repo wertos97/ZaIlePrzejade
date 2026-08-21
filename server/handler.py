@@ -9,13 +9,86 @@ import json
 import math
 import os
 import re
+import secrets
 import sys
 import threading
 import time
 import traceback
 import urllib.parse
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from http.server import SimpleHTTPRequestHandler
+
+
+def generate_nonce() -> str:
+    """Generate a cryptographically secure nonce for CSP."""
+    return secrets.token_urlsafe(16)
+
+
+def sanitize_svg(content: str) -> str:
+    """Sanitize SVG content for safe embedding.
+
+    Removes script elements, event handlers, javascript: URLs, and other
+    potentially dangerous content. Keeps only safe presentation elements.
+    """
+    if not content:
+        return ''
+
+    # Remove script elements entirely
+    content = re.sub(r'<script\b[^>]*>.*?</script>', '', content, flags=re.IGNORECASE | re.DOTALL)
+    content = re.sub(r'<script\b[^>]*/?>', '', content, flags=re.IGNORECASE)
+
+    # Remove event handlers (onclick, onload, etc.)
+    content = re.sub(r'\s+on\w+\s*=\s*["\'][^"\']*["\']', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'\s+on\w+\s*=\s*\S+', '', content, flags=re.IGNORECASE)
+
+    # Remove javascript: URLs
+    content = re.sub(r'href\s*=\s*["\']javascript:[^"\']*["\']', 'href="#"', content, flags=re.IGNORECASE)
+    content = re.sub(r'xlink:href\s*=\s*["\']javascript:[^"\']*["\']', 'xlink:href="#"', content, flags=re.IGNORECASE)
+
+    # Remove style attributes that could contain expression() or behavior
+    content = re.sub(r'style\s*=\s*["\'][^"\']*expression\s*\([^"\']*["\']', 'style=""', content, flags=re.IGNORECASE)
+    content = re.sub(r'style\s*=\s*["\'][^"\']*behavior\s*\([^"\']*["\']', 'style=""', content, flags=re.IGNORECASE)
+
+    # Remove foreignObject (can embed HTML)
+    content = re.sub(r'<foreignObject\b[^>]*>.*?</foreignObject>', '', content, flags=re.IGNORECASE | re.DOTALL)
+    content = re.sub(r'<foreignObject\b[^>]*/?>', '', content, flags=re.IGNORECASE)
+
+    return content
+
+
+# Thread pool for pathfinding with timeout support
+_pathfinding_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='pathfind')
+
+
+def run_pathfinding_with_timeout(func, *args, timeout=25.0):
+    """Run a pathfinding function with a hard timeout.
+
+    Uses a thread pool executor to enforce wall-clock timeout. On timeout,
+    signals cooperative cancellation and returns an error result.
+    """
+    future = _pathfinding_executor.submit(func, *args)
+    try:
+        return future.result(timeout=timeout)
+    except FuturesTimeoutError:
+        # Signal cancellation to the pathfinding module
+        try:
+            import server.pathfinding as pf
+            pf.cancel_all_searches()
+        except Exception:
+            pass
+        return None, f"Timeout: wyszukiwanie trwało zbyt długo (>{timeout}s)"
+    except Exception as e:
+        return None, f"Błąd wyszukiwania: {e}"
+
+
+def reset_pathfinding_cancel_flag():
+    """Reset the cancellation flag for new searches."""
+    try:
+        import server.pathfinding as pf
+        pf.reset_cancel_flag()
+    except Exception:
+        pass
 
 from . import data
 from . import cost
@@ -52,15 +125,100 @@ _BOT_LIST = [
 
 
 # ============================================================
+# Input validation
+# ============================================================
+_GROUP_ID_PATTERN = re.compile(r'^group_\d+$')
+_MAX_GROUP_ID_LEN = 64
+
+
+def validate_group_id(group_id: str) -> tuple[bool, str | None]:
+    """Validate a stop group ID.
+
+    Returns (is_valid, error_message). If valid, error_message is None.
+    """
+    if not group_id:
+        return False, 'Missing group ID'
+    if len(group_id) > _MAX_GROUP_ID_LEN:
+        return False, 'Group ID too long'
+    if not _GROUP_ID_PATTERN.match(group_id):
+        return False, 'Invalid group ID format (expected group_<number>)'
+    return True, None
+
+
+def validate_distance(distance_str: str) -> tuple[bool, float | None, str | None]:
+    """Validate and parse a distance parameter.
+
+    Returns (is_valid, distance_value, error_message).
+    """
+    if not distance_str:
+        return False, None, 'Missing distance parameter'
+    if len(distance_str) > 32:
+        return False, None, 'Distance parameter too long'
+    try:
+        distance = float(distance_str)
+    except (ValueError, TypeError):
+        return False, None, 'Invalid distance parameter'
+    if not math.isfinite(distance):
+        return False, None, 'Invalid distance parameter'
+    if distance < 0:
+        distance = 0.0
+    return True, distance, None
+
+
+def validate_mode(mode: str) -> str:
+    """Validate and normalize a route mode parameter."""
+    if mode not in ('short', 'convenient', 'cheap'):
+        return 'short'
+    return mode
+
+
+# ============================================================
 # Rate limiting (token bucket per IP, O(1) amortized)
 # ============================================================
 _RATE_LIMIT_WINDOW = 10.0
 _RATE_LIMIT_MAX = 30
 _RATE_LIMIT_EXPENSIVE_MAX = 10
 _rate_limits = {}
-_rate_limits_lock = threading.Lock()
-_rate_limit_last_cleanup = time.time()
-_RATE_LIMIT_CLEANUP_INTERVAL = 60.0  # run cleanup at most once per minute
+_rate_limits_lock = threading.RLock()
+_Rate_limit_cleanup_thread = None
+_Rate_limit_cleanup_stop = threading.Event()
+
+
+def _start_rate_limit_cleanup():
+    """Start the background thread for rate limit cleanup."""
+    global _Rate_limit_cleanup_thread
+    if _Rate_limit_cleanup_thread is not None:
+        return
+    _Rate_limit_cleanup_stop.clear()
+    _Rate_limit_cleanup_thread = threading.Thread(
+        target=_rate_limit_cleanup_loop,
+        daemon=True,
+        name='rate-limit-cleanup'
+    )
+    _Rate_limit_cleanup_thread.start()
+
+
+def _rate_limit_cleanup_loop():
+    """Background loop to clean up stale rate limit entries."""
+    while not _Rate_limit_cleanup_stop.wait(60.0):  # Run every 60 seconds
+        try:
+            _cleanup_stale_rate_limits()
+        except Exception:
+            pass  # Best effort
+
+
+def _cleanup_stale_rate_limits():
+    """Remove stale rate limit entries. Called from background thread."""
+    now = time.time()
+    stale_cutoff = now - _RATE_LIMIT_WINDOW * 3
+    with _rate_limits_lock:
+        stale_ips = [
+            k for k, v in _rate_limits.items()
+            if (not v['normal'] or v['normal'][-1] < stale_cutoff)
+            and (not v['expensive'] or v['expensive'][-1] < stale_cutoff)
+        ]
+        for k in stale_ips:
+            del _rate_limits[k]
 
 
 def _get_client_ip(handler):
@@ -79,8 +237,7 @@ def _get_client_ip(handler):
 
 
 def _rate_limit_ok(ip, expensive=False):
-    """Check rate limit. O(1) amortized via periodic cleanup."""
-    global _rate_limit_last_cleanup
+    """Check rate limit. O(1) amortized — cleanup runs in background thread."""
     now = time.time()
 
     with _rate_limits_lock:
@@ -101,18 +258,6 @@ def _rate_limit_ok(ip, expensive=False):
             return False
 
         timestamps.append(now)
-
-        # Periodic cleanup of stale entries (at most once per minute)
-        if now - _rate_limit_last_cleanup > _RATE_LIMIT_CLEANUP_INTERVAL:
-            _rate_limit_last_cleanup = now
-            stale_cutoff = now - _RATE_LIMIT_WINDOW * 3
-            stale_ips = [
-                k for k, v in _rate_limits.items()
-                if (not v['normal'] or v['normal'][-1] < stale_cutoff)
-                and (not v['expensive'] or v['expensive'][-1] < stale_cutoff)
-            ]
-            for k in stale_ips:
-                del _rate_limits[k]
 
         return True
 
@@ -294,6 +439,40 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self._send_body(body)
             return
 
+        # Serve index.html with CSP nonce injection
+        if path == '/index.html':
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    page_html = f.read()
+                # Inject CSP nonce into script tags
+                nonce = self._csp_nonce
+                page_html = page_html.replace(
+                    '<script src="js/og-image-update.js?v=1.0.0" defer></script>',
+                    f'<script src="js/og-image-update.js?v=1.0.0" defer nonce="{nonce}"></script>'
+                )
+                page_html = page_html.replace(
+                    '<script src="app.js?v=1.1.1" defer></script>',
+                    f'<script src="app.js?v=1.1.1" defer nonce="{nonce}"></script>'
+                )
+                page_html = page_html.replace(
+                    '<script src="js/route.js?v=1.0.0" defer></script>',
+                    f'<script src="js/route.js?v=1.0.0" defer nonce="{nonce}"></script>'
+                )
+                page_html = page_html.replace(
+                    '<script src="vendor/leaflet/leaflet.js?v=1.0.0" defer></script>',
+                    f'<script src="vendor/leaflet/leaflet.js?v=1.0.0" defer nonce="{nonce}"></script>'
+                )
+                body = page_html.encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                self.end_headers()
+                self._send_body(body)
+                return
+            except Exception:
+                pass  # Fall through to default handler
+
         super().do_GET()
 
     def serve_modified_html(self, from_stop, to_stop, mode):
@@ -406,6 +585,16 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 self._handle_shapes(query)
 
             elif path == '/api/health':
+                # Trigger deferred cache warmup on first successful health check
+                try:
+                    from server import trigger_warmup
+                    trigger_warmup()
+                except Exception:
+                    pass
+                # Verify data integrity
+                if not data.stops_grouped or not data.adjacency:
+                    self.serve_json({'status': 'degraded', 'error': 'Data not loaded'}, status=503)
+                    return
                 self.serve_json({'status': 'ok'})
 
             elif path == '/api/status':
@@ -496,10 +685,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_stop_platforms(self, query):
         group_id = query.get('id', [''])[0]
-        if len(group_id) > 64:
-            group_id = group_id[:64]
-        if not group_id or not group_id.startswith('group_'):
-            self.serve_json({'error': 'Invalid stop group ID'})
+        valid, error = validate_group_id(group_id)
+        if not valid:
+            self.serve_json({'error': error})
             return
         group = data.stops_grouped.get(group_id)
         if group:
@@ -518,22 +706,33 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         from_stop = query.get('from', [''])[0]
         to_stop = query.get('to', [''])[0]
 
-        if len(from_stop) > 64:
-            from_stop = from_stop[:64]
-        if len(to_stop) > 64:
-            to_stop = to_stop[:64]
-
-        if not from_stop or not to_stop:
-            self.serve_json({'error': 'Missing from or to parameter'})
+        valid, error = validate_group_id(from_stop)
+        if not valid:
+            self.serve_json({'error': error})
             return
-        if not from_stop.startswith('group_') or not to_stop.startswith('group_'):
-            self.serve_json({'error': 'Invalid stop ID format'})
+        valid, error = validate_group_id(to_stop)
+        if not valid:
+            self.serve_json({'error': error})
             return
 
-        # Always compute all modes in one call
+        # Always compute all modes in one call, with timeout protection
         _bump_counter('find_route')
-        short_pair, convenient_pair, cheap_pair = pathfinding.find_route_between_groups(
-            from_stop, to_stop, mode='both')
+        reset_pathfinding_cancel_flag()
+        result = run_pathfinding_with_timeout(
+            pathfinding.find_route_between_groups,
+            from_stop, to_stop, 'both',
+            timeout=25.0
+        )
+
+        # run_pathfinding_with_timeout returns the triple on success,
+        # or (None, error_message) on timeout/exception
+        if isinstance(result, tuple) and len(result) == 3:
+            short_pair, convenient_pair, cheap_pair = result
+        else:
+            # Timeout or error
+            error_msg = result[1] if isinstance(result, tuple) and len(result) == 2 else "Nie znaleziono trasy między tymi przystankami"
+            self.serve_json({'error': error_msg})
+            return
 
         short_result, short_error = short_pair
         convenient_result, convenient_error = convenient_pair
@@ -551,19 +750,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             })
 
     def _handle_cost(self, query):
-        try:
-            distance_str = query.get('distance', ['0'])[0]
-            if len(distance_str) > 32:
-                distance_str = distance_str[:32]
-            distance = float(distance_str)
-        except (ValueError, TypeError):
-            self.serve_json({'error': 'Invalid distance parameter'})
+        distance_str = query.get('distance', ['0'])[0]
+        valid, distance, error = validate_distance(distance_str)
+        if not valid:
+            self.serve_json({'error': error})
             return
-        if not math.isfinite(distance):
-            self.serve_json({'error': 'Invalid distance parameter'})
-            return
-        if distance < 0:
-            distance = 0.0
         cost_reg, cost_red = cost.calculate_cost(distance)
         self.serve_json({
             'distance': distance,
@@ -595,6 +786,18 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             rss_mb = round(rss_pages * page / (1024 * 1024), 1)
         except Exception:
             rss_mb = None
+        # Per-process CPU utilisation (avg % of one core over this process's
+        # lifetime) — distinct from host-wide getloadavg, which on many shared
+        # VPS reflects the physical machine, not this app.
+        uptime_s = max(time.time() - _server_start_time, 1.0)
+        process_cpu_pct = None
+        try:
+            with open('/proc/self/stat') as f:
+                parts = f.read().split()
+            cpu_seconds = (int(parts[13]) + int(parts[14])) / 100.0  # user+sys ticks
+            process_cpu_pct = round(cpu_seconds / uptime_s * 100.0, 1)
+        except Exception:
+            pass
         fc_count, fc_bytes, fc_max = pathfinding.find_cache_info()
         rc_count, rc_max, rc_bytes, rc_max_bytes = pathfinding.route_cache_info()
         cheap_searches, cheap_timeouts = pathfinding.cheap_search_info()
@@ -606,6 +809,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             'active_requests': _active_requests,
             'max_concurrent': 20,
             'load_avg': load_avg,
+            'process_cpu_pct': process_cpu_pct,
             'cpus': _os.cpu_count() or 1,
             'rss_mb': rss_mb,
             'counters': counters,
@@ -642,13 +846,17 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         _bump_counter('og_image')
         from_stop = query.get('from', [''])[0]
         to_stop = query.get('to', [''])[0]
-        mode = query.get('mode', ['short'])[0]
-        if len(from_stop) > 64:
-            from_stop = from_stop[:64]
-        if len(to_stop) > 64:
-            to_stop = to_stop[:64]
-        if mode not in ('short', 'convenient', 'cheap'):
-            mode = 'short'
+        mode = validate_mode(query.get('mode', ['short'])[0])
+
+        valid, error = validate_group_id(from_stop)
+        if not valid:
+            self.serve_json({'error': error})
+            return
+        valid, error = validate_group_id(to_stop)
+        if not valid:
+            self.serve_json({'error': error})
+            return
+
         svg = self._generate_og_image_svg(from_stop, to_stop, mode)
         body = svg.encode('utf-8')
         self.send_response(200)
@@ -663,6 +871,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     # ------------------------------------------------------------
     def _security_headers(self):
         """Add security headers to a response."""
+        nonce = generate_nonce()
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
         self.send_header('Referrer-Policy', 'no-referrer')
@@ -670,13 +879,17 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.send_header(
             'Content-Security-Policy',
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline'; "
+            f"script-src 'self' 'nonce-{nonce}'; "
+            f"style-src 'self' 'nonce-{nonce}'; "
             "img-src 'self' data: https:; "
             "connect-src 'self'; "
             "font-src 'self'; "
-            "frame-ancestors 'none'"
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
         )
+        # Store nonce for use in templates
+        self._csp_nonce = nonce
 
     def end_headers(self):
         """Send security headers on ALL responses."""
@@ -769,8 +982,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 to_name = to_group['name']
             # For a single mode find_route_between_groups returns
             # (result, error) directly — not a pair of pairs.
-            result, _ = pathfinding.find_route_between_groups(
-                from_stop_id, to_stop_id, mode=mode)
+            # Use timeout wrapper for protection
+            reset_pathfinding_cancel_flag()
+            result, _ = run_pathfinding_with_timeout(
+                pathfinding.find_route_between_groups,
+                from_stop_id, to_stop_id, mode,
+                timeout=15.0
+            )
             if result:
                 cost_text = f"{result['cost_regular']:.2f} / {result['cost_reduced']:.2f} zł"
 
@@ -817,6 +1035,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         )
         logo_inner = re.sub(r'<svg[^>]*>', '', data.logo_svg_content, count=1)
         logo_inner = re.sub(r'</svg>', '', logo_inner)
+        logo_inner = sanitize_svg(logo_inner)
         svg += f'  {logo_inner.strip()}\n'
         svg += '  </g>\n'
         svg += (

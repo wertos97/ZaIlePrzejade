@@ -27,30 +27,8 @@
     <meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027">
     <meta name="twitter:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">
     <meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">
-    <!-- Dynamic OG Image Update -->
-    <!-- NOTE: Social media crawlers (Facebook, Twitter) don't execute JavaScript, -->
-    <!-- so they will always see the static OG tags above. To show dynamic OG images -->
-    <!-- for route links, you would need Server-Side Rendering (SSR). -->
-    <script>
-        (function() {
-            var params = new URLSearchParams(window.location.search);
-            var from = params.get('from');
-            var to = params.get('to');
-            var mode = params.get('mode') || 'cheap';
-            
-            if (from && to) {
-                var ogImageUrl = 'https://zaileprzeja.de/api/og-image?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&mode=' + encodeURIComponent(mode);
-                document.querySelector('meta[property="og:image"]').setAttribute('content', ogImageUrl);
-                document.querySelector('meta[name="twitter:image"]').setAttribute('content', ogImageUrl);
-                
-                // Update URL meta tag for client-side sharing
-                document.querySelector('meta[property="og:url"]').setAttribute('content', window.location.href);
-                
-                // Update title with route info
-                document.title = 'Za Ile Przejadę? - Trasa';
-            }
-        })();
-    </script>
+    <!-- Dynamic OG Image Update (external script) -->
+    <script src="js/og-image-update.js?v=1.0.0" defer></script>
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <!-- Leaflet CSS (local) -->
@@ -298,7 +276,7 @@
     <!-- Leaflet JS (local) -->
     <script src="vendor/leaflet/leaflet.js?v=1.0.0" defer></script>
     <!-- App JS -->
-    <script src="app.js?v=1.0.0" defer></script>
+    <script src="app.js?v=1.1.1" defer></script>
     <script src="js/route.js?v=1.0.0" defer></script>
 </body>
 </html>
