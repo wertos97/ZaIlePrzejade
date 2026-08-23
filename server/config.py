@@ -16,7 +16,9 @@ REQUEST_QUEUE_SIZE = 64
 # Rate Limiting
 # ============================================================
 RATE_LIMIT_WINDOW_SECONDS = 10.0
-RATE_LIMIT_MAX_REQUESTS = 30
+# One page load issues ~12 requests (HTML + CSS + JS + icons); the limit
+# must comfortably cover a few loads in a row from one IP.
+RATE_LIMIT_MAX_REQUESTS = 120
 RATE_LIMIT_EXPENSIVE_MAX_REQUESTS = 10
 RATE_LIMIT_CLEANUP_INTERVAL_SECONDS = 60.0
 RATE_LIMIT_STALE_CUTOFF_MULTIPLIER = 3  # entries older than window * this are stale
@@ -32,12 +34,12 @@ ASTAR_TIMEOUT_SECONDS = 30
 CHEAP_SEARCH_MAX_SECONDS = 6.0
 CHEAP_SEARCH_CONCURRENCY = 2  # max concurrent fare searches (GIL gate)
 
-# Cache configuration
+# Cache configuration (byte budgets can be tuned via environment variables)
 FIND_CACHE_MAX_ENTRIES = 10000
-FIND_CACHE_MAX_BYTES = 20 * 1024 * 1024  # 20 MB
+FIND_CACHE_MAX_BYTES = int(os.environ.get('FIND_CACHE_MAX_BYTES', 20 * 1024 * 1024))
 
 ROUTE_CACHE_MAX_ENTRIES = 3000
-ROUTE_CACHE_MAX_BYTES = 24 * 1024 * 1024  # 24 MB
+ROUTE_CACHE_MAX_BYTES = int(os.environ.get('ROUTE_CACHE_MAX_BYTES', 24 * 1024 * 1024))
 
 # Platform pairing limits
 MAX_PLATFORMS_TO_TRY_PER_GROUP = 3
@@ -91,6 +93,9 @@ LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 # Security
 # ============================================================
 CSP_NONCE_BYTES = 16
+# Set TRUST_PROXY_HEADERS=false when the app is exposed directly (no reverse
+# proxy in front); otherwise X-Real-IP / X-Forwarded-For are honoured.
+TRUST_PROXY_HEADERS = os.environ.get('TRUST_PROXY_HEADERS', 'true').lower() in ('1', 'true', 'yes')
 BLOCKED_PATH_PREFIXES = ('/.', '/_')
 BLOCKED_PATHS = (
     '/.env', '/.env.old', '/.env.local', '/.env.production', '/.env.development',

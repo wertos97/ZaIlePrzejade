@@ -94,7 +94,7 @@ start_server() {
     fi
 }
 
-# --- Rotacja logów (dysk 3GB — nie pozwól, by logi go zjadły) ---
+# --- Rotacja logów (nie pozwól, by logi rosły bez limitu) ---
 # Wywoływana przy restarcie: jeśli log > 5MB, zostaje skompresowany do .1.gz
 # i rozpoczyna się od nowa; stare kopie (5+) są usuwane.
 rotate_logs() {

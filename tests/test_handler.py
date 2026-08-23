@@ -10,6 +10,7 @@ Run:  python3 -m unittest discover -s tests
 
 import gzip
 import json
+import re
 import sys
 import os
 import threading
@@ -67,7 +68,8 @@ class TestHandlerEndpoints(unittest.TestCase):
     def _get(self, path, headers=None):
         req = urllib.request.Request(self.base + path, headers=headers or {})
         with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.status, dict(resp.headers), resp.read()
+            self._last_headers = dict(resp.headers)
+            return resp.status, self._last_headers, resp.read()
 
     # ------------------------------------------------------------
     # P0 regressions
@@ -179,10 +181,36 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertEqual(result['cost_reduced'], 2.25)
 
     def test_cost_api_invalid(self):
-        status, _, body = self._get('/api/cost?distance=abc')
-        self.assertEqual(status, 200)
-        result = json.loads(body)
-        self.assertEqual(result.get('error'), 'Invalid distance parameter')
+        """Invalid input is rejected with HTTP 400 (not a silent 200)."""
+        req = urllib.request.Request(self.base + '/api/cost?distance=abc')
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                status, body = resp.status, resp.read()
+        except urllib.error.HTTPError as e:
+            status, body = e.code, e.read()
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body).get('error'), 'Invalid distance parameter')
+
+    def test_unknown_endpoint_404(self):
+        req = urllib.request.Request(self.base + '/api/nope')
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                status = resp.status
+        except urllib.error.HTTPError as e:
+            status = e.code
+        self.assertEqual(status, 404)
+
+    def test_index_html_nonces_all_script_tags(self):
+        """Every external <script> in index.html carries the CSP nonce."""
+        _, headers, body = self._get('/index.html')
+        html_text = body.decode('utf-8')
+        nonce_match = re.search(r'nonce-([A-Za-z0-9_-]+)',
+                                headers.get('Content-Security-Policy', ''))
+        self.assertIsNotNone(nonce_match, 'CSP header missing nonce')
+        nonce = nonce_match.group(1)
+        for m in re.finditer(r'<script\b[^>]*src=[^>]*>', html_text):
+            self.assertIn(f'nonce="{nonce}"', m.group(0),
+                          f'script tag without nonce: {m.group(0)}')
 
     # ------------------------------------------------------------
     # Compression and caching

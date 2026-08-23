@@ -12,6 +12,14 @@ import time
 from server.data import (
     BASE_DIR, PUBLIC_DIR, APP_VERSION, stops_grouped,
 )
+from server.config import (
+    DEFAULT_PORT,
+    MAX_CONCURRENT_REQUESTS,
+    REQUEST_QUEUE_SIZE,
+    WARMUP_SAMPLE_SIZE,
+    WARMUP_PAIRS_PER_SAMPLE,
+    WARMUP_YIELD_DELAY_SECONDS,
+)
 from server.pathfinding import (
     find_route_between_groups, init_pathfinding,
     find_cache_info, route_cache_info,
@@ -28,10 +36,10 @@ from http.server import HTTPServer
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """HTTPServer that handles each request in a new thread, with a concurrency limit."""
     daemon_threads = True
-    request_queue_size = 64
+    request_queue_size = REQUEST_QUEUE_SIZE
     _active_requests = 0
     _active_lock = threading.Lock()
-    MAX_CONCURRENT = 20
+    MAX_CONCURRENT = MAX_CONCURRENT_REQUESTS
 
     def process_request(self, request, client_address):
         """Limit concurrent requests to prevent resource exhaustion."""
@@ -118,17 +126,17 @@ def _warmup_cache():
     """
     global _warmup_done
     group_ids = list(stops_grouped.keys())
-    sample = random.sample(group_ids, min(40, len(group_ids)))
+    sample = random.sample(group_ids, min(WARMUP_SAMPLE_SIZE, len(group_ids)))
 
     count = 0
     for i, g1 in enumerate(sample):
-        for g2 in sample[i+1:i+3]:
+        for g2 in sample[i+1:i+1+WARMUP_PAIRS_PER_SAMPLE]:
             try:
                 find_route_between_groups(g1, g2)
                 count += 1
             except Exception:
                 pass
-            time.sleep(0.05)  # yield the GIL — don't starve live requests
+            time.sleep(WARMUP_YIELD_DELAY_SECONDS)  # yield the GIL — don't starve live requests
 
     logger.info('Cache warmup completed', extra={'entries_warmed': count})
     with _warmup_lock:
@@ -143,7 +151,7 @@ def trigger_warmup():
 
 
 def main():
-    port = int(os.environ.get('PORT', 8080))
+    port = int(os.environ.get('PORT', DEFAULT_PORT))
 
     server = ThreadedHTTPServer(('0.0.0.0', port), MPKRequestHandler)
 
@@ -153,6 +161,7 @@ def main():
 
     # Warmup is deferred until first health check passes (via trigger_warmup)
     # to avoid stealing GIL from early requests.
+    MPKRequestHandler.on_health_check = staticmethod(trigger_warmup)
     logger.info('Server ready', extra={
         'port': port,
         'public_dir': PUBLIC_DIR,

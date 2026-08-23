@@ -19,6 +19,27 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from http.server import SimpleHTTPRequestHandler
 
+from .config import (
+    APP_VERSION,
+    BLOCKED_PATH_PREFIXES as _BLOCKED_PREFIXES,
+    BLOCKED_PATHS as _BLOCKED_PATHS,
+    BOT_USER_AGENTS as _BOT_LIST,
+    GROUP_ID_PATTERN as _GROUP_ID_PATTERN_SRC,
+    MAX_DISTANCE_PARAM_LENGTH,
+    MAX_GROUP_ID_LENGTH as _MAX_GROUP_ID_LEN,
+    MAX_CONCURRENT_REQUESTS,
+    RATE_LIMIT_EXPENSIVE_MAX_REQUESTS as _RATE_LIMIT_EXPENSIVE_MAX,
+    RATE_LIMIT_MAX_REQUESTS as _RATE_LIMIT_MAX,
+    RATE_LIMIT_WINDOW_SECONDS as _RATE_LIMIT_WINDOW,
+    SEARCH_MAX_RESULTS,
+    TRUST_PROXY_HEADERS,
+)
+from . import data
+from . import cost
+from . import pathfinding
+
+_GROUP_ID_PATTERN = re.compile(_GROUP_ID_PATTERN_SRC)
+
 
 def generate_nonce() -> str:
     """Generate a cryptographically secure nonce for CSP."""
@@ -65,70 +86,42 @@ def run_pathfinding_with_timeout(func, *args, timeout=25.0):
     """Run a pathfinding function with a hard timeout.
 
     Uses a thread pool executor to enforce wall-clock timeout. On timeout,
-    signals cooperative cancellation and returns an error result.
+    a PRIVATE cancellation event is signalled so only this request's search
+    stops — concurrent searches are unaffected.
     """
-    future = _pathfinding_executor.submit(func, *args)
+    cancel_event = threading.Event()
+
+    def _runner():
+        pathfinding.set_thread_cancel_event(cancel_event)
+        try:
+            return func(*args)
+        finally:
+            pathfinding.clear_thread_cancel_event()
+
+    future = _pathfinding_executor.submit(_runner)
     try:
         return future.result(timeout=timeout)
     except FuturesTimeoutError:
-        # Signal cancellation to the pathfinding module
-        try:
-            import server.pathfinding as pf
-            pf.cancel_all_searches()
-        except Exception:
-            pass
+        # The worker keeps running until its next checkpoint; the private
+        # event makes it exit cooperatively without touching other searches.
+        cancel_event.set()
         return None, f"Timeout: wyszukiwanie trwało zbyt długo (>{timeout}s)"
     except Exception as e:
         return None, f"Błąd wyszukiwania: {e}"
-
-
-def reset_pathfinding_cancel_flag():
-    """Reset the cancellation flag for new searches."""
-    try:
-        import server.pathfinding as pf
-        pf.reset_cancel_flag()
-    except Exception:
-        pass
-
-from . import data
-from . import cost
-from . import pathfinding
 
 
 # ============================================================
 # Constants
 # ============================================================
 PUBLIC_DIR = data.PUBLIC_DIR
-APP_VERSION = data.APP_VERSION
 
-BLOCKED_PREFIXES = ('/.', '/_')
-BLOCKED_PATHS = (
-    '/.env', '/.env.old', '/.env.local', '/.env.production', '/.env.development',
-    '/.env.backup', '/.env.bak', '/.env.config', '/.env.staging',
-    '/.git', '/.git/', '/.git/config', '/.git/HEAD',
-    '/.htaccess', '/.htpasswd',
-    '/.vscode', '/.vscode/', '/.vscode/sftp.json',
-    '/wp-admin', '/wp-login.php', '/xmlrpc.php',
-    '/admin', '/phpmyadmin',
-    '/cgi-bin', '/scripts',
-    '/server-status', '/server-info',
-    '/favicon.ico',
-)
-
-# Bot list for crawler detection (serves modified OG HTML)
-_BOT_LIST = [
-    'facebookexternalhit', 'twitterbot', 'linkedinbot', 'slackbot',
-    'telegrambot', 'discordbot', 'whatsapp', 'skypeuripreview',
-    'applebot', 'bingbot', 'googlebot', 'yandexbot', 'duckduckbot',
-    'facebot', 'meta-externalagent',
-]
+BLOCKED_PREFIXES = _BLOCKED_PREFIXES
+BLOCKED_PATHS = _BLOCKED_PATHS
 
 
 # ============================================================
 # Input validation
 # ============================================================
-_GROUP_ID_PATTERN = re.compile(r'^group_\d+$')
-_MAX_GROUP_ID_LEN = 64
 
 
 def validate_group_id(group_id: str) -> tuple[bool, str | None]:
@@ -152,7 +145,7 @@ def validate_distance(distance_str: str) -> tuple[bool, float | None, str | None
     """
     if not distance_str:
         return False, None, 'Missing distance parameter'
-    if len(distance_str) > 32:
+    if len(distance_str) > MAX_DISTANCE_PARAM_LENGTH:
         return False, None, 'Distance parameter too long'
     try:
         distance = float(distance_str)
@@ -222,17 +215,24 @@ def _cleanup_stale_rate_limits():
 
 
 def _get_client_ip(handler):
-    """Get real client IP. X-Real-IP is set by the reverse proxy (nginx) from
-    $remote_addr and cannot be influenced by the client; X-Forwarded-For may
-    contain client-supplied values, so it is only used as a fallback."""
-    real = handler.headers.get('X-Real-IP', '')
-    if real:
-        return real.strip()
-    forwarded = handler.headers.get('X-Forwarded-For', '')
-    if forwarded:
-        first = forwarded.split(',')[0].strip()
-        if first:
-            return first
+    """Get real client IP.
+
+    When TRUST_PROXY_HEADERS is enabled (default), X-Real-IP is trusted —
+    it is set by the reverse proxy from $remote_addr and cannot be
+    influenced by the client; X-Forwarded-For may contain client-supplied
+    values, so it is only used as a fallback. With TRUST_PROXY_HEADERS=false
+    (direct exposure) the socket address is always used, so a spoofed
+    header cannot rotate rate-limit buckets.
+    """
+    if TRUST_PROXY_HEADERS:
+        real = handler.headers.get('X-Real-IP', '')
+        if real:
+            return real.strip()
+        forwarded = handler.headers.get('X-Forwarded-For', '')
+        if forwarded:
+            first = forwarded.split(',')[0].strip()
+            if first:
+                return first
     return handler.client_address[0] if handler.client_address else 'unknown'
 
 
@@ -419,7 +419,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
         # Static assets: serve directly with long-lived caching. Versioned
         # URLs (?v=...) are immutable (cache for a year); unversioned assets
-        # get 1 hour — enough to cut repeat page-load traffic on the VPS.
+        # get 1 hour — enough to cut repeat page-load traffic.
         if path.endswith(('.js', '.css', '.svg', '.png', '.ico')):
             try:
                 with open(file_path, 'rb') as f:
@@ -439,29 +439,25 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self._send_body(body)
             return
 
-        # Serve index.html with CSP nonce injection
+        # Serve index.html with CSP nonce injection.
+        # Generic: every external <script> gets the nonce, so bumping asset
+        # versions or adding scripts in index.html cannot silently break CSP.
         if path == '/index.html':
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     page_html = f.read()
-                # Inject CSP nonce into script tags
-                nonce = self._csp_nonce
-                page_html = page_html.replace(
-                    '<script src="js/og-image-update.js?v=1.0.0" defer></script>',
-                    f'<script src="js/og-image-update.js?v=1.0.0" defer nonce="{nonce}"></script>'
-                )
-                page_html = page_html.replace(
-                    '<script src="app.js?v=1.1.1" defer></script>',
-                    f'<script src="app.js?v=1.1.1" defer nonce="{nonce}"></script>'
-                )
-                page_html = page_html.replace(
-                    '<script src="js/route.js?v=1.0.0" defer></script>',
-                    f'<script src="js/route.js?v=1.0.0" defer nonce="{nonce}"></script>'
-                )
-                page_html = page_html.replace(
-                    '<script src="vendor/leaflet/leaflet.js?v=1.0.0" defer></script>',
-                    f'<script src="vendor/leaflet/leaflet.js?v=1.0.0" defer nonce="{nonce}"></script>'
-                )
+                # Generate the nonce up front — _security_headers() reuses it
+                # when the headers are actually sent below.
+                nonce = getattr(self, '_csp_nonce', None) or generate_nonce()
+                self._csp_nonce = nonce
+
+                def _add_nonce(m):
+                    attrs = m.group(1)
+                    if 'nonce=' in attrs or 'application/ld+json' in attrs:
+                        return m.group(0)
+                    return f'<script{attrs} nonce="{nonce}">'
+
+                page_html = re.sub(r'<script\b([^>]*)>', _add_nonce, page_html)
                 body = page_html.encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -585,12 +581,15 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 self._handle_shapes(query)
 
             elif path == '/api/health':
-                # Trigger deferred cache warmup on first successful health check
-                try:
-                    from server import trigger_warmup
-                    trigger_warmup()
-                except Exception:
-                    pass
+                # Trigger deferred cache warmup on first successful health
+                # check. The entry point (server.py) registers the callback —
+                # the handler must not import the entry script directly.
+                on_health = getattr(type(self), 'on_health_check', None)
+                if on_health:
+                    try:
+                        on_health()
+                    except Exception:
+                        pass
                 # Verify data integrity
                 if not data.stops_grouped or not data.adjacency:
                     self.serve_json({'status': 'degraded', 'error': 'Data not loaded'}, status=503)
@@ -623,7 +622,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 self._handle_og_image(query)
 
             else:
-                self.serve_json({'error': 'Unknown API endpoint'})
+                self.serve_json({'error': 'Unknown API endpoint'}, status=404)
 
         except Exception:
             traceback.print_exc(file=sys.stderr)
@@ -687,7 +686,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         group_id = query.get('id', [''])[0]
         valid, error = validate_group_id(group_id)
         if not valid:
-            self.serve_json({'error': error})
+            self.serve_json({'error': error}, status=400)
             return
         group = data.stops_grouped.get(group_id)
         if group:
@@ -700,7 +699,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 'platforms': group['platforms'],
             })
         else:
-            self.serve_json({'error': 'Stop group not found'})
+            self.serve_json({'error': 'Stop group not found'}, status=404)
 
     def _handle_find_route(self, query):
         from_stop = query.get('from', [''])[0]
@@ -708,16 +707,15 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
         valid, error = validate_group_id(from_stop)
         if not valid:
-            self.serve_json({'error': error})
+            self.serve_json({'error': error}, status=400)
             return
         valid, error = validate_group_id(to_stop)
         if not valid:
-            self.serve_json({'error': error})
+            self.serve_json({'error': error}, status=400)
             return
 
         # Always compute all modes in one call, with timeout protection
         _bump_counter('find_route')
-        reset_pathfinding_cancel_flag()
         result = run_pathfinding_with_timeout(
             pathfinding.find_route_between_groups,
             from_stop, to_stop, 'both',
@@ -753,7 +751,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         distance_str = query.get('distance', ['0'])[0]
         valid, distance, error = validate_distance(distance_str)
         if not valid:
-            self.serve_json({'error': error})
+            self.serve_json({'error': error}, status=400)
             return
         cost_reg, cost_red = cost.calculate_cost(distance)
         self.serve_json({
@@ -767,7 +765,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         if len(route_id) > 64:
             route_id = route_id[:64]
         if not route_id:
-            self.serve_json({'error': 'Missing route_id parameter'})
+            self.serve_json({'error': 'Missing route_id parameter'}, status=400)
             return
         shape = data.route_shapes.get(route_id, [])
         self.serve_json({'route_id': route_id, 'shape': shape})
@@ -787,8 +785,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         except Exception:
             rss_mb = None
         # Per-process CPU utilisation (avg % of one core over this process's
-        # lifetime) — distinct from host-wide getloadavg, which on many shared
-        # VPS reflects the physical machine, not this app.
+        # lifetime) — distinct from host-wide getloadavg, which reflects the
+        # physical machine, not this app.
         uptime_s = max(time.time() - _server_start_time, 1.0)
         process_cpu_pct = None
         try:
@@ -807,7 +805,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             'version': APP_VERSION,
             'uptime_seconds': int(time.time() - _server_start_time),
             'active_requests': _active_requests,
-            'max_concurrent': 20,
+            'max_concurrent': MAX_CONCURRENT_REQUESTS,
             'load_avg': load_avg,
             'process_cpu_pct': process_cpu_pct,
             'cpus': _os.cpu_count() or 1,
@@ -834,13 +832,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         if len(stop_id) > 64:
             stop_id = stop_id[:64]
         if not stop_id:
-            self.serve_json({'error': 'Missing id parameter'})
+            self.serve_json({'error': 'Missing id parameter'}, status=400)
             return
         stop = data.stops_by_id.get(stop_id)
         if stop:
             self.serve_json(stop)
         else:
-            self.serve_json({'error': 'Stop not found'})
+            self.serve_json({'error': 'Stop not found'}, status=404)
 
     def _handle_og_image(self, query):
         _bump_counter('og_image')
@@ -850,11 +848,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
         valid, error = validate_group_id(from_stop)
         if not valid:
-            self.serve_json({'error': error})
+            self.serve_json({'error': error}, status=400)
             return
         valid, error = validate_group_id(to_stop)
         if not valid:
-            self.serve_json({'error': error})
+            self.serve_json({'error': error}, status=400)
             return
 
         svg = self._generate_og_image_svg(from_stop, to_stop, mode)
@@ -871,7 +869,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     # ------------------------------------------------------------
     def _security_headers(self):
         """Add security headers to a response."""
-        nonce = generate_nonce()
+        # Reuse a nonce generated earlier during request handling (HTML
+        # injection) so header and body always agree.
+        nonce = getattr(self, '_csp_nonce', None) or generate_nonce()
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
         self.send_header('Referrer-Policy', 'no-referrer')
@@ -983,7 +983,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             # For a single mode find_route_between_groups returns
             # (result, error) directly — not a pair of pairs.
             # Use timeout wrapper for protection
-            reset_pathfinding_cancel_flag()
             result, _ = run_pathfinding_with_timeout(
                 pathfinding.find_route_between_groups,
                 from_stop_id, to_stop_id, mode,

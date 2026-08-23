@@ -6,34 +6,7 @@ const ROUTE_COLORS = [
     '#e67e22', '#9b59b6', '#34495e', '#16a085', '#c0392b',
 ];
 
-// Safe HTML escape
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// Safe DOM creation from HTML string
-function createElementFromHtml(html) {
-    const template = document.createElement('template');
-    template.innerHTML = html;
-    // Remove scripts and event handlers
-    const scripts = template.content.querySelectorAll('script');
-    scripts.forEach(s => s.remove());
-    const allElements = template.content.querySelectorAll('*');
-    allElements.forEach(el => {
-        for (const attr of el.attributes) {
-            if (attr.name.startsWith('on')) {
-                el.removeAttribute(attr.name);
-            }
-            if ((attr.name === 'href' || attr.name === 'src') && attr.value.startsWith('javascript:')) {
-                el.removeAttribute(attr.name);
-            }
-        }
-    });
-    return template.content.firstElementChild;
-}
+// escapeHtml / createElementFromHtml are shared with app.js (loaded first).
 
 // Format a duration in seconds as "X min" or "1 h 5 min"
 function formatDuration(seconds) {

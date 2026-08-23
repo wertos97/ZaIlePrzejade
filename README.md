@@ -186,6 +186,10 @@ Dostępne zmienne (wszystkie opcjonalne):
 | `HEALTH_URL` | `http://127.0.0.1:$PORT/api/health` | URL do sprawdzania zdrowia |
 | `GIT_BRANCH` | bieżąca | Gałąź git do śledzenia |
 | `RUN_IN_BACKGROUND` | `true` | Czy uruchamiać serwer w tle |
+| `TRUST_PROXY_HEADERS` | `true` | Ufać nagłówkom `X-Real-IP`/`X-Forwarded-For`; ustaw `false` przy braku reverse proxy |
+| `FIND_CACHE_MAX_BYTES` | `20971520` | Limit rozmiaru cache wyszukiwań (bajty) |
+| `ROUTE_CACHE_MAX_BYTES` | `25165824` | Limit rozmiaru cache tras (bajty) |
+| `LOG_LEVEL` | `INFO` | Poziom logowania (`LOG_FILE` — opcjonalna ścieżka pliku) |
 
 > **⚠️ Uwaga:** `server.env` zawiera szczegóły Twojego serwera i **nigdy nie powinien trafić do repo** — jest w `.gitignore`.
 

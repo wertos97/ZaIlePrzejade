@@ -185,7 +185,7 @@ fi
 # Restart serwera
 restart_server
 
-log "⏳ Czekanie na załadowanie indeksów w RAM i odpowiedź z $HEALTH_URL (max 30s)..."
+log "⏳ Czekanie na załadowanie danych i odpowiedź z $HEALTH_URL (max 30s)..."
 if wait_for_health; then
     log "=========================================="
     log "🎉 SUKCES: Serwer pomyślnie przeszedł test /api/health!"

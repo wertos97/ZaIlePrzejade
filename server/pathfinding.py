@@ -19,6 +19,19 @@ import os
 import threading
 import time
 
+from .config import (
+    ACC_CAP_KM as _ACC_CAP,
+    ASTAR_MAX_ITERATIONS as _ASTAR_MAX_ITERATIONS,
+    ASTAR_TIMEOUT_SECONDS as _ASTAR_TIMEOUT_SECONDS,
+    CHEAP_SEARCH_CONCURRENCY,
+    CHEAP_SEARCH_MAX_SECONDS,
+    FIND_CACHE_MAX_ENTRIES as _FIND_CACHE_MAX,
+    FIND_CACHE_MAX_BYTES as _FIND_CACHE_MAX_BYTES,
+    MAX_PLATFORMS_TO_TRY_PER_GROUP as _MAX_PLATFORMS_TO_TRY,
+    ROUTE_CACHE_MAX_ENTRIES as _ROUTE_CACHE_MAX,
+    ROUTE_CACHE_MAX_BYTES as _ROUTE_CACHE_MAX_BYTES,
+    TRANSFER_TIME_SECONDS,
+)
 from .cost import (
     calculate_cost,
     calculate_route_cost,
@@ -40,9 +53,6 @@ stop_coords: dict = {}
 
 # Derived: stop_pair_routes built from adjacency during init
 stop_pair_routes: dict = {}
-
-# Transfer time added per transfer (5 minutes, in seconds)
-TRANSFER_TIME_SECONDS = 300
 
 
 # ============================================================
@@ -145,13 +155,12 @@ def _nearest_shape_index(shape_points, lat, lon, start_idx, end_idx):
 
 
 # ============================================================
-# Pathfinding cache (bounded by size, thread-safe via GIL)
+# Pathfinding cache (bounded by size)
 # ============================================================
 
-_FIND_CACHE_MAX = 10000
-_FIND_CACHE_MAX_BYTES = 20 * 1024 * 1024  # 20 MB max
 _find_cache: dict = {}
 _find_cache_bytes: int = 0
+
 
 
 def _cache_put_find(key, value):
@@ -183,27 +192,26 @@ def _cache_get_find(key):
 # A* shortest path
 # ============================================================
 
-# A* safety limits
-_ASTAR_MAX_ITERATIONS = 200000
-_ASTAR_TIMEOUT_SECONDS = 30
-
-# Cancellation event for cooperative cancellation of long-running searches
-_search_cancel_event = threading.Event()
+# Per-thread cancellation: every search runs in its own worker thread with a
+# PRIVATE cancel event, so timing out one request never cancels another
+# concurrent search (a shared global flag would do exactly that).
+_search_ctx = threading.local()
 
 
 def _check_cancelled():
-    """Check if search was cancelled. Returns True if cancelled."""
-    return _search_cancel_event.is_set()
+    """Check if the calling thread's search was cancelled."""
+    ev = getattr(_search_ctx, 'cancel_event', None)
+    return ev is not None and ev.is_set()
 
 
-def cancel_all_searches():
-    """Signal all in-progress searches to cancel."""
-    _search_cancel_event.set()
+def set_thread_cancel_event(ev):
+    """Bind a cancellation event to the calling thread's current search."""
+    _search_ctx.cancel_event = ev
 
 
-def reset_cancel_flag():
-    """Reset the cancellation flag for new searches."""
-    _search_cancel_event.clear()
+def clear_thread_cancel_event():
+    """Unbind the cancellation event after a search finishes."""
+    _search_ctx.cancel_event = None
 
 
 def find_shortest_path(start_id, end_id):
@@ -243,9 +251,9 @@ def find_shortest_path(start_id, end_id):
     while pq:
         # Cooperative cancellation check
         if _check_cancelled():
-            result = None, "Anulowano: wyszukiwanie przerwane"
-            _cache_put_find(cache_key, result)
-            return result
+            # Do NOT cache cancellations — the pair would be poisoned with a
+            # permanent error for every future request until eviction.
+            return None, "Anulowano: wyszukiwanie przerwane"
 
         est_total, pen_dist, real_dist, _, stop, route = heapq.heappop(pq)
 
@@ -310,14 +318,9 @@ def find_shortest_path(start_id, end_id):
 _PRICE_BOUNDS = [3.5 + 0.5 * k for k in range(11)]  # 3.5 .. 8.5
 _cheap_search_count = 0
 _cheap_timeout_count = 0
-# Global CPU gate: the fare A* runs under the GIL on a single core, so
-# parallel searches would thrash. At most 2 run at once (sync + viz jobs
-# share this gate); the rest queue briefly.
-_CHEAP_SEARCH_GATE = threading.Semaphore(2)
-
-# Above 8.5 km a segment costs the max 9.00 zł — riding further is free,
-# so all accumulated distances beyond the cap are equivalent.
-_ACC_CAP = 8.5
+# CPU gate: the fare A* is CPU-bound, so parallel searches would thrash.
+# At most CHEAP_SEARCH_CONCURRENCY run at once; the rest queue briefly.
+_CHEAP_SEARCH_GATE = threading.Semaphore(CHEAP_SEARCH_CONCURRENCY)
 
 # price lookup: index = int(km * 100), capped at 20 km (well beyond _ACC_CAP)
 _PRICE_LOOKUP = tuple(
@@ -403,13 +406,13 @@ def find_cheapest_path(start_ids, end_ids, upper_bound=float('inf')):
     _CHEAP_SEARCH_GATE.acquire()
     try:
         return _find_cheapest_path_gated(start_ids, end_ids, cache_key,
-                                         upper_bound, max_seconds=6.0)
+                                         upper_bound, max_seconds=CHEAP_SEARCH_MAX_SECONDS)
     finally:
         _CHEAP_SEARCH_GATE.release()
 
 
 def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
-                              max_seconds=6.0):
+                              max_seconds=CHEAP_SEARCH_MAX_SECONDS):
     """Body of find_cheapest_path, executed under the CPU gate.
 
     max_seconds caps the wall time: beyond that the search gives up with a
@@ -446,9 +449,9 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
     while pq:
         # Cooperative cancellation check
         if _check_cancelled():
-            result = None, "Anulowano: wyszukiwanie przerwane"
-            _cache_put_find(cache_key, result)
-            return result
+            # Do NOT cache cancellations — the pair would be poisoned with a
+            # permanent error for every future request until eviction.
+            return None, "Anulowano: wyszukiwanie przerwane"
 
         f_val, closed, acc, _, stop, route, parent = heapq.heappop(pq)
 
@@ -913,8 +916,6 @@ def _extract_shape_segment(route_id, stops):
 # Group-to-group route finding (dual-mode)
 # ============================================================
 
-_ROUTE_CACHE_MAX = 3000
-_ROUTE_CACHE_MAX_BYTES = 24 * 1024 * 1024  # 24 MB total RAM budget
 _route_cache: dict = {}
 _route_cache_bytes = 0
 _route_cache_lock = threading.Lock()
@@ -973,11 +974,6 @@ def _load_route_cache():
             _route_cache_bytes -= _route_cache[oldest][1]
             del _route_cache[oldest]
     return len(data)
-
-# Max platforms to try per group (prevents N^2 blowup for stops with
-# many platforms)
-_MAX_PLATFORMS_TO_TRY = 3
-
 
 def find_route_between_groups(from_group_id, to_group_id, mode='both'):
     """Find the best route between two stop groups.
@@ -1165,7 +1161,7 @@ def _cache_route(cache_key, triple_result, mode):
 
     Memory guard: the cache is bounded BOTH by entry count and by total
     serialized bytes — a full route result (segments, shapes, positions)
-    can reach ~100 KB, so a count-only cap could exceed the VPS RAM.
+    can reach ~100 KB, so a count-only cap could exhaust host memory.
     """
     global _route_cache_bytes
     size = len(json.dumps(triple_result, ensure_ascii=False))

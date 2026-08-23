@@ -12,41 +12,23 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-function setTextContent(element, text) {
-    if (!element) return;
-    element.textContent = text;
-}
-
-function setHtmlSafely(element, html) {
-    // Safe alternative to innerHTML: parse as DOM and only allow safe elements/attributes
-    if (!element) return;
+function createElementFromHtml(html) {
+    // Parse as DOM and strip scripts and event handlers before insertion
     const template = document.createElement('template');
     template.innerHTML = html;
-    // Remove script elements and event handlers
     const scripts = template.content.querySelectorAll('script');
     scripts.forEach(s => s.remove());
     const allElements = template.content.querySelectorAll('*');
     allElements.forEach(el => {
-        // Remove event handler attributes
         for (const attr of el.attributes) {
             if (attr.name.startsWith('on')) {
                 el.removeAttribute(attr.name);
             }
-            // Remove javascript: URLs
-            if (attr.name === 'href' || attr.name === 'src') {
-                if (attr.value.startsWith('javascript:')) {
-                    el.removeAttribute(attr.name);
-                }
+            if ((attr.name === 'href' || attr.name === 'src') && attr.value.startsWith('javascript:')) {
+                el.removeAttribute(attr.name);
             }
         }
     });
-    element.innerHTML = '';
-    element.appendChild(template.content);
-}
-
-function createElementFromHtml(html) {
-    const template = document.createElement('template');
-    template.innerHTML = html;
     return template.content.firstElementChild;
 }
 
@@ -187,11 +169,6 @@ function initMap() {
     dataInfoEl.style.cssText = 'position: absolute; left: 0px; bottom: 1px; z-index: 1000; background: rgba(255,255,255,0.8); padding: 0 5px; font-size: 11px; color: #333;';
     dataInfoEl.textContent = 'Dane: …';
     document.getElementById('map').appendChild(dataInfoEl);
-
-    // Add @keyframes for map loading spinner
-    var style = document.createElement('style');
-    style.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
-    document.head.appendChild(style);
 
     // Fetch and display the GTFS data version
     fetch('/api/data-info')
@@ -815,13 +792,6 @@ function getModeLabel(mode) {
         case 'mobilis': return '🚍 Mobilis';
         default: return mode;
     }
-}
-
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 // ============================================================
