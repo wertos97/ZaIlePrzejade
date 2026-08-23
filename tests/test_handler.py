@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server.handler import MPKRequestHandler
 from server.pathfinding import find_route_between_groups, init_pathfinding
+from server.config import APP_VERSION
 from server import data
 
 # populate the pathfinding module state (server.py normally does this)
@@ -251,7 +252,7 @@ class TestHandlerEndpoints(unittest.TestCase):
         status, _, body = self._get('/api/status')
         self.assertEqual(status, 200)
         s = json.loads(body)
-        self.assertEqual(s['version'], data.APP_VERSION)
+        self.assertEqual(s['version'], APP_VERSION)
         self.assertIn('uptime_seconds', s)
         self.assertIn('load_avg', s)
         self.assertIn('active_requests', s)

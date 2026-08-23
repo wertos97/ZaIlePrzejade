@@ -6,7 +6,6 @@ Provides JSON-formatted logging with consistent fields for production monitoring
 import json
 import logging
 import logging.handlers
-import os
 import sys
 import time
 from typing import Any, Dict, Optional

@@ -10,15 +10,9 @@ import os
 import re
 from collections import defaultdict
 
-from .config import APP_VERSION
-
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROCESSED_DIR = os.path.join(BASE_DIR, 'processed')
 PUBLIC_DIR = os.path.join(BASE_DIR, 'public')
-
-# ============================================================
-# Application version (for tracking which code the server runs)
-# ============================================================
 
 # ============================================================
 # Load processed data

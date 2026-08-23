@@ -464,7 +464,6 @@ function clearRoute() {
     state.fromStop = null;
     state.toStop = null;
     state.hasRoute = false;
-    state.routeStopIds = null;
     state.routeGroupIds = null;
     document.getElementById('from-search').value = '';
     document.getElementById('to-search').value = '';

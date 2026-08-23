@@ -35,7 +35,6 @@ CHEAP_SEARCH_MAX_SECONDS = 6.0
 CHEAP_SEARCH_CONCURRENCY = 2  # max concurrent fare searches (GIL gate)
 
 # Cache configuration (byte budgets can be tuned via environment variables)
-FIND_CACHE_MAX_ENTRIES = 10000
 FIND_CACHE_MAX_BYTES = int(os.environ.get('FIND_CACHE_MAX_BYTES', 20 * 1024 * 1024))
 
 ROUTE_CACHE_MAX_ENTRIES = 3000
@@ -72,22 +71,12 @@ FAVICON_CACHE_MAX_AGE = 86400              # 1 day
 SEARCH_MIN_QUERY_LENGTH = 2
 SEARCH_MAX_QUERY_LENGTH = 100
 SEARCH_MAX_RESULTS = 50
-SEARCH_DEBOUNCE_MS = 300
 SEARCH_PREFIX_MAX_LENGTH = 5
-
-# ============================================================
-# HTTP Timeouts
-# ============================================================
-HEALTH_CHECK_TIMEOUT_SECONDS = 3
-HEALTH_CHECK_RETRIES = 15
-HEALTH_CHECK_RETRY_DELAY_SECONDS = 2
 
 # ============================================================
 # Logging
 # ============================================================
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
-LOG_FORMAT = '%(asctime)s %(levelname)s %(name)s %(message)s'
-LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 # ============================================================
 # Security

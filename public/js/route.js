@@ -152,12 +152,10 @@ function displayRoute(result) {
     state.hasRoute = true;
     state.routeLayer.clearLayers();
 
-    // Collect stop IDs and group IDs on the route for hiding others
-    state.routeStopIds = new Set();
+    // Collect stop group IDs on the route for hiding other stops
     state.routeGroupIds = new Set();
     if (result.path) {
         result.path.forEach(s => {
-            state.routeStopIds.add(s.stop_id);
             if (s.group_id) state.routeGroupIds.add(s.group_id);
         });
     }

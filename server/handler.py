@@ -24,14 +24,26 @@ from .config import (
     BLOCKED_PATH_PREFIXES as _BLOCKED_PREFIXES,
     BLOCKED_PATHS as _BLOCKED_PATHS,
     BOT_USER_AGENTS as _BOT_LIST,
+    CSP_NONCE_BYTES,
+    FAVICON_CACHE_MAX_AGE,
     GROUP_ID_PATTERN as _GROUP_ID_PATTERN_SRC,
     MAX_DISTANCE_PARAM_LENGTH,
     MAX_GROUP_ID_LENGTH as _MAX_GROUP_ID_LEN,
     MAX_CONCURRENT_REQUESTS,
+    MAX_ROUTE_ID_LENGTH,
+    MAX_STOP_ID_LENGTH,
+    OG_IMAGE_CACHE_MAX_AGE,
+    RATE_LIMIT_CLEANUP_INTERVAL_SECONDS,
     RATE_LIMIT_EXPENSIVE_MAX_REQUESTS as _RATE_LIMIT_EXPENSIVE_MAX,
     RATE_LIMIT_MAX_REQUESTS as _RATE_LIMIT_MAX,
+    RATE_LIMIT_STALE_CUTOFF_MULTIPLIER,
     RATE_LIMIT_WINDOW_SECONDS as _RATE_LIMIT_WINDOW,
+    SEARCH_MAX_QUERY_LENGTH,
     SEARCH_MAX_RESULTS,
+    SEARCH_MIN_QUERY_LENGTH,
+    SEARCH_PREFIX_MAX_LENGTH,
+    STATIC_CACHE_MAX_AGE_UNVERSIONED,
+    STATIC_CACHE_MAX_AGE_VERSIONED,
     TRUST_PROXY_HEADERS,
 )
 from . import data
@@ -43,7 +55,7 @@ _GROUP_ID_PATTERN = re.compile(_GROUP_ID_PATTERN_SRC)
 
 def generate_nonce() -> str:
     """Generate a cryptographically secure nonce for CSP."""
-    return secrets.token_urlsafe(16)
+    return secrets.token_urlsafe(CSP_NONCE_BYTES)
 
 
 def sanitize_svg(content: str) -> str:
@@ -193,7 +205,7 @@ def _start_rate_limit_cleanup():
 
 def _rate_limit_cleanup_loop():
     """Background loop to clean up stale rate limit entries."""
-    while not _Rate_limit_cleanup_stop.wait(60.0):  # Run every 60 seconds
+    while not _Rate_limit_cleanup_stop.wait(RATE_LIMIT_CLEANUP_INTERVAL_SECONDS):
         try:
             _cleanup_stale_rate_limits()
         except Exception:
@@ -203,7 +215,7 @@ def _rate_limit_cleanup_loop():
 def _cleanup_stale_rate_limits():
     """Remove stale rate limit entries. Called from background thread."""
     now = time.time()
-    stale_cutoff = now - _RATE_LIMIT_WINDOW * 3
+    stale_cutoff = now - _RATE_LIMIT_WINDOW * RATE_LIMIT_STALE_CUTOFF_MULTIPLIER
     with _rate_limits_lock:
         stale_ips = [
             k for k, v in _rate_limits.items()
@@ -388,7 +400,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'image/svg+xml')
             self.send_header('Content-Length', str(len(body)))
-            self.send_header('Cache-Control', 'public, max-age=86400')
+            self.send_header('Cache-Control', f'public, max-age={FAVICON_CACHE_MAX_AGE}')
             self.end_headers()
             self._send_body(body)
             return
@@ -431,10 +443,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_header('Content-Type', self.guess_type(file_path))
             self.send_header('Content-Length', str(len(body)))
             if 'v=' in parsed.query:
-                self.send_header('Cache-Control',
-                                 'public, max-age=31536000, immutable')
+                self.send_header(
+                    'Cache-Control',
+                    f'public, max-age={STATIC_CACHE_MAX_AGE_VERSIONED}, immutable')
             else:
-                self.send_header('Cache-Control', 'public, max-age=3600')
+                self.send_header(
+                    'Cache-Control',
+                    f'public, max-age={STATIC_CACHE_MAX_AGE_UNVERSIONED}')
             self.end_headers()
             self._send_body(body)
             return
@@ -639,15 +654,15 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     # ------------------------------------------------------------
     def _handle_stops_search(self, query):
         q = query.get('q', [''])[0].lower().strip()
-        if len(q) > 100:
-            q = q[:100]
-        if len(q) < 2:
+        if len(q) > SEARCH_MAX_QUERY_LENGTH:
+            q = q[:SEARCH_MAX_QUERY_LENGTH]
+        if len(q) < SEARCH_MIN_QUERY_LENGTH:
             self.serve_json([])
             return
         results = []
         seen = set()
         # Prefix-based search (fast)
-        for prefix_len in range(min(5, len(q)), 1, -1):
+        for prefix_len in range(min(SEARCH_PREFIX_MAX_LENGTH, len(q)), 1, -1):
             prefix = q[:prefix_len]
             if prefix in data.stop_search_index:
                 for name_lower, group_id in data.stop_search_index[prefix]:
@@ -680,7 +695,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                                 'modes': g['modes'],
                                 'platform_count': len(g['platforms']),
                             })
-        self.serve_json(results[:50])
+        self.serve_json(results[:SEARCH_MAX_RESULTS])
 
     def _handle_stop_platforms(self, query):
         group_id = query.get('id', [''])[0]
@@ -762,8 +777,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_shapes(self, query):
         route_id = query.get('route_id', [''])[0]
-        if len(route_id) > 64:
-            route_id = route_id[:64]
+        if len(route_id) > MAX_ROUTE_ID_LENGTH:
+            route_id = route_id[:MAX_ROUTE_ID_LENGTH]
         if not route_id:
             self.serve_json({'error': 'Missing route_id parameter'}, status=400)
             return
@@ -829,8 +844,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_stop_info(self, query):
         stop_id = query.get('id', [''])[0]
-        if len(stop_id) > 64:
-            stop_id = stop_id[:64]
+        if len(stop_id) > MAX_STOP_ID_LENGTH:
+            stop_id = stop_id[:MAX_STOP_ID_LENGTH]
         if not stop_id:
             self.serve_json({'error': 'Missing id parameter'}, status=400)
             return
@@ -860,7 +875,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'image/svg+xml')
         self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', 'public, max-age=3600')
+        self.send_header('Cache-Control', f'public, max-age={OG_IMAGE_CACHE_MAX_AGE}')
         self.end_headers()
         self._send_body(body)
 
@@ -880,7 +895,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             'Content-Security-Policy',
             "default-src 'self'; "
             f"script-src 'self' 'nonce-{nonce}'; "
-            f"style-src 'self' 'nonce-{nonce}'; "
+            # 'unsafe-inline' for styles is required: the initial hidden state
+            # of modals/panels uses style="display:none" ATTRIBUTES in HTML,
+            # and CSP cannot allowlist those with a nonce (only <style>
+            # elements). Scripts stay strictly nonce-gated.
+            "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: https:; "
             "connect-src 'self'; "
             "font-src 'self'; "

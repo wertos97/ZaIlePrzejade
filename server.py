@@ -10,10 +10,12 @@ import threading
 import time
 
 from server.data import (
-    BASE_DIR, PUBLIC_DIR, APP_VERSION, stops_grouped,
+    PUBLIC_DIR, stops_grouped,
 )
 from server.config import (
+    APP_VERSION,
     DEFAULT_PORT,
+    LOG_LEVEL,
     MAX_CONCURRENT_REQUESTS,
     REQUEST_QUEUE_SIZE,
     WARMUP_SAMPLE_SIZE,
@@ -92,9 +94,7 @@ from server.data import (
 )
 
 # Setup structured logging
-log_level = os.environ.get('LOG_LEVEL', 'INFO')
-log_file = os.environ.get('LOG_FILE')  # Optional: /var/log/mpk/app.log
-setup_logging(level=log_level, log_file=log_file)
+setup_logging(level=LOG_LEVEL, log_file=os.environ.get('LOG_FILE'))
 logger = get_logger('mpk.server')
 
 logger.info('Server starting', extra={'version': APP_VERSION})

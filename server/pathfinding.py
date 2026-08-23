@@ -25,9 +25,9 @@ from .config import (
     ASTAR_TIMEOUT_SECONDS as _ASTAR_TIMEOUT_SECONDS,
     CHEAP_SEARCH_CONCURRENCY,
     CHEAP_SEARCH_MAX_SECONDS,
-    FIND_CACHE_MAX_ENTRIES as _FIND_CACHE_MAX,
     FIND_CACHE_MAX_BYTES as _FIND_CACHE_MAX_BYTES,
     MAX_PLATFORMS_TO_TRY_PER_GROUP as _MAX_PLATFORMS_TO_TRY,
+    PRICE_LOOKUP_MAX_KM,
     ROUTE_CACHE_MAX_ENTRIES as _ROUTE_CACHE_MAX,
     ROUTE_CACHE_MAX_BYTES as _ROUTE_CACHE_MAX_BYTES,
     TRANSFER_TIME_SECONDS,
@@ -322,15 +322,17 @@ _cheap_timeout_count = 0
 # At most CHEAP_SEARCH_CONCURRENCY run at once; the rest queue briefly.
 _CHEAP_SEARCH_GATE = threading.Semaphore(CHEAP_SEARCH_CONCURRENCY)
 
-# price lookup: index = int(km * 100), capped at 20 km (well beyond _ACC_CAP)
+# price lookup: index = int(km * 100), capped well beyond _ACC_CAP
+_PRICE_LOOKUP_MAX_INDEX = int(PRICE_LOOKUP_MAX_KM * 100)
 _PRICE_LOOKUP = tuple(
-    calculate_cost(min(i / 100.0, 20.0))[0] for i in range(2001)
+    calculate_cost(min(i / 100.0, PRICE_LOOKUP_MAX_KM))[0]
+    for i in range(_PRICE_LOOKUP_MAX_INDEX + 1)
 )
 
 
 def _ticket_price(acc_km):
     """Price of the CURRENT segment accumulated to acc_km (regular fare)."""
-    return _PRICE_LOOKUP[min(int(acc_km * 100 + 0.5), 2000)]
+    return _PRICE_LOOKUP[min(int(acc_km * 100 + 0.5), _PRICE_LOOKUP_MAX_INDEX)]
 
 
 def _dominates(closed_a, acc_a, closed_b, acc_b):
