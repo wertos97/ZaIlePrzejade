@@ -28,13 +28,13 @@
     <meta name="twitter:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">
     <meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">
     <!-- Dynamic OG Image Update (external script) -->
-    <script src="js/og-image-update.js?v=1.0.0" defer></script>
+    <script src="js/og-image-update.js?v=1.2.0" defer></script>
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <!-- Leaflet CSS (local) -->
-    <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=1.0.0" />
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=1.2.0" />
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="style.css?v=1.0.0" />
+    <link rel="stylesheet" href="style.css?v=1.2.0" />
     <!-- Structured data (Schema.org) -->
     <script type="application/ld+json">
     {
@@ -133,19 +133,19 @@
             <div class="pricing-info">
                 <div class="price-row">
                     <span>Do 3,5 km</span>
-                    <span>4,00 zł / 2,00 zł</span>
+                    <span id="price-base">4,00 zł / 2,00 zł</span>
                 </div>
                 <div class="price-row">
                     <span>+ każde kolejne 500 m</span>
-                    <span>+0,50 zł / +0,25 zł</span>
+                    <span id="price-segment">+0,50 zł / +0,25 zł</span>
                 </div>
                 <div class="price-row price-max">
                     <span>Maksimum (1 przejazd)</span>
-                    <span>9,00 zł / 4,50 zł</span>
+                    <span id="price-max">9,00 zł / 4,50 zł</span>
                 </div>
                 <div class="price-row price-daily">
                     <span>Limit dzienny</span>
-                    <span>20,00 zł / 10,00 zł</span>
+                    <span id="price-daily">20,00 zł / 10,00 zł</span>
                 </div>
                 <div class="price-note">
                     Każdy przejazd (między przesiadkami) to osobny bilet liczony od zera.
@@ -274,9 +274,9 @@
     </div>
 
     <!-- Leaflet JS (local) -->
-    <script src="vendor/leaflet/leaflet.js?v=1.0.0" defer></script>
+    <script src="vendor/leaflet/leaflet.js?v=1.2.0" defer></script>
     <!-- App JS -->
-    <script src="app.js?v=1.1.1" defer></script>
-    <script src="js/route.js?v=1.0.0" defer></script>
+    <script src="app.js?v=1.2.0" defer></script>
+    <script src="js/route.js?v=1.2.0" defer></script>
 </body>
 </html>

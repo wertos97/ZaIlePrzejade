@@ -3,8 +3,6 @@
 import unittest
 import sys
 import os
-import json
-import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -124,6 +122,57 @@ class TestCalculateRouteCost(unittest.TestCase):
         reg, red = cost.calculate_route_cost(segments)
         self.assertEqual(reg, 4.50)
         self.assertEqual(red, 2.25)
+
+
+class TestInitPricing(unittest.TestCase):
+    """init_pricing() must load a custom pricing file and restore defaults."""
+
+    CUSTOM = {
+        'base_distance_km': 2.0,
+        'base_cost_regular': 3.0,
+        'base_cost_reduced': 1.5,
+        'segment_distance_km': 0.5,
+        'segment_cost_regular': 0.4,
+        'segment_cost_reduced': 0.2,
+        'max_cost_regular': 8.0,
+        'max_cost_reduced': 4.0,
+        'max_daily_cost_regular': 18.0,
+        'max_daily_cost_reduced': 9.0,
+    }
+
+    def test_custom_pricing_file(self):
+        import json
+        import tempfile
+        path = None
+        try:
+            with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+                json.dump(self.CUSTOM, f)
+                path = f.name
+            cost.init_pricing(path)
+            reg, red = cost.calculate_cost(2.0)  # exactly base distance
+            self.assertEqual(reg, 3.0)
+            self.assertEqual(red, 1.5)
+            reg, red = cost.calculate_cost(100)  # capped
+            self.assertEqual(reg, 8.0)
+            self.assertEqual(red, 4.0)
+        finally:
+            if path:
+                os.unlink(path)
+            cost.init_pricing()  # restore defaults for other tests
+
+    def test_malformed_pricing_file_raises(self):
+        import tempfile
+        path = None
+        try:
+            with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+                f.write('{"base_distance_km": ')
+                path = f.name
+            with self.assertRaises(Exception):
+                cost.init_pricing(path)
+        finally:
+            if path:
+                os.unlink(path)
+            cost.init_pricing()  # restore defaults for other tests
 
 
 if __name__ == '__main__':

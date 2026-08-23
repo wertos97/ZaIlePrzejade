@@ -6,12 +6,10 @@ Entry point — loads modules and starts the threaded server.
 
 import os
 import random
+import signal
 import threading
 import time
 
-from server.data import (
-    PUBLIC_DIR, stops_grouped,
-)
 from server.config import (
     APP_VERSION,
     DEFAULT_PORT,
@@ -22,12 +20,20 @@ from server.config import (
     WARMUP_PAIRS_PER_SAMPLE,
     WARMUP_YIELD_DELAY_SECONDS,
 )
+from server.logging_config import setup_logging, get_logger, log_cache_event
+
+# Configure logging FIRST so startup logs from data loading are captured.
+setup_logging(level=LOG_LEVEL, log_file=os.environ.get('LOG_FILE'))
+logger = get_logger('mpk.server')
+
+from server.data import (  # noqa: E402 — needs logging configured first
+    PUBLIC_DIR, stops_grouped,
+)
 from server.pathfinding import (
     find_route_between_groups, init_pathfinding,
     find_cache_info, route_cache_info,
 )
 from server.handler import MPKRequestHandler, _build_stops_json, _build_routes_json
-from server.logging_config import setup_logging, get_logger, log_cache_event
 
 
 # Import threading server from stdlib and wrap it
@@ -50,11 +56,16 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
             if self._active_requests >= self.MAX_CONCURRENT:
                 _h._bump_counter('blocked')
                 try:
+                    # Raw response (no handler instance yet) — keep the same
+                    # security headers the handler would send.
                     request.sendall(b'HTTP/1.1 503 Service Unavailable\r\n'
                                     b'Content-Type: text/plain; charset=utf-8\r\n'
                                     b'Content-Length: 0\r\n'
                                     b'Connection: close\r\n'
                                     b'Retry-After: 1\r\n'
+                                    b'X-Content-Type-Options: nosniff\r\n'
+                                    b'X-Frame-Options: DENY\r\n'
+                                    b'Referrer-Policy: no-referrer\r\n'
                                     b'\r\n')
                 except OSError:
                     pass
@@ -74,15 +85,9 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
             raise
 
     def process_request_thread(self, request, client_address):
-        """Run the request in a thread, decrementing the active counter when done."""
-        from server import handler as _h
-        _h._active_requests += 1
-        try:
-            super().process_request_thread(request, client_address)
-        finally:
-            _h._active_requests -= 1
-            with self._active_lock:
-                self._active_requests -= 1
+        """Run the request in a thread; the active counter was already
+        incremented (under lock) by process_request."""
+        super().process_request_thread(request, client_address)
 
 
 # ============================================================
@@ -92,10 +97,6 @@ from server.data import (
     adjacency, stops_by_id, stops_grouped as _sg,
     stop_to_group, routes_by_id, route_shapes,
 )
-
-# Setup structured logging
-setup_logging(level=LOG_LEVEL, log_file=os.environ.get('LOG_FILE'))
-logger = get_logger('mpk.server')
 
 logger.info('Server starting', extra={'version': APP_VERSION})
 
@@ -113,7 +114,7 @@ log_cache_event(logger, 'route', 'startup', _rc_count, _rc_bytes, _rc_max_bytes)
 # ============================================================
 # Warmup: pre-compute routes for popular stop pairs at startup
 # ============================================================
-_warmup_done = False
+_warmup_started = False
 _warmup_lock = threading.Lock()
 
 
@@ -124,7 +125,6 @@ def _warmup_cache():
     this thread must not steal the GIL from real requests right after boot.
     Each search yields the GIL briefly so early page loads stay fast.
     """
-    global _warmup_done
     group_ids = list(stops_grouped.keys())
     sample = random.sample(group_ids, min(WARMUP_SAMPLE_SIZE, len(group_ids)))
 
@@ -139,15 +139,23 @@ def _warmup_cache():
             time.sleep(WARMUP_YIELD_DELAY_SECONDS)  # yield the GIL — don't starve live requests
 
     logger.info('Cache warmup completed', extra={'entries_warmed': count})
-    with _warmup_lock:
-        _warmup_done = True
 
 
 def trigger_warmup():
-    """Start the warmup thread if not already done."""
+    """Start the warmup thread exactly once."""
+    global _warmup_started
     with _warmup_lock:
-        if not _warmup_done:
-            threading.Thread(target=_warmup_cache, daemon=True).start()
+        if _warmup_started:
+            return
+        _warmup_started = True
+    threading.Thread(target=_warmup_cache, daemon=True,
+                     name='cache-warmup').start()
+
+
+def _request_shutdown(signum, frame):
+    """Signal handler: break out of serve_forever via SystemExit so atexit
+    handlers (route cache persistence) still run."""
+    raise SystemExit(0)
 
 
 def main():
@@ -162,6 +170,9 @@ def main():
     # Warmup is deferred until first health check passes (via trigger_warmup)
     # to avoid stealing GIL from early requests.
     MPKRequestHandler.on_health_check = staticmethod(trigger_warmup)
+
+    signal.signal(signal.SIGTERM, _request_shutdown)
+
     logger.info('Server ready', extra={
         'port': port,
         'public_dir': PUBLIC_DIR,
@@ -170,9 +181,10 @@ def main():
 
     try:
         server.serve_forever()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         logger.info('Server shutting down')
-        server.shutdown()
+    finally:
+        server.server_close()
 
 
 if __name__ == '__main__':

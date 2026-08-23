@@ -33,6 +33,8 @@ from .config import (
     MAX_ROUTE_ID_LENGTH,
     MAX_STOP_ID_LENGTH,
     OG_IMAGE_CACHE_MAX_AGE,
+    PATHFINDING_EXECUTOR_WORKERS,
+    PUBLIC_BASE_URL,
     RATE_LIMIT_CLEANUP_INTERVAL_SECONDS,
     RATE_LIMIT_EXPENSIVE_MAX_REQUESTS as _RATE_LIMIT_EXPENSIVE_MAX,
     RATE_LIMIT_MAX_REQUESTS as _RATE_LIMIT_MAX,
@@ -49,6 +51,7 @@ from .config import (
 from . import data
 from . import cost
 from . import pathfinding
+from .logging_config import get_logger
 
 _GROUP_ID_PATTERN = re.compile(_GROUP_ID_PATTERN_SRC)
 
@@ -91,7 +94,8 @@ def sanitize_svg(content: str) -> str:
 
 
 # Thread pool for pathfinding with timeout support
-_pathfinding_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='pathfind')
+_pathfinding_executor = ThreadPoolExecutor(
+    max_workers=PATHFINDING_EXECUTOR_WORKERS, thread_name_prefix='pathfind')
 
 
 def run_pathfinding_with_timeout(func, *args, timeout=25.0):
@@ -125,7 +129,8 @@ def run_pathfinding_with_timeout(func, *args, timeout=25.0):
 # ============================================================
 # Constants
 # ============================================================
-PUBLIC_DIR = data.PUBLIC_DIR
+PUBLIC_DIR = os.path.realpath(data.PUBLIC_DIR)
+_PUBLIC_HOST = PUBLIC_BASE_URL.split('//', 1)[-1]
 
 BLOCKED_PREFIXES = _BLOCKED_PREFIXES
 BLOCKED_PATHS = _BLOCKED_PATHS
@@ -179,10 +184,8 @@ def validate_mode(mode: str) -> str:
 
 # ============================================================
 # Rate limiting (token bucket per IP, O(1) amortized)
+# Limits come from config.py — the single source of truth.
 # ============================================================
-_RATE_LIMIT_WINDOW = 10.0
-_RATE_LIMIT_MAX = 30
-_RATE_LIMIT_EXPENSIVE_MAX = 10
 _rate_limits = {}
 _rate_limits_lock = threading.RLock()
 _Rate_limit_cleanup_thread = None
@@ -229,12 +232,12 @@ def _cleanup_stale_rate_limits():
 def _get_client_ip(handler):
     """Get real client IP.
 
-    When TRUST_PROXY_HEADERS is enabled (default), X-Real-IP is trusted —
-    it is set by the reverse proxy from $remote_addr and cannot be
-    influenced by the client; X-Forwarded-For may contain client-supplied
-    values, so it is only used as a fallback. With TRUST_PROXY_HEADERS=false
-    (direct exposure) the socket address is always used, so a spoofed
-    header cannot rotate rate-limit buckets.
+    When TRUST_PROXY_HEADERS is enabled, X-Real-IP is trusted — it must be
+    set by the reverse proxy from $remote_addr and cannot be influenced by
+    the client; X-Forwarded-For may contain client-supplied values, so it is
+    only used as a fallback. With TRUST_PROXY_HEADERS=false (default, direct
+    exposure) the socket address is always used, so a spoofed header cannot
+    rotate rate-limit buckets.
     """
     if TRUST_PROXY_HEADERS:
         real = handler.headers.get('X-Real-IP', '')
@@ -278,7 +281,6 @@ def _rate_limit_ok(ip, expensive=False):
 # Pre-computed static JSON responses (cached at startup)
 # ============================================================
 _server_start_time = time.time()
-_active_requests = 0
 _req_counters = {  # lightweight server telemetry (GIL-protected ints)
     'api_total': 0,
     'find_route': 0,
@@ -334,6 +336,26 @@ def html_escape(s):
 # ============================================================
 # HTTP Request Handler
 # ============================================================
+
+_OG_META_RE = re.compile(
+    r'<meta\s+(property|name)="(og:title|og:description|og:url|og:image|'
+    r'twitter:title|twitter:description|twitter:image)"\s+content="[^"]*"\s*/?>')
+
+
+def _rewrite_og_meta(page_html, values):
+    """Rewrite OG/Twitter meta tag contents by key.
+
+    Regex-based (not exact-string replace), so editing the default texts
+    in index.html cannot silently break crawler rewriting.
+    """
+    def _sub(m):
+        attr, key = m.group(1), m.group(2)
+        value = values.get(key)
+        if value is None:
+            return m.group(0)
+        return f'<meta {attr}="{key}" content="{value}">'
+    return _OG_META_RE.sub(_sub, page_html)
+
 
 class MPKRequestHandler(SimpleHTTPRequestHandler):
     """Custom request handler for MPK Kraków app."""
@@ -408,8 +430,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         if path == '/' or path == '':
             path = '/index.html'
 
-        file_path = os.path.normpath(os.path.join(PUBLIC_DIR, path.lstrip('/')))
-        if not file_path.startswith(PUBLIC_DIR):
+        file_path = os.path.realpath(os.path.normpath(
+            os.path.join(PUBLIC_DIR, path.lstrip('/'))))
+        if os.path.commonpath([PUBLIC_DIR, file_path]) != PUBLIC_DIR:
             self.send_error_page(403)
             return
 
@@ -442,7 +465,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', self.guess_type(file_path))
             self.send_header('Content-Length', str(len(body)))
-            if 'v=' in parsed.query:
+            if 'v' in query:
                 self.send_header(
                     'Cache-Control',
                     f'public, max-age={STATIC_CACHE_MAX_AGE_VERSIONED}, immutable')
@@ -514,39 +537,20 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             to_stop_url = urllib.parse.quote(to_stop, safe='')
             mode_url = urllib.parse.quote(mode, safe='')
 
-            og_image_url = f"https://zaileprzeja.de/api/og-image?from={from_stop_url}&to={to_stop_url}&mode={mode_url}"
-            current_url = f"https://zaileprzeja.de/?from={from_stop_url}&to={to_stop_url}&mode={mode_url}"
+            og_image_url = f"{PUBLIC_BASE_URL}/api/og-image?from={from_stop_url}&to={to_stop_url}&mode={mode_url}"
+            current_url = f"{PUBLIC_BASE_URL}/?from={from_stop_url}&to={to_stop_url}&mode={mode_url}"
             title = f"Za Ile Przejadę? {from_name_esc} → {to_name_esc}"
             description = f"Oblicz koszt przejazdu z {from_name_esc} do {to_name_esc} w nowym systemie biletów komunikacji miejskiej w Krakowie."
 
-            page_html = page_html.replace(
-                '<meta property="og:title" content="Za Ile Przejadę? - Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027">',
-                f'<meta property="og:title" content="{html_escape(title)}">'
-            )
-            page_html = page_html.replace(
-                '<meta property="og:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">',
-                f'<meta property="og:description" content="{html_escape(description)}">'
-            )
-            page_html = page_html.replace(
-                '<meta property="og:url" content="https://zaileprzeja.de/">',
-                f'<meta property="og:url" content="{current_url}">'
-            )
-            page_html = page_html.replace(
-                '<meta property="og:image" content="https://zaileprzeja.de/og-image.svg">',
-                f'<meta property="og:image" content="{og_image_url}">'
-            )
-            page_html = page_html.replace(
-                '<meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027">',
-                f'<meta name="twitter:title" content="{html_escape(title)}">'
-            )
-            page_html = page_html.replace(
-                '<meta name="twitter:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">',
-                f'<meta name="twitter:description" content="{html_escape(description)}">'
-            )
-            page_html = page_html.replace(
-                '<meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">',
-                f'<meta name="twitter:image" content="{og_image_url}">'
-            )
+            page_html = _rewrite_og_meta(page_html, {
+                'og:title': html_escape(title),
+                'og:description': html_escape(description),
+                'og:url': current_url,
+                'og:image': og_image_url,
+                'twitter:title': html_escape(title),
+                'twitter:description': html_escape(description),
+                'twitter:image': og_image_url,
+            })
 
             body = page_html.encode('utf-8')
             self.send_response(200)
@@ -591,6 +595,20 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
             elif path == '/api/cost':
                 self._handle_cost(query)
+
+            elif path == '/api/pricing':
+                self.serve_json({
+                    'base_distance_km': cost.BASE_DISTANCE,
+                    'base_cost_regular': cost.BASE_COST_REGULAR,
+                    'base_cost_reduced': cost.BASE_COST_REDUCED,
+                    'segment_distance_km': cost.SEGMENT_DISTANCE,
+                    'segment_cost_regular': cost.SEGMENT_COST_REGULAR,
+                    'segment_cost_reduced': cost.SEGMENT_COST_REDUCED,
+                    'max_cost_regular': cost.MAX_COST_REGULAR,
+                    'max_cost_reduced': cost.MAX_COST_REDUCED,
+                    'max_daily_cost_regular': cost.MAX_DAILY_COST_REGULAR,
+                    'max_daily_cost_reduced': cost.MAX_DAILY_COST_REDUCED,
+                })
 
             elif path == '/api/shapes':
                 self._handle_shapes(query)
@@ -641,13 +659,20 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
         except Exception:
             traceback.print_exc(file=sys.stderr)
-            # Suppress the default HTML error page so the response stays JSON
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.send_header('Content-Length', str(len(b'{"error": "Internal server error"}')))
-            self.send_header('Cache-Control', 'no-store')
-            self.end_headers()
-            self._send_body(b'{"error": "Internal server error"}')
+            # If a response already went out (partially), starting another
+            # one would only raise again — give up quietly.
+            if getattr(self, '_headers_sent', False):
+                return
+            try:
+                # Suppress the default HTML error page so the response stays JSON
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Content-Length', str(len(b'{"error": "Internal server error"}')))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self._send_body(b'{"error": "Internal server error"}')
+            except OSError:
+                pass
 
     # ------------------------------------------------------------
     # Individual API handlers
@@ -786,46 +811,24 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.serve_json({'route_id': route_id, 'shape': shape})
 
     def _handle_status(self):
-        """Lightweight server status: version, load, caches, counters."""
-        import os as _os
-        try:
-            load_avg = [round(x, 2) for x in _os.getloadavg()]
-        except (OSError, AttributeError):
-            load_avg = []
-        try:
-            with open('/proc/self/statm') as f:
-                rss_pages = int(f.read().split()[1])
-            page = _os.sysconf('SC_PAGE_SIZE')
-            rss_mb = round(rss_pages * page / (1024 * 1024), 1)
-        except Exception:
-            rss_mb = None
-        # Per-process CPU utilisation (avg % of one core over this process's
-        # lifetime) — distinct from host-wide getloadavg, which reflects the
-        # physical machine, not this app.
-        uptime_s = max(time.time() - _server_start_time, 1.0)
-        process_cpu_pct = None
-        try:
-            with open('/proc/self/stat') as f:
-                parts = f.read().split()
-            cpu_seconds = (int(parts[13]) + int(parts[14])) / 100.0  # user+sys ticks
-            process_cpu_pct = round(cpu_seconds / uptime_s * 100.0, 1)
-        except Exception:
-            pass
+        """Application-level status: version, uptime, cache usage.
+
+        Deliberately excludes host internals (load average, RSS, per-process
+        CPU, request counters) — this endpoint is publicly reachable.
+        """
         fc_count, fc_bytes, fc_max = pathfinding.find_cache_info()
         rc_count, rc_max, rc_bytes, rc_max_bytes = pathfinding.route_cache_info()
         cheap_searches, cheap_timeouts = pathfinding.cheap_search_info()
-        with _req_counters_lock:
-            counters = dict(_req_counters)
+        active = 0
+        server = getattr(self, 'server', None)
+        if server is not None:
+            with server._active_lock:
+                active = server._active_requests
         self.serve_json({
             'version': APP_VERSION,
             'uptime_seconds': int(time.time() - _server_start_time),
-            'active_requests': _active_requests,
+            'active_requests': active,
             'max_concurrent': MAX_CONCURRENT_REQUESTS,
-            'load_avg': load_avg,
-            'process_cpu_pct': process_cpu_pct,
-            'cpus': _os.cpu_count() or 1,
-            'rss_mb': rss_mb,
-            'counters': counters,
             'find_cache': {
                 'entries': rc_count + fc_count,
                 'find_entries': fc_count,
@@ -912,11 +915,12 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         """Send security headers on ALL responses."""
+        self._headers_sent = True
         self._security_headers()
         self.send_header('X-App-Version', APP_VERSION)
         super().end_headers()
 
-    def serve_json(self, data_obj, cache=False, status=200):
+    def serve_json(self, data_obj, status=200):
         """Serve JSON response with optional gzip compression."""
         body = json.dumps(data_obj, ensure_ascii=False).encode('utf-8')
         accept = self.headers.get('Accept-Encoding', '')
@@ -1057,13 +1061,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         svg += f'  {logo_inner.strip()}\n'
         svg += '  </g>\n'
         svg += (
-            '  <text x="1010" y="577" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#7f8c8d" text-anchor="middle">zaileprzeja.de</text>\n'
+            f'  <text x="1010" y="577" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="bold" fill="#7f8c8d" text-anchor="middle">{_PUBLIC_HOST}</text>\n'
             '</svg>'
         )
         return svg
 
     def log_message(self, format, *args):
-        """Log only errors and API requests."""
+        """Log API requests and errors through the structured logger."""
         msg = format % args
         if '/api/' in msg or 'Error' in msg or 'error' in msg:
-            print(f"  {msg}", file=sys.stderr)
+            get_logger('mpk.http').info('HTTP access: %s', msg)

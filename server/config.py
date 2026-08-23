@@ -34,6 +34,11 @@ ASTAR_TIMEOUT_SECONDS = 30
 CHEAP_SEARCH_MAX_SECONDS = 6.0
 CHEAP_SEARCH_CONCURRENCY = 2  # max concurrent fare searches (GIL gate)
 
+# Executor threads running pathfinding. More than the cheap-search gate so
+# that distance-based searches are never queued behind fare searches that
+# are waiting for the gate.
+PATHFINDING_EXECUTOR_WORKERS = 4
+
 # Cache configuration (byte budgets can be tuned via environment variables)
 FIND_CACHE_MAX_BYTES = int(os.environ.get('FIND_CACHE_MAX_BYTES', 20 * 1024 * 1024))
 
@@ -82,9 +87,12 @@ LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 # Security
 # ============================================================
 CSP_NONCE_BYTES = 16
-# Set TRUST_PROXY_HEADERS=false when the app is exposed directly (no reverse
-# proxy in front); otherwise X-Real-IP / X-Forwarded-For are honoured.
-TRUST_PROXY_HEADERS = os.environ.get('TRUST_PROXY_HEADERS', 'true').lower() in ('1', 'true', 'yes')
+# Canonical public origin used for absolute URLs (OG meta, OG images).
+PUBLIC_BASE_URL = os.environ.get('PUBLIC_BASE_URL', 'https://zaileprzeja.de').rstrip('/')
+# Set TRUST_PROXY_HEADERS=true only behind a reverse proxy that overwrites
+# X-Real-IP / X-Forwarded-For; when exposed directly the socket address is
+# used so a spoofed header cannot rotate rate-limit buckets.
+TRUST_PROXY_HEADERS = os.environ.get('TRUST_PROXY_HEADERS', 'false').lower() in ('1', 'true', 'yes')
 BLOCKED_PATH_PREFIXES = ('/.', '/_')
 BLOCKED_PATHS = (
     '/.env', '/.env.old', '/.env.local', '/.env.production', '/.env.development',
@@ -127,4 +135,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.2.0"

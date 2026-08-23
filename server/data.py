@@ -6,9 +6,12 @@ All data structures are module-level globals available to other server modules.
 """
 
 import json
+import logging
 import os
 import re
 from collections import defaultdict
+
+logger = logging.getLogger('mpk.data')
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROCESSED_DIR = os.path.join(BASE_DIR, 'processed')
@@ -17,7 +20,7 @@ PUBLIC_DIR = os.path.join(BASE_DIR, 'public')
 # ============================================================
 # Load processed data
 # ============================================================
-print("Loading processed data...")
+logger.info("Loading processed data...")
 
 with open(os.path.join(PROCESSED_DIR, 'stops.json'), encoding='utf-8') as f:
     stops_list = json.load(f)
@@ -39,7 +42,7 @@ if os.path.isfile(_metadata_path):
 else:
     feed_metadata = {}
 
-print(f"  Loaded {len(stops_list)} stops, {len(routes_list)} routes")
+logger.info("Processed data loaded", extra={"stops": len(stops_list), "routes": len(routes_list)})
 
 # ============================================================
 # Build data structures
@@ -86,7 +89,7 @@ for group_id, group in stops_grouped.items():
     for p in group['platforms']:
         stop_to_group[p['id']] = group_id
 
-print(f"  Grouped {len(stops_list)} stops into {len(stops_grouped)} groups")
+logger.info("Stop groups built", extra={"platforms": len(stops_by_id), "groups": len(stops_grouped)})
 
 routes_by_id = {r['route_id']: r for r in routes_list}
 
@@ -106,7 +109,7 @@ for stop_id, edges in adjacency_raw.items():
         }
         adjacency[to_stop].append(reverse_edge)
 
-print(f"  Built bidirectional adjacency list with {len(adjacency)} nodes")
+logger.info("Adjacency list built", extra={"nodes": len(adjacency)})
 
 # Free memory: adjacency_raw is no longer needed after building adjacency
 del adjacency_raw
@@ -136,7 +139,7 @@ for s in stops_list:
                         stop_search_index[prefix] = []
                     stop_search_index[prefix].append(('_code_' + code, group_id))
 
-print(f"  Built search index with {len(stop_search_index)} prefixes")
+logger.info("Search index built", extra={"prefixes": len(stop_search_index)})
 
 # Free memory: stops_list is no longer needed after building all stop structures
 del stops_list
@@ -144,26 +147,8 @@ del stops_list
 # ============================================================
 # Ticket pricing configuration
 # ============================================================
-PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
-
-with open(PRICING_PATH, encoding='utf-8') as f:
-    pricing = json.load(f)
-
-BASE_DISTANCE = pricing['base_distance_km']
-BASE_COST_REGULAR = pricing['base_cost_regular']
-BASE_COST_REDUCED = pricing['base_cost_reduced']
-SEGMENT_DISTANCE = pricing['segment_distance_km']
-SEGMENT_COST_REGULAR = pricing['segment_cost_regular']
-SEGMENT_COST_REDUCED = pricing['segment_cost_reduced']
-MAX_COST_REGULAR = pricing['max_cost_regular']
-MAX_COST_REDUCED = pricing['max_cost_reduced']
-MAX_DAILY_COST_REGULAR = pricing['max_daily_cost_regular']
-MAX_DAILY_COST_REDUCED = pricing['max_daily_cost_reduced']
-
-# Transfer (waiting) time added per transfer, in seconds (5 minutes)
-TRANSFER_TIME_SECONDS = 300
-
-print(f"  Loaded pricing from {PRICING_PATH}")
+# Pricing constants live in cost.py (single source of truth), which loads
+# pricing.json at import. Nothing to duplicate here.
 
 # ============================================================
 # Load and clean logo SVG
@@ -187,4 +172,4 @@ def _clean_logo_svg(content):
 
 
 logo_svg_content = _clean_logo_svg(logo_svg_content)
-print(f"  Loaded logo from {_logo_svg_path}")
+logger.info("Logo loaded", extra={"path": _logo_svg_path})

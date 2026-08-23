@@ -46,8 +46,19 @@ Wymagania:
   - `/api/og-image` (SVG, tryby, nieistniejące przystanki);
   - `/api/find-route` (wszystkie tryby, tania ≤ krótka, `group_id` na trasie,
     błąd dla złych grup);
-  - `/api/health`, `/api/status` (metryki);
-  - cykl życia `/api/route-viz` / `/api/route-progress`.
+  - `/api/health`, `/api/status` (wersja, uptime, metryki cache);
+  - `/api/version` (numer wersji aplikacji).
+
+- `test_security.py` — bezpieczeństwo i zachowanie cache **bez gniazd sieciowych**
+  (żądania są podawane handlerowi przez `BytesIO`, więc testy działają w każdym
+  środowisku i w ułamku sekundy):
+  - path traversal — próby wyjścia poza `public/` (403/404), `.env` zablokowany,
+    legalne pliki nadal serwowane;
+  - rate limiting — bucket „expensive" wyczerpuje się i odracza żądania;
+  - nieudane wyszukiwania (timeout/błąd) nigdy nie trafiają do cache
+    (regresja „zatrutej pary");
+  - przepisywanie meta OG jest oparte na nazwie tagu, nie na dokładnym tekście;
+  - `/api/status` nie ujawnia metryk hosta (load, RSS, CPU, liczniki).
 
 ## Uwagi
 

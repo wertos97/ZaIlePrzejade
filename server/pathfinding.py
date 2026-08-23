@@ -8,12 +8,12 @@ Key differences from the original server.py implementation:
   - find_route_between_groups returns BOTH short and convenient results
     in a single pass through platform pairs (dual-mode).
   - A* has a 30-second timeout (time check + max iterations).
-  - _extract_shape_segment properly handles reverse-direction shapes.
 """
 
 import atexit
 import heapq
 import json
+import logging
 import math
 import os
 import threading
@@ -77,7 +77,7 @@ def init_pathfinding(adj, stops_by_id_ref, stops_grouped_ref,
     route_shapes = route_shapes_ref
 
     # Disk cache: restore previously computed routes on restart and save the
-    # route cache periodically + at exit. A background flusher (every 5 min,
+    # route cache periodically + at exit. A background flusher (every 2 min,
     # only when entries changed) keeps the disk copy fresh even if the
     # process is killed with SIGKILL/SIGTERM (atexit doesn't run then).
     global _feed_version
@@ -106,12 +106,13 @@ def init_pathfinding(adj, stops_by_id_ref, stops_grouped_ref,
                 last_count = len(_route_cache)
                 _save_route_cache()
 
-    threading.Thread(target=_flush_loop, daemon=True).start()
+    threading.Thread(target=_flush_loop, daemon=True,
+                     name='route-cache-flush').start()
 
-    # startup log line
-    print(f"  Route cache: {len(_route_cache)} entries "
-          f"({loaded} loaded from disk, "
-          f"{_route_cache_bytes // 1024} KB)")
+    logging.getLogger('mpk.pathfinding').info(
+        'Route cache restored',
+        extra={'entries': len(_route_cache), 'loaded_from_disk': loaded,
+               'bytes_kb': _route_cache_bytes // 1024})
 
     # Build coordinate lookup from adjacency + stops_by_id
     stop_coords = {}
@@ -158,33 +159,62 @@ def _nearest_shape_index(shape_points, lat, lon, start_idx, end_idx):
 # Pathfinding cache (bounded by size)
 # ============================================================
 
+def _estimate_bytes(obj):
+    """Rough memory footprint of a JSON-like structure, in bytes.
+
+    Much cheaper than json.dumps() — used on every cache store to keep
+    the byte budgets meaningful without serializing the whole result.
+    """
+    t = type(obj)
+    if t is str:
+        return len(obj) + 49
+    if t is dict:
+        return 184 + sum(_estimate_bytes(k) + _estimate_bytes(v)
+                         for k, v in obj.items())
+    if t is list or t is tuple:
+        return 56 + sum(_estimate_bytes(x) for x in obj)
+    if t is float:
+        return 24
+    if t is int:
+        return 28
+    if obj is None or t is bool:
+        return 16
+    return len(repr(obj)) + 49
+
+
 _find_cache: dict = {}
 _find_cache_bytes: int = 0
-
+# The find cache is mutated from concurrent request threads — all reads and
+# writes of the dict AND the byte counter must hold this lock.
+_find_cache_lock = threading.Lock()
 
 
 def _cache_put_find(key, value):
     """Store a value in the find cache, evicting oldest entries if over size limit."""
     global _find_cache_bytes
-    size = len(json.dumps(value, ensure_ascii=False)) if value[0] is not None else 64
+    if value[0] is None:
+        return  # Never cache failures — the pair would be poisoned until eviction.
+    size = _estimate_bytes(value)
     if size > _FIND_CACHE_MAX_BYTES:
         return  # Don't cache very large results
-    if key in _find_cache:
-        _find_cache_bytes -= _find_cache[key][1]
-    # Evict oldest entries if over budget
-    while _find_cache_bytes + size > _FIND_CACHE_MAX_BYTES and _find_cache:
-        oldest_key = next(iter(_find_cache))
-        _find_cache_bytes -= _find_cache[oldest_key][1]
-        del _find_cache[oldest_key]
-    _find_cache[key] = (value, size)
-    _find_cache_bytes += size
+    with _find_cache_lock:
+        if key in _find_cache:
+            _find_cache_bytes -= _find_cache[key][1]
+        # Evict oldest entries if over budget
+        while _find_cache_bytes + size > _FIND_CACHE_MAX_BYTES and _find_cache:
+            oldest_key = next(iter(_find_cache))
+            _find_cache_bytes -= _find_cache[oldest_key][1]
+            del _find_cache[oldest_key]
+        _find_cache[key] = (value, size)
+        _find_cache_bytes += size
 
 
 def _cache_get_find(key):
     """Retrieve a value from the find cache."""
-    entry = _find_cache.get(key)
-    if entry is not None:
-        return entry[0]
+    with _find_cache_lock:
+        entry = _find_cache.get(key)
+        if entry is not None:
+            return entry[0]
     return None
 
 
@@ -245,10 +275,13 @@ def find_shortest_path(start_id, end_id):
     prev = {}
     best_found_real = float('inf')
     seq = 0
+    pops = 0
 
     start_time = time.monotonic()
 
     while pq:
+        pops += 1
+
         # Cooperative cancellation check
         if _check_cancelled():
             # Do NOT cache cancellations — the pair would be poisoned with a
@@ -265,20 +298,16 @@ def find_shortest_path(start_id, end_id):
             continue
 
         # Timeout / iteration limit check (every 1000 pops is cheap)
-        iterations = len(best)
-        if iterations % 1000 == 0:
+        if pops % 1000 == 0:
             if time.monotonic() - start_time > _ASTAR_TIMEOUT_SECONDS:
-                result = None, "Timeout: nie znaleziono trasy w wymaganym czasie"
-                _cache_put_find(cache_key, result)
-                return result
+                # Never cache timeouts — the pair would be poisoned until eviction.
+                return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
 
-        if iterations >= _ASTAR_MAX_ITERATIONS:
-            result = None, "Przekroczono limit iteracji A*"
-            _cache_put_find(cache_key, result)
-            return result
+        if pops >= _ASTAR_MAX_ITERATIONS:
+            return None, "Przekroczono limit iteracji A*"
 
         if stop == end_id:
-            result = reconstruct_path(prev, start_id, end_id, route, real_dist), None
+            result = reconstruct_path(prev, start_id, end_id, route), None
             _cache_put_find(cache_key, result)
             return result
 
@@ -304,9 +333,7 @@ def find_shortest_path(start_id, end_id):
                 heapq.heappush(pq, (estimated, new_pen, new_real, seq,
                                     next_stop, next_route))
 
-    result = None, "Nie znaleziono trasy między tymi przystankami"
-    _cache_put_find(cache_key, result)
-    return result
+    return None, "Nie znaleziono trasy między tymi przystankami"
 
 
 # ============================================================
@@ -400,9 +427,7 @@ def find_cheapest_path(start_ids, end_ids, upper_bound=float('inf')):
     _cheap_search_count += 1
 
     if not start_ids or not end_ids:
-        result = None, "Nie podano przystanków"
-        _cache_put_find(cache_key, result)
-        return result
+        return None, "Nie podano przystanków"
 
     # CPU gate: at most 2 fare searches run concurrently (GIL).
     _CHEAP_SEARCH_GATE.acquire()
@@ -439,9 +464,7 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
         heapq.heappush(pq, (h_start, 0.0, 0.0, seq, start_id, None, None))
         seq += 1
     if not pq:
-        result = None, "Przystanek początkowy nie został znaleziony w grafie"
-        _cache_put_find(cache_key, result)
-        return result
+        return None, "Przystanek początkowy nie został znaleziony w grafie"
 
     frontier = {}  # (stop, route) -> [(closed, acc)] — only SETTLED states
     prev = {}  # (stop, route, acc) -> (parent_stop, parent_route, parent_acc, edge)
@@ -494,14 +517,10 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
         if iterations % 1000 == 0:
             if time.monotonic() - start_time > max_seconds:
                 _cheap_timeout_count += 1
-                result = None, "Timeout: nie znaleziono trasy w wymaganym czasie"
-                _cache_put_find(cache_key, result)
-                return result
+                return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
         if iterations >= _ASTAR_MAX_ITERATIONS:
             _cheap_timeout_count += 1
-            result = None, "Przekroczono limit iteracji A*"
-            _cache_put_find(cache_key, result)
-            return result
+            return None, "Przekroczono limit iteracji A*"
 
         if stop in end_set:
             # Close the current segment: total = closed + price(acc).
@@ -562,16 +581,14 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
                                 next_stop, next_route, parent_key))
 
     # No strictly cheaper-than-bound path found -> let the caller fall back.
-    result = None, "Nie znaleziono trasy między tymi przystankami"
-    _cache_put_find(cache_key, result)
-    return result
+    return None, "Nie znaleziono trasy między tymi przystankami"
 
 
 # ============================================================
 # Path reconstruction
 # ============================================================
 
-def reconstruct_path(prev, start_id, end_id, end_route, total_distance):
+def reconstruct_path(prev, start_id, end_id, end_route):
     """Reconstruct the path from start to end.
 
     Walks the prev map, builds segments and transfers, merges
@@ -859,9 +876,8 @@ def _build_route_result(path_with_edges):
 def _extract_shape_segment(route_id, stops):
     """Extract the portion of a route's shape between the first and last stop.
 
-    Handles both forward and reverse-direction shapes by checking which
-    end of the shape is nearer to the first stop and which to the last.
-    Returns a list of [lat, lon] pairs, or [] if no shape is found.
+    Finds the shape indices nearest to the first and the last stop and
+    returns that slice as a list of [lat, lon] pairs ([] if no shape).
     """
     shape_points = route_shapes.get(route_id)
     if not shape_points or len(stops) < 2:
@@ -882,29 +898,12 @@ def _extract_shape_segment(route_id, stops):
 
     n = len(shape_points)
 
-    # Check both directions and pick the one that gives a coherent slice.
-    # Forward:  i0 near first_stop, i1 near last_stop,  i0 < i1
-    # Reverse:  i0 near last_stop,  i1 near first_stop, i0 < i1
-    fwd_i0 = _nearest_shape_index(shape_points, f_lat, f_lon, 0, n)
-    fwd_i1 = _nearest_shape_index(shape_points, l_lat, l_lon, 0, n)
+    i0 = _nearest_shape_index(shape_points, f_lat, f_lon, 0, n)
+    i1 = _nearest_shape_index(shape_points, l_lat, l_lon, 0, n)
 
-    rev_i0 = _nearest_shape_index(shape_points, l_lat, l_lon, 0, n)
-    rev_i1 = _nearest_shape_index(shape_points, f_lat, f_lon, 0, n)
-
-    # For each candidate pair, ensure i0 < i1 (normalise)
-    if fwd_i1 < fwd_i0:
-        fwd_i0, fwd_i1 = fwd_i1, fwd_i0
-    if rev_i1 < rev_i0:
-        rev_i0, rev_i1 = rev_i1, rev_i0
-
-    # Prefer the direction that gives the longer slice (more context)
-    fwd_len = fwd_i1 - fwd_i0
-    rev_len = rev_i1 - rev_i0
-
-    if fwd_len >= rev_len:
-        i0, i1 = fwd_i0, fwd_i1
-    else:
-        i0, i1 = rev_i0, rev_i1
+    # Normalise: a slice always runs from the lower index
+    if i1 < i0:
+        i0, i1 = i1, i0
 
     if i1 - i0 < 2:
         if n >= 2:
@@ -926,6 +925,8 @@ _feed_version = ''
 # is computing a pair, concurrent identical requests wait for its result
 # instead of re-running the expensive A* (10× the same pair = 1 search).
 _route_inflight = {}
+# How long an in-flight waiter waits for the producer before recomputing.
+_INFLIGHT_MAX_WAIT_SECONDS = 60.0
 
 # Disk persistence: on shutdown the route cache is written to
 # processed/route_cache_<feed_version>.json so a restart starts warm.
@@ -966,7 +967,7 @@ def _load_route_cache():
             # JSON deserialises tuples as lists — restore the dual tuple
             # structure used in memory: ((result, error), ...) x3.
             triple = tuple(tuple(pair) for pair in triple)
-            size = len(json.dumps(triple, ensure_ascii=False))
+            size = _estimate_bytes(triple)
             if size > _ROUTE_CACHE_MAX_BYTES:
                 continue
             _route_cache[ck] = (triple, size)
@@ -1007,14 +1008,20 @@ def find_route_between_groups(from_group_id, to_group_id, mode='both'):
     # Another request is computing this exact pair — wait for its result
     # (keeps 10 concurrent identical queries down to a single A* run).
     if inflight is not None:
+        # Generous deadline: the producer's finally block always notifies,
+        # so waiting is safe; the cap only guards against a lost producer.
+        deadline = time.monotonic() + _INFLIGHT_MAX_WAIT_SECONDS
         with inflight['cond']:
             while not inflight['done']:
-                inflight['cond'].wait(timeout=30.0)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                inflight['cond'].wait(remaining)
         with _route_cache_lock:
             cached = _route_cache.get(cache_key)
         if cached is not None:
             return _slice_route_cache(cached[0], mode)
-        # timed out or lost — fall through and compute ourselves
+        # Producer lost without storing a result — fall through and compute
 
     # Register as the in-flight search for this pair (dedup for concurrent
     # identical requests), compute, then store + notify waiters.
@@ -1162,23 +1169,26 @@ def _cache_route(cache_key, triple_result, mode):
     the slice appropriate for *mode*.
 
     Memory guard: the cache is bounded BOTH by entry count and by total
-    serialized bytes — a full route result (segments, shapes, positions)
+    estimated bytes — a full route result (segments, shapes, positions)
     can reach ~100 KB, so a count-only cap could exhaust host memory.
+    Cached values are immutable by contract — never mutate a returned
+    result, it is shared with every concurrent reader of this entry.
     """
     global _route_cache_bytes
-    size = len(json.dumps(triple_result, ensure_ascii=False))
+    size = _estimate_bytes(triple_result)
     if size > _ROUTE_CACHE_MAX_BYTES:
         return _slice_route_cache(triple_result, mode)
 
-    if cache_key in _route_cache:
-        _route_cache_bytes -= _route_cache[cache_key][1]
-    _route_cache[cache_key] = (triple_result, size)
-    _route_cache_bytes += size
-    # evict oldest entries until under the byte budget
-    while _route_cache_bytes > _ROUTE_CACHE_MAX_BYTES and _route_cache:
-        oldest = next(iter(_route_cache))  # insertion-ordered dict
-        _route_cache_bytes -= _route_cache[oldest][1]
-        del _route_cache[oldest]
+    with _route_cache_lock:
+        if cache_key in _route_cache:
+            _route_cache_bytes -= _route_cache[cache_key][1]
+        _route_cache[cache_key] = (triple_result, size)
+        _route_cache_bytes += size
+        # evict oldest entries until under the byte budget
+        while _route_cache_bytes > _ROUTE_CACHE_MAX_BYTES and _route_cache:
+            oldest = next(iter(_route_cache))  # insertion-ordered dict
+            _route_cache_bytes -= _route_cache[oldest][1]
+            del _route_cache[oldest]
 
     return _slice_route_cache(triple_result, mode)
 

@@ -72,6 +72,7 @@ const STOP_COLOR = '#3498db';
 
 // Keyboard navigation state for search results
 var searchSelectedIndex = { from: -1, to: -1 };
+var searchAbortController = null;
 
 // ============================================================
 // Initialization
@@ -110,8 +111,9 @@ function restoreFromURL() {
                 setRouteMode('cheap');
             }
             updateSelectedStops();
-            // Wait a tick for stops to be fully loaded on map
-            setTimeout(function() { findRoute(); }, 100);
+            // Both stops and routes are already loaded (Promise.all above),
+            // so the route can be computed right away.
+            findRoute();
         }
     }
 }
@@ -203,14 +205,29 @@ function initMap() {
         statusEl.style.display = 'none';
     }
 
-    function updateVersionBadge() {
-        fetch('/api/status')
-            .then(r => r.json())
-            .then(s => { if (s && s.version) statusEl.textContent = 'v' + s.version; })
-            .catch(() => { /* keep last value on transient errors */ });
-    }
-    updateVersionBadge();
-    setInterval(updateVersionBadge, 60000);
+    // The app version never changes while the server runs — one fetch on
+    // page load, no polling.
+    fetch('/api/version')
+        .then(r => r.json())
+        .then(s => { if (s && s.version) statusEl.textContent = 'v' + s.version; })
+        .catch(() => { /* badge stays as '…' */ });
+
+    // Pricing panel: values live in pricing.json on the server; keep the
+    // hardcoded HTML as fallback and overwrite when the API responds.
+    const zl = n => n.toFixed(2).replace('.', ',') + ' zł';
+    fetch('/api/pricing')
+        .then(r => r.json())
+        .then(p => {
+            const set = (id, text) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = text;
+            };
+            set('price-base', `${zl(p.base_cost_regular)} / ${zl(p.base_cost_reduced)}`);
+            set('price-segment', `+${zl(p.segment_cost_regular)} / +${zl(p.segment_cost_reduced)}`);
+            set('price-max', `${zl(p.max_cost_regular)} / ${zl(p.max_cost_reduced)}`);
+            set('price-daily', `${zl(p.max_daily_cost_regular)} / ${zl(p.max_daily_cost_reduced)}`);
+        })
+        .catch(() => { /* keep static fallback values */ });
 
 }
 
@@ -254,10 +271,6 @@ function renderServerStatsPanel(s) {
 
     const f = s.find_cache || {};
     const cheap = s.cheap || {};
-    const c = s.counters || {};
-    const cpus = s.cpus || 1;
-    const load1 = s.load_avg && s.load_avg.length ? s.load_avg[0] : null;
-    const rss = s.rss_mb;
     const activePct = (s.active_requests || 0) / (s.max_concurrent || 20);
     const found = (cheap.searches || 0);
     const timeouts = cheap.timeouts || 0;
@@ -280,14 +293,7 @@ row('Aplikacja', 'Za Ile Przejadę?', null);
     row('Wersja', 'v' + (s.version || '?'), null);
     row('Uptime', fmtUptime(s.uptime_seconds || 0), null);
 
-    // Real per-process CPU use vs host load average.
-    const cpu = (typeof s.process_cpu_pct === 'number') ? s.process_cpu_pct + '% / 1 w' : 'n/d';
-    row('Obciąż CPU (app)', cpu, statColor(s.process_cpu_pct, 1, 3));
-    const loadTxt = (s.load_avg && s.load_avg.length) ? s.load_avg.join(', ') + `  (${cpus} CPU)` : 'n/d';
-    row('Śr. loadavg (1/5/15)', loadTxt, (load1 !== null) ? statColor(load1, cpus * 0.8, cpus * 1.5) : null);
-
     row('Aktywne żąd.', `${s.active_requests || 0}/${s.max_concurrent || 20}`, statColor(activePct, 0.5, 0.8));
-    row('RAM', (rss ? rss + ' MB' : 'n/d'), (rss ? statColor(rss, 300, 500) : null));
 
     row('Cache trasa', `${f.route_entries || 0}/${f.route_max || '?'}`, null);
     const findMb = ((f.find_bytes || 0) / 1048576).toFixed(1);
@@ -296,8 +302,6 @@ row('Aplikacja', 'Za Ile Przejadę?', null);
         ((f.find_bytes || 0) / (f.find_max_bytes || 1)), 0.6, 0.9));
     row('Tanie wyszukiwań', `${found}`, null);
     row('  timeouty', `${timeouts}  (${(timeoutPct * 100).toFixed(0)}%)`, statColor(timeoutPct, 0.25, 0.6));
-    row('API total', `${c.api_total || 0}`, null);
-    row('Odrzucone 429/503', `${c.rate_limited || 0}/${c.blocked || 0}`, (c.blocked ? '#e74c3c' : null));
 
     // Small legend for the colour levels.
     const legend = document.createElement('div');
@@ -810,8 +814,15 @@ function handleSearch(input, resultsId, field) {
 
     clearTimeout(state.searchTimeout);
     state.searchTimeout = setTimeout(async function() {
+        // Abort the previous in-flight search so a slow response for an
+        // outdated query can never overwrite results of the current one.
+        if (searchAbortController) {
+            searchAbortController.abort();
+        }
+        searchAbortController = new AbortController();
         try {
-            const response = await fetch(`/api/stops/search?q=${encodeURIComponent(query)}`);
+            const response = await fetch(`/api/stops/search?q=${encodeURIComponent(query)}`,
+                { signal: searchAbortController.signal });
             const results = await response.json();
 
             resultsEl.innerHTML = '';
@@ -832,7 +843,7 @@ function handleSearch(input, resultsId, field) {
                         <div class="name">${escapeHtml(group.name)}</div>
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <span class="code">${modeLabels}</span>
-                            <span class="mode" style="background: ${STOP_COLOR}; color: white;">${group.modes.join('/').toUpperCase()}</span>
+                            <span class="mode" style="background: ${STOP_COLOR}; color: white;">${escapeHtml(group.modes.join('/').toUpperCase())}</span>
                         </div>
                     `;
                     item.addEventListener('click', function() {
@@ -856,6 +867,7 @@ function handleSearch(input, resultsId, field) {
                 searchSelectedIndex[field] = 0;
             }
         } catch (error) {
+            if (error && error.name === 'AbortError') return; // superseded by a newer query
             console.error('Search error:', error);
         }
     }, 300);

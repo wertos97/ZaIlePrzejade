@@ -126,6 +126,7 @@ PORT=3000 python server.py
 | `GET /api/stop-platforms?id=<group_id>` | Platformy przystanku |
 | `GET /api/find-route?from=<id>&to=<id>&mode=<short\|convenient>` | Znajdź trasę |
 | `GET /api/cost?distance=<km>` | Oblicz koszt dla dystansu |
+| `GET /api/pricing` | Parametry cennika (z `pricing.json`) |
 | `GET /api/shapes?route_id=<id>` | Kształt linii |
 | `GET /api/routes` | Wszystkie linie |
 | `GET /api/stop?id=<id>` | Informacje o przystanku |
@@ -186,7 +187,8 @@ Dostępne zmienne (wszystkie opcjonalne):
 | `HEALTH_URL` | `http://127.0.0.1:$PORT/api/health` | URL do sprawdzania zdrowia |
 | `GIT_BRANCH` | bieżąca | Gałąź git do śledzenia |
 | `RUN_IN_BACKGROUND` | `true` | Czy uruchamiać serwer w tle |
-| `TRUST_PROXY_HEADERS` | `true` | Ufać nagłówkom `X-Real-IP`/`X-Forwarded-For`; ustaw `false` przy braku reverse proxy |
+| `TRUST_PROXY_HEADERS` | `false` | Ufać nagłówkom `X-Real-IP`/`X-Forwarded-For`; włącz **tylko** za reverse proxy, które nadpisuje te nagłówki |
+| `PUBLIC_BASE_URL` | `https://zaileprzeja.de` | Kanoniczny publiczny adres (meta OG, OG images) |
 | `FIND_CACHE_MAX_BYTES` | `20971520` | Limit rozmiaru cache wyszukiwań (bajty) |
 | `ROUTE_CACHE_MAX_BYTES` | `25165824` | Limit rozmiaru cache tras (bajty) |
 | `LOG_LEVEL` | `INFO` | Poziom logowania (`LOG_FILE` — opcjonalna ścieżka pliku) |

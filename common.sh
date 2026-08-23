@@ -69,18 +69,29 @@ wait_for_health() {
 
 # --- Zatrzymanie serwera ---
 stop_server() {
-    # Zwolnij port TCP (|| true - fuser zwraca 1 gdy port jest wolny)
-    fuser -k -9 "$PORT/tcp" >/dev/null 2>&1 || true
-    # Zatrzymaj procesy Pythona uruchamiające server.py,
-    # ale NIE zabijaj samego skryptu (autoupdate.sh/restart.sh),
-    # których ścieżka też zawiera "server.py"
+    # Najpierw SIGTERM: serwer zapisuje cache tras przy wyjściu (atexit),
+    # więc graceful shutdown pozwala zachować rozgrzany cache.
     local SELF_PID=$$
+    local PIDS
+    PIDS=$(pgrep -f "python3.*server\.py" 2>/dev/null || true)
+    for pid in $PIDS; do
+        if [ "$pid" != "$SELF_PID" ]; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+    # Daj serwerowi 5s na zapisanie stanu...
+    local WAIT=5
+    while [ $WAIT -gt 0 ] && pgrep -f "python3.*server\.py" >/dev/null 2>&1; do
+        sleep 1
+        WAIT=$((WAIT - 1))
+    done
+    # ...potem twardo zwolnij port i procesy (SIGKILL).
+    fuser -k -9 "$PORT/tcp" >/dev/null 2>&1 || true
     for pid in $(pgrep -f "python3.*server\.py" 2>/dev/null || true); do
         if [ "$pid" != "$SELF_PID" ]; then
             kill -9 "$pid" 2>/dev/null || true
         fi
     done
-    sleep 2
 }
 
 # --- Uruchomienie serwera ---
@@ -127,14 +138,16 @@ restart_server() {
     rotate_logs "$SCRIPT_DIR/server.log"
     rotate_logs "$SCRIPT_DIR/autoupdate.log"
     start_server
-    sleep 2
-    if pgrep -f "server.py" > /dev/null; then
-        log "🚀 Proces server.py został uruchomiony."
+    if wait_for_health; then
+        log "🚀 Serwer uruchomiony i zdrowy ($HEALTH_URL)."
         return 0
+    fi
+    if pgrep -f "python3.*server\.py" > /dev/null; then
+        log "⚠️ Proces server.py działa, ale /api/health nie odpowiada."
     else
         log "❌ Próba uruchomienia serwera nie powiodła się."
-        return 1
     fi
+    return 1
 }
 
 # --- Weryfikacja spójności danych ---
