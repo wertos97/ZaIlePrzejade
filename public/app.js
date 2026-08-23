@@ -264,58 +264,85 @@ function renderServerStatsPanel(s) {
     const mapEl = document.getElementById('map');
     const panel = document.createElement('div');
     panel.id = 'server-stats-panel';
-    panel.style.cssText = 'position: absolute; top: 10px; right: 10px; z-index: 1100; '
-        + 'width: 268px; background: rgba(255,255,255,0.95); border: 1px solid #c8d8e8; '
-        + 'border-radius: 6px; padding: 8px 12px; font-size: 12px; font-family: monospace; '
-        + 'box-shadow: 0 2px 8px rgba(0,0,0,0.25); white-space: nowrap;';
+    // Responsive: never wider than the map minus a small margin.
+    panel.style.cssText = 'position:absolute; top:10px; right:10px; z-index:1100; '
+        + 'width:min(320px, calc(100% - 20px)); box-sizing:border-box; '
+        + 'background:rgba(255,255,255,0.97); border:1px solid #c8d8e8; border-radius:6px; '
+        + 'padding:10px 12px; font-size:12px; font-family:monospace; '
+        + 'box-shadow:0 2px 8px rgba(0,0,0,0.25);';
 
     const f = s.find_cache || {};
     const cheap = s.cheap || {};
-    const activePct = (s.active_requests || 0) / (s.max_concurrent || 20);
-    const found = (cheap.searches || 0);
+    const maxConc = s.max_concurrent || 20;
+    const activePct = (s.active_requests || 0) / maxConc;
+    const found = cheap.searches || 0;
     const timeouts = cheap.timeouts || 0;
     const timeoutPct = found ? timeouts / found : 0;
+    const findBytes = f.find_bytes || 0;
+    const findMaxBytes = f.find_max_bytes || 1;
 
-    const rows = document.createElement('div');
-    function row(label, value, color) {
+    // Header: title + close button
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;';
+    const title = document.createElement('b');
+    title.textContent = 'Statystyki serwera';
+    const close = document.createElement('button');
+    close.textContent = '✕';
+    close.title = 'Zamknij panel';
+    close.style.cssText = 'border:none; background:transparent; color:#888; cursor:pointer; font-size:13px; padding:0 2px;';
+    close.addEventListener('click', closeServerPanel);
+    header.appendChild(title);
+    header.appendChild(close);
+    panel.appendChild(header);
+
+    // Rows: label left, value right; hover shows the tooltip (title attr).
+    function row(label, value, color, tooltip) {
         const r = document.createElement('div');
+        r.style.cssText = 'display:flex; justify-content:space-between; gap:12px; padding:2px 0;';
+        if (tooltip) {
+            r.title = tooltip;
+            r.style.cursor = 'help';
+        }
         const l = document.createElement('span');
-        l.style.cssText = 'color:#6b6b6b; display:inline-block; width:150px;';
         l.textContent = label;
+        l.style.cssText = 'color:#6b6b6b; flex:none;';
         const v = document.createElement('span');
-        if (color) v.style.color = color;
         v.textContent = value;
+        v.style.textAlign = 'right';
+        if (color) v.style.color = color;
         r.appendChild(l); r.appendChild(v);
-        rows.appendChild(r);
+        panel.appendChild(r);
     }
 
-row('Aplikacja', 'Za Ile Przejadę?', null);
-    row('Wersja', 'v' + (s.version || '?'), null);
-    row('Uptime', fmtUptime(s.uptime_seconds || 0), null);
+    const findMb = (findBytes / 1048576).toFixed(1);
+    const findMaxMb = (findMaxBytes / 1048576).toFixed(0);
 
-    row('Aktywne żąd.', `${s.active_requests || 0}/${s.max_concurrent || 20}`, statColor(activePct, 0.5, 0.8));
-
-    row('Cache trasa', `${f.route_entries || 0}/${f.route_max || '?'}`, null);
-    const findMb = ((f.find_bytes || 0) / 1048576).toFixed(1);
-    const findMaxMb = ((f.find_max_bytes || 0) / 1048576).toFixed(0);
-    row('Cache wyszukiwań', `${f.find_entries || 0}  (${findMb}MB/${findMaxMb}MB)`, statColor(
-        ((f.find_bytes || 0) / (f.find_max_bytes || 1)), 0.6, 0.9));
-    row('Tanie wyszukiwań', `${found}`, null);
-    row('  timeouty', `${timeouts}  (${(timeoutPct * 100).toFixed(0)}%)`, statColor(timeoutPct, 0.25, 0.6));
+    row('Wersja', 'v' + (s.version || '?'), null,
+        'Wersja aplikacji.');
+    row('Uptime', fmtUptime(s.uptime_seconds || 0), null,
+        'Jak długo serwer działa bez restartu.');
+    row('Aktywne żądania', `${s.active_requests || 0} / ${maxConc}`, statColor(activePct, 0.5, 0.8),
+        'Żądania HTTP obsługiwane w tej chwili względem limitu współbieżności. '
+        + 'Żądanie zajmuje slot tylko na czas odpowiedzi — nie jest to liczba osób na stronie.');
+    row('Cache tras', `${f.route_entries || 0} / ${f.route_max || '?'}`, null,
+        'Gotowe, wyliczone trasy trzymane w pamięci (limit wpisów). '
+        + 'Powtórne zapytanie o tę samą parę przystanków zwraca wynik natychmiast.');
+    row('Cache wyszukiwań', `${f.find_entries || 0}  (${findMb}/${findMaxMb} MB)`,
+        statColor(findBytes / findMaxBytes, 0.6, 0.9),
+        'Wyniki A* między konkretnymi peronami oraz rozmiar pamięci zajmowanej '
+        + 'przez ten cache względem budżetu. Przekroczenie budżetu usuwa najstarsze wpisy.');
+    row('Szukania najtańsze', `${found}`, null,
+        'Ile razy uruchomiono algorytm najtańszej trasy (Pareto A*) od startu serwera.');
+    row('— timeouty', `${timeouts} (${(timeoutPct * 100).toFixed(0)}%)`, statColor(timeoutPct, 0.25, 0.6),
+        'Ile szukań najtańszej trasy przekroczyło limit czasu. W takim wypadku '
+        + 'aplikacja pokazuje trasę najkrótszą jako zastępczą.');
 
     // Small legend for the colour levels.
     const legend = document.createElement('div');
     legend.style.cssText = 'margin-top:6px; font-size:10px; color:#999;';
     legend.innerHTML = '<span style="color:#27ae60">●</span> ok &nbsp;<span style="color:#f39c12">●</span> busy &nbsp;<span style="color:#e74c3c">●</span> high';
-
-    const close = document.createElement('button');
-    close.textContent = '✕';
-    close.style.cssText = 'position:absolute; top:4px; right:6px; border:none; background:transparent; color:#888; cursor:pointer; font-size:13px;';
-    close.addEventListener('click', closeServerPanel);
-
-    panel.appendChild(rows);
     panel.appendChild(legend);
-    panel.appendChild(close);
+
     mapEl.appendChild(panel);
 }
 

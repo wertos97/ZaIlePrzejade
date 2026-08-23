@@ -85,9 +85,13 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
             raise
 
     def process_request_thread(self, request, client_address):
-        """Run the request in a thread; the active counter was already
-        incremented (under lock) by process_request."""
-        super().process_request_thread(request, client_address)
+        """Run the request in a thread, decrementing the active counter
+        (incremented under lock by process_request) when handling ends."""
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            with self._active_lock:
+                self._active_requests -= 1
 
 
 # ============================================================

@@ -67,7 +67,11 @@ sync_with_git() {
     done
 
     # Zresetuj do stanu zdalnego
-    git -C "$SCRIPT_DIR" reset --hard "origin/$GIT_BRANCH" >> "$LOG_FILE" 2>&1
+    git -C "$SCRIPT_DIR" reset --hard "origin/$GIT_BRANCH" >> "$LOG_FILE" 2>&1 || {
+        log "❌ Błąd podczas git reset."
+        rm -rf "$BACKUP_DIR"
+        return 1
+    }
 
     # Wyczyść nieśledzone pliki, ale zachowaj katalogi lokalne i chronione pliki
     git -C "$SCRIPT_DIR" clean -fd \
@@ -86,7 +90,7 @@ sync_with_git() {
         --exclude='preview-logo.sh' \
         --exclude='.gitignore' \
         --exclude='README.md' \
-        >> "$LOG_FILE" 2>&1
+        >> "$LOG_FILE" 2>&1 || true
 
     # --- Przywróć chronione pliki z backupu ---
     if [ "$backed_up" = true ]; then
@@ -112,7 +116,7 @@ REASON=""
 # 1. Sprawdź czy są nowe commity na GitHubie
 if [ -d "$SCRIPT_DIR/.git" ]; then
     git -C "$SCRIPT_DIR" fetch origin "$GIT_BRANCH" > /dev/null 2>&1 || true
-    LOCAL_HASH=$(git -C "$SCRIPT_DIR" rev-parse HEAD)
+    LOCAL_HASH=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "unavailable")
     REMOTE_HASH=$(git -C "$SCRIPT_DIR" rev-parse "origin/$GIT_BRANCH" 2>/dev/null || echo "$LOCAL_HASH")
 
     if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
@@ -122,8 +126,13 @@ if [ -d "$SCRIPT_DIR/.git" ]; then
 fi
 
 # 2. Weryfikacja spójności danych
-INTEGRITY_ERR=$(get_data_integrity_status)
-INTEGRITY_RET=$?
+# (jawnie przechwytujemy kod wyjścia — przy `set -e` przypisanie z
+# nieudaną substytucją komendy ubiłoby skrypt zamiast uruchomić naprawę)
+INTEGRITY_RET=0
+INTEGRITY_ERR=""
+if ! INTEGRITY_ERR=$(get_data_integrity_status); then
+    INTEGRITY_RET=1
+fi
 
 # 3. Sprawdzenie zdrowia serwera
 SERVER_HEALTHY=false
@@ -138,9 +147,10 @@ elif [ "$UPDATED" = false ] && [ "$SERVER_HEALTHY" = false ]; then
     REASON="Serwer nie odpowiada na $HEALTH_URL."
 fi
 
-# 5. Jeśli wszystko OK i brak zmian -> wyjdź cicho
+# 5. Jeśli wszystko OK i brak zmian -> wyjdź CICHO.
+# Cron odpala ten skrypt co 2 minuty, więc sukces nie może zaśmiecać loga —
+# zapisujemy wyłącznie problemy i podjęte akcje.
 if [ "$UPDATED" = false ] && [ $INTEGRITY_RET -eq 0 ] && [ "$SERVER_HEALTHY" = true ]; then
-    log "ℹ️ Status: OK. Serwer odpowiada na /api/health (200 OK), brak nowych aktualizacji."
     exit 0
 fi
 
