@@ -2,13 +2,13 @@
 
 Żeby lepiej zrozumieć o co chodzi i dlaczego taki kalkulator powstał:
 
-Biletami w krakowskiej komunikacji miejskiej zarządza **ZTP (Zarząd Transportu Publicznego)**, a MPK S.A. jest jednym z przewoźników. Zgodnie z oficjalnym komunikatem ([źródło](https://www.facebook.com/photo/?fbid=1445327380951786&set=a.612767970874402)):
+Zgodnie z oficjalnym komunikatem ([źródło](https://www.facebook.com/photo/?fbid=1445327380951786&set=a.612767970874402)):
 
-> Od przyszłego roku bilety komunikacji miejskiej w Krakowie będziemy liczyć na odległość.
+Od przyszłego roku bilety komunikacji miejskiej w Krakowie będziemy liczyć na odległość.
 
 ## Jak to będzie działać?
 
-Generalnie to "się okaze", ale...
+Według mojej interpretacji:
 
 👉 **Płacisz za to, ile kilometrów faktycznie przejedziesz.** Nie za czas, nie za liczbę przystanków — tylko za dystans.
 
