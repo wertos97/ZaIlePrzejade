@@ -13,7 +13,9 @@ function escapeHtml(text) {
 }
 
 function createElementFromHtml(html) {
-    // Parse as DOM and strip scripts and event handlers before insertion
+    // Parse as DOM and strip scripts and event handlers before insertion.
+    // Returns a single wrapper div holding ALL top-level elements —
+    // firstElementChild would silently drop everything after the first one.
     const template = document.createElement('template');
     template.innerHTML = html;
     const scripts = template.content.querySelectorAll('script');
@@ -29,7 +31,9 @@ function createElementFromHtml(html) {
             }
         }
     });
-    return template.content.firstElementChild;
+    const wrapper = document.createElement('div');
+    wrapper.appendChild(template.content);
+    return wrapper;
 }
 
 // ============================================================
@@ -615,11 +619,23 @@ function openShareModal() {
     // Set the link input
     document.getElementById('share-link').value = shareUrl;
 
-    // Set the OG image preview (dynamic)
+    // Set the OG image preview (dynamic). Generation can take a few seconds
+    // (server-side A* + SVG), so show a spinner until the image arrives.
     var ogImageUrl = '/api/og-image?from=' + encodeURIComponent(state.fromStop.id) +
         '&to=' + encodeURIComponent(state.toStop.id) +
         '&mode=' + encodeURIComponent(state.routeMode);
-    document.getElementById('share-og-image').src = ogImageUrl;
+    var ogImage = document.getElementById('share-og-image');
+    var ogLoading = document.getElementById('share-og-loading');
+    ogImage.style.display = 'none';
+    ogLoading.style.display = 'flex';
+    ogImage.onload = function() {
+        ogLoading.style.display = 'none';
+        ogImage.style.display = 'block';
+    };
+    ogImage.onerror = function() {
+        ogLoading.innerHTML = '<span class="loading-text">Nie udało się wygenerować podglądu.</span>';
+    };
+    ogImage.src = ogImageUrl;
 
     // Show the modal
     document.getElementById('share-overlay').style.display = 'block';

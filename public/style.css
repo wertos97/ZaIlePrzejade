@@ -582,6 +582,16 @@ body {
     height: auto;
 }
 
+/* Spinner pokazywany dopóki generuje się podgląd OG (/api/og-image). */
+.share-og-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 40px 16px;
+    min-height: 120px;
+}
+
 .share-link-box {
     display: flex;
     align-items: center;
