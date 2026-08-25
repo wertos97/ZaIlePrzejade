@@ -1,7 +1,6 @@
 """Unit tests for server.pathfinding module."""
 
 import unittest
-import math
 import sys
 import os
 
@@ -58,7 +57,7 @@ class TestPathfindingIntegration(unittest.TestCase):
     def setUpClass(cls):
         """Load real data once for all tests."""
         from server.data import adjacency, stops_by_id, stops_grouped, stop_to_group, routes_by_id, route_shapes
-        from server.pathfinding import init_pathfinding, find_shortest_path, find_route_between_groups
+        from server.pathfinding import init_pathfinding
 
         init_pathfinding(adjacency, stops_by_id, stops_grouped, stop_to_group, routes_by_id, route_shapes)
         # Store module references directly

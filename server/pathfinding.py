@@ -25,6 +25,7 @@ from .config import (
     ASTAR_TIMEOUT_SECONDS as _ASTAR_TIMEOUT_SECONDS,
     CHEAP_SEARCH_CONCURRENCY,
     CHEAP_SEARCH_MAX_SECONDS,
+    CONVENIENT_BOARDING_PENALTY_ZL as _BOARDING_PENALTY,
     FIND_CACHE_MAX_BYTES as _FIND_CACHE_MAX_BYTES,
     MAX_PLATFORMS_TO_TRY_PER_GROUP as _MAX_PLATFORMS_TO_TRY,
     PRICE_LOOKUP_MAX_KM,
@@ -89,6 +90,10 @@ def init_pathfinding(adj, stops_by_id_ref, stops_grouped_ref,
     loaded = _load_route_cache()
     atexit.register(_save_route_cache)
 
+    global _route_cache_disk_loaded
+    with _route_cache_lock:
+        _route_cache_disk_loaded = len(_route_cache)
+
     def _flush_loop():
         last_sig = None
         last_count = 0
@@ -141,18 +146,6 @@ def haversine_km(lat1, lon1, lat2, lon2):
     dlat = (lat1 - lat2) * 111.32
     dlon = (lon1 - lon2) * 111.32 * math.cos((lat1 + lat2) / 2 * math.pi / 180)
     return math.sqrt(dlat * dlat + dlon * dlon)
-
-
-def _nearest_shape_index(shape_points, lat, lon, start_idx, end_idx):
-    """Find the index in shape_points (within [start_idx, end_idx]) closest to (lat, lon)."""
-    best_idx = start_idx
-    best_dist = float('inf')
-    for i in range(start_idx, end_idx):
-        d = haversine_km(shape_points[i][0], shape_points[i][1], lat, lon)
-        if d < best_dist:
-            best_dist = d
-            best_idx = i
-    return best_idx
 
 
 # ============================================================
@@ -374,6 +367,9 @@ def _dominates(closed_a, acc_a, closed_b, acc_b):
     return closed_a <= closed_b + 1e-9 and acc_a <= acc_b + 1e-9
 
 
+_cheap_heuristic_cache: dict = {}
+
+
 def _cheap_heuristic(acc, remaining_km):
     """Admissible lower bound on the remaining fare.
 
@@ -381,22 +377,33 @@ def _cheap_heuristic(acc, remaining_km):
     cheapest way is to continue the current segment for x km and pay for the
     rest with new segments: price(acc+x) - price(acc) + price(remaining-x).
     Minimised over x at price breakpoints -> exact lower bound.
+
+    Memoised: the search calls this on every edge relaxation. `remaining_km`
+    is floored to 0.25 km buckets — flooring keeps the bound admissible
+    (computed on a shorter distance), bucketing keeps the cache small.
     """
     if remaining_km <= 0:
         return 0.0
-    xs = {0.0, remaining_km}
+    key = (round(acc, 2), math.floor(remaining_km * 4) / 4)
+    cached = _cheap_heuristic_cache.get(key)
+    if cached is not None:
+        return cached
+
+    remaining = key[1]
+    xs = {0.0, remaining}
     for b in _PRICE_BOUNDS:
         xs.add(b - acc)
-        xs.add(remaining_km - b)
-    xs = sorted(x for x in xs if x >= 0 and x <= remaining_km)
+        xs.add(remaining - b)
+    xs = sorted(x for x in xs if 0 <= x <= remaining)
     best = float('inf')
     # step function: check jump points AND segment midpoints (min may lie
     # strictly between jumps)
     for i in range(len(xs) - 1):
         for x in (xs[i], (xs[i] + xs[i + 1]) / 2):
             cost = (_ticket_price(acc + x) - _ticket_price(acc)
-                    + _ticket_price(remaining_km - x))
+                    + _ticket_price(remaining - x))
             best = min(best, cost)
+    _cheap_heuristic_cache[key] = best
     return best
 
 
@@ -438,18 +445,126 @@ def find_cheapest_path(start_ids, end_ids, upper_bound=float('inf')):
         _CHEAP_SEARCH_GATE.release()
 
 
+def _find_greedy_route(start_ids, end_ids, boarding_penalty_zl=0.0,
+                       max_seconds=2.0):
+    """Fast approximate route search: plain A* over (stop, route) states —
+    no Pareto dominance sets, so it runs in milliseconds even on long
+    multi-segment trips.
+
+    Cost = fare (closed + current ticket) + boarding_penalty_zl per boarding.
+    With penalty 0 this is the cheapest-route helper; with penalty > 0 it
+    balances fare against the number of rides ("convenient" route).
+
+    Returns (result_dict, fare) or (None, None).
+    """
+    end_set = set(end_ids)
+    end_coords = stop_coords.get(end_ids[0], (0, 0))
+
+    pq = []
+    seq = 0
+    for start_id in start_ids:
+        if start_id not in adjacency:
+            continue
+        sc = stop_coords.get(start_id, (0, 0))
+        h = _cheap_heuristic(
+            0.0, haversine_km(sc[0], sc[1], end_coords[0], end_coords[1]))
+        heapq.heappush(pq, (h, 0.0, 0.0, 0, seq, start_id, None))
+        seq += 1
+    if not pq:
+        return None, None
+
+    best = {}
+    prev = {}
+    start_time = time.monotonic()
+    pops = 0
+
+    while pq:
+        pops += 1
+        if _check_cancelled():
+            return None, None
+        # The greedy pass must stay fast — it's a helper, not the product.
+        if pops % 512 == 0 and time.monotonic() - start_time > max_seconds:
+            return None, None
+
+        _, closed, acc, boardings, _, stop, route = heapq.heappop(pq)
+        state = (stop, route)
+        if closed > best.get(state, float('inf')) + 1e-9:
+            continue
+
+        if stop in end_set:
+            path_with_edges = []
+            current = state
+            while current in prev:
+                prev_stop, prev_route, edge = prev[current]
+                path_with_edges.append((current[0], current[1], edge))
+                current = (prev_stop, prev_route)
+            path_with_edges.append((current[0], None, None))
+            path_with_edges.reverse()
+            return _build_route_result(path_with_edges), closed + _ticket_price(acc)
+
+        for edge in adjacency.get(stop, []):
+            next_stop = edge['to']
+            next_route = edge['route_id']
+            dist = edge['distance']
+
+            if next_route == 'transfer':
+                # Walking transfer: close the ticket, no boarding.
+                new_closed = closed + _ticket_price(acc)
+                new_acc = 0.0
+                new_boardings = boardings
+            elif route is None or route == 'transfer' or next_route != route:
+                # Boarding a vehicle (first ride or route change).
+                new_closed = closed + _ticket_price(acc)
+                new_acc = dist
+                new_boardings = boardings + 1
+            else:
+                new_closed = closed
+                new_acc = acc + dist
+                new_boardings = boardings
+
+            new_acc = min(new_acc, _ACC_CAP)
+            new_acc = round(new_acc * 20) / 20
+            g = (new_closed + _ticket_price(new_acc)
+                 + boarding_penalty_zl * new_boardings)
+            nxt = (next_stop, next_route)
+            if g < best.get(nxt, float('inf')) - 1e-9:
+                best[nxt] = g
+                prev[nxt] = (stop, route, edge)
+                coords = stop_coords.get(next_stop, (0, 0))
+                # Fare-only heuristic is admissible for the penalised cost:
+                # it lower-bounds the fare component, boardings add on top.
+                h = _cheap_heuristic(
+                    new_acc, haversine_km(coords[0], coords[1],
+                                          end_coords[0], end_coords[1]))
+                seq += 1
+                heapq.heappush(pq, (g + h, new_closed, new_acc, new_boardings,
+                                    seq, next_stop, next_route))
+
+    return None, None
+
+
 def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
                               max_seconds=CHEAP_SEARCH_MAX_SECONDS):
     """Body of find_cheapest_path, executed under the CPU gate.
 
-    max_seconds caps the wall time: beyond that the search gives up with a
-    "not found" so the caller falls back to the short route. The full 30 s
-    budget is only useful for pathological pairs; most fares are found in
-    < 5 s and the cap keeps the UI responsive during bursts.
+    Two phases:
+      1. greedy pass (_find_greedy_route, penalty=0) — near-optimal fare in
+         milliseconds; tightens upper_bound and acts as the fallback,
+      2. exact Pareto A* with the tightened bound.
+
+    max_seconds caps the wall time of the exact phase: beyond that the
+    greedy result (if any) is returned, so the user still gets a cheap
+    route. Only without any greedy result does the caller fall back to
+    the short route.
     """
     global _cheap_timeout_count
     end_set = set(end_ids)
     end_coords = stop_coords.get(end_ids[0], (0, 0))
+
+    # Phase 1: greedy — bound tightening + timeout fallback
+    greedy, greedy_fare = _find_greedy_route(start_ids, end_ids)
+    if greedy_fare is not None:
+        upper_bound = min(upper_bound, greedy_fare)
 
     # pq entries: (f, closed, acc, seq, stop, route, parent_key)
     pq = []
@@ -513,13 +628,21 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
         iterations += 1
 
         # Timeout / iteration limits: hard wall-clock cap keeps the UI
-        # responsive (caller falls back to the short route).
+        # responsive; the greedy route (if found) is served instead.
         if iterations % 1000 == 0:
             if time.monotonic() - start_time > max_seconds:
                 _cheap_timeout_count += 1
+                if greedy is not None:
+                    result = greedy, None
+                    _cache_put_find(cache_key, result)
+                    return result
                 return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
         if iterations >= _ASTAR_MAX_ITERATIONS:
             _cheap_timeout_count += 1
+            if greedy is not None:
+                result = greedy, None
+                _cache_put_find(cache_key, result)
+                return result
             return None, "Przekroczono limit iteracji A*"
 
         if stop in end_set:
@@ -874,40 +997,65 @@ def _build_route_result(path_with_edges):
 # ============================================================
 
 def _extract_shape_segment(route_id, stops):
-    """Extract the portion of a route's shape between the first and last stop.
+    """Extract the portion of a route's shape that the segment travels.
 
-    Finds the shape indices nearest to the first and the last stop and
-    returns that slice as a list of [lat, lon] pairs ([] if no shape).
+    Walks the shape monotonically through ALL stops of the segment. Matching
+    only the endpoints independently breaks on loop lines (e.g. 240): the
+    shape passes the same area twice, so a stop can latch onto the wrong pass
+    and the slice ends up covering the entire loop.
+
+    Both shape directions are tried (GTFS shapes may run opposite to travel)
+    and the tighter slice wins. Returns [[lat, lon], ...] or [].
     """
     shape_points = route_shapes.get(route_id)
     if not shape_points or len(stops) < 2:
         return []
 
-    first_id = stops[0]
-    last_id = stops[-1]
-    first_stop = stops_by_id.get(first_id, {})
-    last_stop = stops_by_id.get(last_id, {})
-    if not first_stop or not last_stop:
-        return []
-    f_lat = first_stop.get('lat')
-    f_lon = first_stop.get('lon')
-    l_lat = last_stop.get('lat')
-    l_lon = last_stop.get('lon')
-    if f_lat is None or l_lat is None:
-        return []
+    coords = []
+    for sid in stops:
+        s = stops_by_id.get(sid, {})
+        lat, lon = s.get('lat'), s.get('lon')
+        if lat is None or lon is None:
+            return []
+        coords.append((lat, lon))
 
     n = len(shape_points)
 
-    i0 = _nearest_shape_index(shape_points, f_lat, f_lon, 0, n)
-    i1 = _nearest_shape_index(shape_points, l_lat, l_lon, 0, n)
+    def walk(index_seq):
+        """Match each stop to a shape index, moving monotonically forward
+        through index_seq (never backwards — that's what prevents loop lines
+        from collapsing the slice onto the wrong pass). Returns
+        (matched_indices, total_match_distance_km)."""
+        seq = list(index_seq)
+        matched = []
+        total_d = 0.0
+        pos = 0
+        for lat, lon in coords:
+            best_j, best_d = None, float('inf')
+            for j in range(pos, len(seq)):
+                p = shape_points[seq[j]]
+                d = haversine_km(p[0], p[1], lat, lon)
+                if d < best_d:
+                    best_d, best_j = d, j
+            if best_j is None:
+                best_j = pos  # sequence exhausted — pin to last position
+                best_d = haversine_km(shape_points[seq[pos]][0],
+                                      shape_points[seq[pos]][1], lat, lon)
+            matched.append(seq[best_j])
+            total_d += best_d
+            pos = best_j
+        return matched, total_d
 
-    # Normalise: a slice always runs from the lower index
-    if i1 < i0:
-        i0, i1 = i1, i0
+    forward, fwd_d = walk(range(n))
+    backward, bwd_d = walk(range(n - 1, -1, -1))
 
-    if i1 - i0 < 2:
-        if n >= 2:
-            return [list(p) for p in shape_points]
+    # The correct direction matches every stop closely; the wrong one ends up
+    # pinning later stops to a distant shape point (large match distance).
+    seq = forward if fwd_d <= bwd_d else backward
+    i0, i1 = min(seq[0], seq[-1]), max(seq[0], seq[-1])
+    if i1 <= i0:
+        # Both ends matched the same shape point — too short to draw;
+        # the frontend falls back to a straight line between the stops.
         return []
 
     return [list(p) for p in shape_points[i0:i1 + 1]]
@@ -921,6 +1069,11 @@ _route_cache: dict = {}
 _route_cache_bytes = 0
 _route_cache_lock = threading.Lock()
 _feed_version = ''
+# Number of entries restored from the disk cache at startup (metrics only).
+_route_cache_disk_loaded = 0
+# Entries computed fresh (not loaded from disk) during this server run.
+# Cumulative — eviction may later remove some of them from the cache.
+_route_cache_computed = 0
 # In-flight searches, keyed by (from_group_id, to_group_id): while a request
 # is computing a pair, concurrent identical requests wait for its result
 # instead of re-running the expensive A* (10× the same pair = 1 search).
@@ -932,11 +1085,16 @@ _INFLIGHT_MAX_WAIT_SECONDS = 60.0
 # processed/route_cache_<feed_version>.json so a restart starts warm.
 _CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           'processed')
+# Bump when the computed result format/geometry changes — old disk caches
+# become unreadable under a new name and stale entries never leak back in
+# (e.g. v2: fixed loop-line shape slicing in _extract_shape_segment;
+#  v3: convenient = dedicated fare+transfers balance search).
+_CACHE_ALGO_VERSION = 'v3'
 
 
 def _cache_file_path():
     ver = str(_feed_version) if _feed_version else 'unknown'
-    return os.path.join(_CACHE_DIR, f'route_cache_{ver}.json')
+    return os.path.join(_CACHE_DIR, f'route_cache_{ver}_{_CACHE_ALGO_VERSION}.json')
 
 
 def _save_route_cache():
@@ -948,6 +1106,7 @@ def _save_route_cache():
                     for k, v in _route_cache.items()}
         with open(_cache_file_path(), 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False)
+        _cleanup_stale_cache_files()
     except Exception:
         pass
 
@@ -976,7 +1135,20 @@ def _load_route_cache():
             oldest = next(iter(_route_cache))
             _route_cache_bytes -= _route_cache[oldest][1]
             del _route_cache[oldest]
+    _cleanup_stale_cache_files()
     return len(data)
+
+
+def _cleanup_stale_cache_files():
+    """Remove route-cache files from older feed versions / algo versions."""
+    try:
+        current = os.path.basename(_cache_file_path())
+        for name in os.listdir(_CACHE_DIR):
+            if name.startswith('route_cache_') and name.endswith('.json') \
+                    and name != current:
+                os.remove(os.path.join(_CACHE_DIR, name))
+    except OSError:
+        pass  # best-effort — stale files are harmless
 
 def find_route_between_groups(from_group_id, to_group_id, mode='both'):
     """Find the best route between two stop groups.
@@ -1093,19 +1265,38 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
 
     for from_platform in from_platforms:
         for to_platform in to_platforms:
-            # Distance-based search (feeds short + convenient)
+            # Distance-based search (feeds short)
             result, error = find_shortest_path(
                 from_platform['id'], to_platform['id'])
 
             if result is not None:
-                n_transfers = len(result.get('transfers', []))
                 dist = result.get('total_distance', float('inf'))
 
                 # Update short (minimum distance)
                 if best_short is None or dist < best_short['total_distance']:
                     best_short = result
+            elif last_error is None:
+                last_error = error
 
-                # Update convenient (fewest transfers, then shortest distance)
+    # Convenient: dedicated fare+transfers balance search (multi-source over
+    # all platform pairs). Cost = fare + penalty per boarding, so it prefers
+    # few rides but won't ignore a much pricier detour — a route people
+    # would actually take. The distance-based candidates above are the
+    # fallback when this search finds nothing.
+    best_convenient, _conv_fare = _find_greedy_route(
+        [p['id'] for p in from_platforms],
+        [p['id'] for p in to_platforms],
+        boarding_penalty_zl=_BOARDING_PENALTY)
+    if best_convenient is None:
+        # Fallback: fewest-transfer distance-based candidate
+        for from_platform in from_platforms:
+            for to_platform in to_platforms:
+                result, _ = find_shortest_path(
+                    from_platform['id'], to_platform['id'])
+                if result is None:
+                    continue
+                n_transfers = len(result.get('transfers', []))
+                dist = result.get('total_distance', float('inf'))
                 if best_convenient is None:
                     best_convenient = result
                 else:
@@ -1114,8 +1305,6 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
                             or (n_transfers == cur_t
                                 and dist < best_convenient['total_distance'])):
                         best_convenient = result
-            elif last_error is None:
-                last_error = error
 
     # Fare-based search (feeds cheap), one multi-source A* over all platform
     # pairs. Skip if the distance-based result already hits the minimum
@@ -1174,7 +1363,7 @@ def _cache_route(cache_key, triple_result, mode):
     Cached values are immutable by contract — never mutate a returned
     result, it is shared with every concurrent reader of this entry.
     """
-    global _route_cache_bytes
+    global _route_cache_bytes, _route_cache_computed
     size = _estimate_bytes(triple_result)
     if size > _ROUTE_CACHE_MAX_BYTES:
         return _slice_route_cache(triple_result, mode)
@@ -1182,6 +1371,8 @@ def _cache_route(cache_key, triple_result, mode):
     with _route_cache_lock:
         if cache_key in _route_cache:
             _route_cache_bytes -= _route_cache[cache_key][1]
+        else:
+            _route_cache_computed += 1  # brand-new pair computed this run
         _route_cache[cache_key] = (triple_result, size)
         _route_cache_bytes += size
         # evict oldest entries until under the byte budget
@@ -1225,3 +1416,13 @@ def route_cache_info():
     group-to-group route cache."""
     return (len(_route_cache), _ROUTE_CACHE_MAX,
             _route_cache_bytes, _ROUTE_CACHE_MAX_BYTES)
+
+
+def route_cache_origin_info():
+    """Return (disk_loaded, computed_this_run) for the route cache.
+
+    disk_loaded — entries restored from the disk cache at startup,
+    computed_this_run — new pairs computed from real requests this run
+    (cumulative; eviction may have removed some since).
+    """
+    return _route_cache_disk_loaded, _route_cache_computed

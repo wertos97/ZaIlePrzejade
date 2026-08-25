@@ -31,8 +31,13 @@ ASTAR_MAX_ITERATIONS = 200000
 ASTAR_TIMEOUT_SECONDS = 30
 
 # Cheap (fare-based) search limits
-CHEAP_SEARCH_MAX_SECONDS = 6.0
+CHEAP_SEARCH_MAX_SECONDS = 10.0
 CHEAP_SEARCH_CONCURRENCY = 2  # max concurrent fare searches (GIL gate)
+
+# "Convenient" route: scalar cost = fare + this penalty per boarding.
+# Each transfer is "worth" this much extra zł — tunes the balance between
+# ticket price and number of rides (higher = fewer transfers, pricier).
+CONVENIENT_BOARDING_PENALTY_ZL = 2.0
 
 # Executor threads running pathfinding. More than the cheap-search gate so
 # that distance-based searches are never queued behind fare searches that
@@ -54,13 +59,6 @@ TRANSFER_TIME_SECONDS = 300
 # Price calculation constants (also in pricing.json)
 ACC_CAP_KM = 8.5  # beyond this distance, riding is free (daily cap)
 PRICE_LOOKUP_MAX_KM = 20.0
-
-# ============================================================
-# Cache Warmup
-# ============================================================
-WARMUP_SAMPLE_SIZE = 40
-WARMUP_PAIRS_PER_SAMPLE = 2
-WARMUP_YIELD_DELAY_SECONDS = 0.05
 
 # ============================================================
 # Static File Serving
@@ -135,4 +133,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.2.6"

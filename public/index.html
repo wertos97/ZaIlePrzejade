@@ -27,14 +27,12 @@
     <meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027">
     <meta name="twitter:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">
     <meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">
-    <!-- Dynamic OG Image Update (external script) -->
-    <script src="js/og-image-update.js?v=1.2.2" defer></script>
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <!-- Leaflet CSS (local) -->
-    <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=1.2.2" />
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=1.2.5" />
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="style.css?v=1.2.2" />
+    <link rel="stylesheet" href="style.css?v=1.2.5" />
     <!-- Structured data (Schema.org) -->
     <script type="application/ld+json">
     {
@@ -120,7 +118,7 @@
                     </button>
                 </div>
             </div>
-            <button class="btn btn-clear" id="clear-btn" aria-label="Wyczyść wybraną trasę">🗑️ Wyczyść trasę</button>
+            <button class="btn btn-clear" id="clear-btn" aria-label="Wyczyść wybraną trasę" style="display: none;">🗑️ Wyczyść trasę</button>
             <div class="loading-indicator" id="loading-indicator" style="display: none;">
                 <div class="loading-spinner"></div>
                 <span class="loading-text">Szukam trasy...</span>
@@ -278,9 +276,9 @@
     </div>
 
     <!-- Leaflet JS (local) -->
-    <script src="vendor/leaflet/leaflet.js?v=1.2.2" defer></script>
+    <script src="vendor/leaflet/leaflet.js?v=1.2.5" defer></script>
     <!-- App JS -->
-    <script src="app.js?v=1.2.2" defer></script>
-    <script src="js/route.js?v=1.2.2" defer></script>
+    <script src="app.js?v=1.2.5" defer></script>
+    <script src="js/route.js?v=1.2.5" defer></script>
 </body>
 </html>

@@ -281,22 +281,9 @@ def _rate_limit_ok(ip, expensive=False):
 # Pre-computed static JSON responses (cached at startup)
 # ============================================================
 _server_start_time = time.time()
-_req_counters = {  # lightweight server telemetry (GIL-protected ints)
-    'api_total': 0,
-    'find_route': 0,
-    'og_image': 0,
-    'rate_limited': 0,
-    'static_total': 0,
-    'blocked': 0,
-}
-_max_from_prev_reqs = 0
-_req_counters_lock = threading.Lock()
-
-
-def _bump_counter(key, n=1):
-    with _req_counters_lock:
-        _req_counters[key] += n
-
+# Route-search requests since server start (display metric; a plain int
+# increment is atomic enough under the GIL for this purpose).
+_route_requests = 0
 
 _cached_stops_json = None
 _cached_routes_json = None
@@ -569,7 +556,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     def handle_api(self, path, query):
         """Handle API requests."""
         try:
-            _bump_counter('api_total')
             # Only truly expensive endpoints (route search, OG image) are
             # rate-limited. Cheap pre-computed/lookup endpoints must never
             # 429 a page load — a burst on a shared IP would blank the map.
@@ -577,7 +563,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             if expensive:
                 client_ip = _get_client_ip(self)
                 if not _rate_limit_ok(client_ip, expensive=True):
-                    _bump_counter('rate_limited')
                     self.serve_json({'error': 'Zbyt wiele zapytań. Spróbuj ponownie za chwilę.'}, status=429)
                     return
 
@@ -614,15 +599,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 self._handle_shapes(query)
 
             elif path == '/api/health':
-                # Trigger deferred cache warmup on first successful health
-                # check. The entry point (server.py) registers the callback —
-                # the handler must not import the entry script directly.
-                on_health = getattr(type(self), 'on_health_check', None)
-                if on_health:
-                    try:
-                        on_health()
-                    except Exception:
-                        pass
                 # Verify data integrity
                 if not data.stops_grouped or not data.adjacency:
                     self.serve_json({'status': 'degraded', 'error': 'Data not loaded'}, status=503)
@@ -755,7 +731,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             return
 
         # Always compute all modes in one call, with timeout protection
-        _bump_counter('find_route')
+        global _route_requests
+        _route_requests += 1
         result = run_pathfinding_with_timeout(
             pathfinding.find_route_between_groups,
             from_stop, to_stop, 'both',
@@ -819,6 +796,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         fc_count, fc_bytes, fc_max = pathfinding.find_cache_info()
         rc_count, rc_max, rc_bytes, rc_max_bytes = pathfinding.route_cache_info()
         cheap_searches, cheap_timeouts = pathfinding.cheap_search_info()
+        rc_disk, rc_computed = pathfinding.route_cache_origin_info()
         active = 0
         server = getattr(self, 'server', None)
         if server is not None:
@@ -829,6 +807,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             'uptime_seconds': int(time.time() - _server_start_time),
             'active_requests': active,
             'max_concurrent': MAX_CONCURRENT_REQUESTS,
+            'route_requests': _route_requests,
+            'routes_from_disk': rc_disk,
+            'routes_computed': rc_computed,
             'find_cache': {
                 'entries': rc_count + fc_count,
                 'find_entries': fc_count,
@@ -859,7 +840,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.serve_json({'error': 'Stop not found'}, status=404)
 
     def _handle_og_image(self, query):
-        _bump_counter('og_image')
         from_stop = query.get('from', [''])[0]
         to_stop = query.get('to', [''])[0]
         mode = validate_mode(query.get('mode', ['short'])[0])

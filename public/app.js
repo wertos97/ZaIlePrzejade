@@ -238,10 +238,18 @@ function initMap() {
 // ------------------------------------------------------------
 // Admin server-stats panel — opened via right-click on "Autor".
 // Rendered in the map's top-right corner; hidden from public.
+// Refreshes live every few seconds while open.
 // ------------------------------------------------------------
+const SERVER_PANEL_REFRESH_MS = 4000;
+let serverPanelTimer = null;
+
 function closeServerPanel() {
     const el = document.getElementById('server-stats-panel');
     if (el) el.remove();
+    if (serverPanelTimer) {
+        clearInterval(serverPanelTimer);
+        serverPanelTimer = null;
+    }
 }
 
 function toggleServerPanel() {
@@ -264,90 +272,170 @@ function fmtUptime(sec) {
     return `${m} min`;
 }
 
+// Panel sections: declarative, so the panel can re-render values in place
+// on live refresh without rebuilding the DOM (tooltips survive).
+// Each row's get(state) derives text/colour from the FRESH /api/status.
+function serverPanelSections() {
+    return [
+        {
+            title: 'Serwer',
+            rows: [
+                { label: 'Wersja',
+                  get: st => ({ text: 'v' + (st.version || '?') }),
+                  tooltip: 'Wersja aplikacji.' },
+                { label: 'Uptime',
+                  get: st => ({ text: fmtUptime(st.uptime_seconds || 0) }),
+                  tooltip: 'Jak długo serwer działa bez restartu.' },
+                { label: 'Aktywne żądania',
+                  get: st => ({
+                      text: `${st.active_requests || 0} / ${st.max_concurrent || 20}`,
+                      color: statColor((st.active_requests || 0) / (st.max_concurrent || 20), 0.5, 0.8),
+                  }),
+                  tooltip: 'Żądania HTTP obsługiwane w tej chwili względem limitu współbieżności. '
+                      + 'Żądanie zajmuje slot tylko na czas odpowiedzi — nie jest to liczba osób na stronie.' },
+            ],
+        },
+        {
+            title: 'Trasy',
+            rows: [
+                { label: 'Zapytania o trasy',
+                  get: st => ({ text: `${st.route_requests || 0}` }),
+                  tooltip: 'Ile razy ktoś szukał trasy od startu serwera (każde wyszukanie w aplikacji).' },
+                { label: 'Trasy z dysku',
+                  get: st => ({ text: `${st.routes_from_disk || 0}` }),
+                  tooltip: 'Trasy załadowane z pliku cache przy starcie serwera — wyliczone '
+                      + 'przy poprzednich uruchomieniach.' },
+                { label: 'Nowe (to uruchomienie)',
+                  get: st => ({ text: `${st.routes_computed || 0}` }),
+                  tooltip: 'Trasy wyliczone od zera podczas bieżącego uruchomienia serwera '
+                      + '(realne wyszukiwania użytkowników).' },
+                { label: 'Cache tras',
+                  get: st => ({ text: `${(st.find_cache || {}).route_entries || 0} / ${(st.find_cache || {}).route_max || '?'}` }),
+                  tooltip: 'Gotowe, wyliczone trasy trzymane w pamięci (limit wpisów). '
+                      + 'Powtórne zapytanie o tę samą parę przystanków zwraca wynik natychmiast.' },
+            ],
+        },
+        {
+            title: 'Wyszukiwania A*',
+            rows: [
+                { label: 'Cache wyszukiwań',
+                  get: st => {
+                      const f = st.find_cache || {};
+                      const bytes = f.find_bytes || 0;
+                      const maxBytes = f.find_max_bytes || 1;
+                      return {
+                          text: `${f.find_entries || 0}  (${(bytes / 1048576).toFixed(1)}/${(maxBytes / 1048576).toFixed(0)} MB)`,
+                          color: statColor(bytes / maxBytes, 0.6, 0.9),
+                      };
+                  },
+                  tooltip: 'Wyniki A* między konkretnymi peronami oraz rozmiar pamięci zajmowanej '
+                      + 'przez ten cache względem budżetu. Przekroczenie budżetu usuwa najstarsze wpisy.' },
+                { label: 'Najtańsze — uruchomienia',
+                  get: st => ({ text: `${(st.cheap || {}).searches || 0}` }),
+                  tooltip: 'Ile razy uruchomiono algorytm najtańszej trasy (Pareto A*) od startu serwera.' },
+                { label: 'Najtańsze — timeouty',
+                  get: st => {
+                      const cheap = st.cheap || {};
+                      const found = cheap.searches || 0;
+                      const timeouts = cheap.timeouts || 0;
+                      const pct = found ? timeouts / found : 0;
+                      return {
+                          text: `${timeouts} (${(pct * 100).toFixed(0)}%)`,
+                          color: statColor(pct, 0.25, 0.6),
+                      };
+                  },
+                  tooltip: 'Ile szukań najtańszej trasy przekroczyło limit czasu. W takim wypadku '
+                      + 'aplikacja pokazuje trasę najkrótszą jako zastępczą.' },
+            ],
+        },
+    ];
+}
+
 function renderServerStatsPanel(s) {
     const mapEl = document.getElementById('map');
     const panel = document.createElement('div');
     panel.id = 'server-stats-panel';
-    // Responsive: never wider than the map minus a small margin.
-    panel.style.cssText = 'position:absolute; top:10px; right:10px; z-index:1100; '
-        + 'width:min(320px, calc(100% - 20px)); box-sizing:border-box; '
-        + 'background:rgba(255,255,255,0.97); border:1px solid #c8d8e8; border-radius:6px; '
-        + 'padding:10px 12px; font-size:12px; font-family:monospace; '
-        + 'box-shadow:0 2px 8px rgba(0,0,0,0.25);';
-
-    const f = s.find_cache || {};
-    const cheap = s.cheap || {};
-    const maxConc = s.max_concurrent || 20;
-    const activePct = (s.active_requests || 0) / maxConc;
-    const found = cheap.searches || 0;
-    const timeouts = cheap.timeouts || 0;
-    const timeoutPct = found ? timeouts / found : 0;
-    const findBytes = f.find_bytes || 0;
-    const findMaxBytes = f.find_max_bytes || 1;
+    panel.className = 'server-stats-panel';
 
     // Header: title + close button
     const header = document.createElement('div');
-    header.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;';
+    header.className = 'ssp-header';
     const title = document.createElement('b');
     title.textContent = 'Statystyki serwera';
+    title.title = 'Dane odświeżają się automatycznie co '
+        + (SERVER_PANEL_REFRESH_MS / 1000) + ' s.';
     const close = document.createElement('button');
     close.textContent = '✕';
     close.title = 'Zamknij panel';
-    close.style.cssText = 'border:none; background:transparent; color:#888; cursor:pointer; font-size:13px; padding:0 2px;';
+    close.className = 'ssp-close';
     close.addEventListener('click', closeServerPanel);
     header.appendChild(title);
     header.appendChild(close);
     panel.appendChild(header);
 
-    // Rows: label left, value right; hover shows the tooltip (title attr).
-    function row(label, value, color, tooltip) {
+    // Sections with rows: label left, value right; hover shows tooltip.
+    function row(def) {
         const r = document.createElement('div');
-        r.style.cssText = 'display:flex; justify-content:space-between; gap:12px; padding:2px 0;';
-        if (tooltip) {
-            r.title = tooltip;
+        if (def.tooltip) {
+            r.title = def.tooltip;
             r.style.cursor = 'help';
         }
+        r.className = 'ssp-row';
         const l = document.createElement('span');
-        l.textContent = label;
-        l.style.cssText = 'color:#6b6b6b; flex:none;';
+        l.textContent = def.label;
+        l.className = 'ssp-label';
         const v = document.createElement('span');
-        v.textContent = value;
-        v.style.textAlign = 'right';
-        if (color) v.style.color = color;
+        v.className = 'ssp-value';
         r.appendChild(l); r.appendChild(v);
-        panel.appendChild(r);
+        return [r, v];
     }
 
-    const findMb = (findBytes / 1048576).toFixed(1);
-    const findMaxMb = (findMaxBytes / 1048576).toFixed(0);
+    const rows = [];
+    for (const section of serverPanelSections()) {
+        const h = document.createElement('div');
+        h.className = 'ssp-section';
+        h.textContent = section.title;
+        panel.appendChild(h);
 
-    row('Wersja', 'v' + (s.version || '?'), null,
-        'Wersja aplikacji.');
-    row('Uptime', fmtUptime(s.uptime_seconds || 0), null,
-        'Jak długo serwer działa bez restartu.');
-    row('Aktywne żądania', `${s.active_requests || 0} / ${maxConc}`, statColor(activePct, 0.5, 0.8),
-        'Żądania HTTP obsługiwane w tej chwili względem limitu współbieżności. '
-        + 'Żądanie zajmuje slot tylko na czas odpowiedzi — nie jest to liczba osób na stronie.');
-    row('Cache tras', `${f.route_entries || 0} / ${f.route_max || '?'}`, null,
-        'Gotowe, wyliczone trasy trzymane w pamięci (limit wpisów). '
-        + 'Powtórne zapytanie o tę samą parę przystanków zwraca wynik natychmiast.');
-    row('Cache wyszukiwań', `${f.find_entries || 0}  (${findMb}/${findMaxMb} MB)`,
-        statColor(findBytes / findMaxBytes, 0.6, 0.9),
-        'Wyniki A* między konkretnymi peronami oraz rozmiar pamięci zajmowanej '
-        + 'przez ten cache względem budżetu. Przekroczenie budżetu usuwa najstarsze wpisy.');
-    row('Szukania najtańsze', `${found}`, null,
-        'Ile razy uruchomiono algorytm najtańszej trasy (Pareto A*) od startu serwera.');
-    row('— timeouty', `${timeouts} (${(timeoutPct * 100).toFixed(0)}%)`, statColor(timeoutPct, 0.25, 0.6),
-        'Ile szukań najtańszej trasy przekroczyło limit czasu. W takim wypadku '
-        + 'aplikacja pokazuje trasę najkrótszą jako zastępczą.');
+        for (const def of section.rows) {
+            const [el, span] = row(def);
+            panel.appendChild(el);
+            rows.push({ span, def });
+        }
+    }
+
+    // In-place update — no DOM rebuild, so tooltips and hover state survive.
+    panel._update = function(s2) {
+        for (const { span, def } of rows) {
+            const val = def.get(s2);
+            span.textContent = val.text;
+            span.style.color = val.color || '';
+        }
+    };
+    panel._update(s);
 
     // Small legend for the colour levels.
     const legend = document.createElement('div');
-    legend.style.cssText = 'margin-top:6px; font-size:10px; color:#999;';
+    legend.className = 'ssp-legend';
     legend.innerHTML = '<span style="color:#27ae60">●</span> ok &nbsp;<span style="color:#f39c12">●</span> busy &nbsp;<span style="color:#e74c3c">●</span> high';
     panel.appendChild(legend);
 
     mapEl.appendChild(panel);
+
+    // Live refresh while the panel is open
+    serverPanelTimer = setInterval(function() {
+        if (!document.getElementById('server-stats-panel')) {
+            closeServerPanel(); // safety net — stop ticking after manual removal
+            return;
+        }
+        fetch('/api/status')
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(s2 => {
+                const p = document.getElementById('server-stats-panel');
+                if (p && p._update) p._update(s2);
+            })
+            .catch(() => { /* keep last values on transient errors */ });
+    }, SERVER_PANEL_REFRESH_MS);
 }
 
 function setupEventListeners() {
@@ -976,6 +1064,9 @@ function collapseMobileSidebar() {
 }
 
 function updateSelectedStops() {
+    // "Wyczyść trasę" ma sens tylko gdy trasa jest wytyczona
+    document.getElementById('clear-btn').style.display = state.hasRoute ? '' : 'none';
+
     // Update marker colors and visibility
     const routeShown = !!state.hasRoute;
     state.markers.forEach(marker => {

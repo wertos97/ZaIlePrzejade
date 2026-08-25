@@ -89,9 +89,9 @@ Konfiguracja cen znajduje się w [`pricing.json`](pricing.json) i jest ładowana
 
 - 🧵 **Threading** z limitem równoczesnych żądań (ochrona przed przeciążeniem)
 - 💾 **Cache tras** (ograniczony rozmiarem) — powtarzające się zapytania są natychmiastowe
+- 💽 **Persystencja cache** — trasy przetrwają restart serwera (zapis na dysk + odtwarzanie przy starcie)
 - 🗜️ **Gzip compression** dla odpowiedzi JSON > 1KB
 - ⚡ **Pre-komputowane odpowiedzi** dla `/api/stops` i `/api/routes`
-- 🔥 **Warmup cache** przy starcie (popularne pary przystanków)
 - 🚀 **1 żądanie na trasę** (tryb wybierany leniwie, nie 2 naraz)
 
 ## 🚀 Uruchomienie lokalne

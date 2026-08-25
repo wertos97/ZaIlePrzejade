@@ -5,10 +5,8 @@ Entry point — loads modules and starts the threaded server.
 """
 
 import os
-import random
 import signal
 import threading
-import time
 
 from server.config import (
     APP_VERSION,
@@ -16,9 +14,6 @@ from server.config import (
     LOG_LEVEL,
     MAX_CONCURRENT_REQUESTS,
     REQUEST_QUEUE_SIZE,
-    WARMUP_SAMPLE_SIZE,
-    WARMUP_PAIRS_PER_SAMPLE,
-    WARMUP_YIELD_DELAY_SECONDS,
 )
 from server.logging_config import setup_logging, get_logger, log_cache_event
 
@@ -27,11 +22,10 @@ setup_logging(level=LOG_LEVEL, log_file=os.environ.get('LOG_FILE'))
 logger = get_logger('mpk.server')
 
 from server.data import (  # noqa: E402 — needs logging configured first
-    PUBLIC_DIR, stops_grouped,
+    PUBLIC_DIR,
 )
 from server.pathfinding import (
-    find_route_between_groups, init_pathfinding,
-    find_cache_info, route_cache_info,
+    init_pathfinding, find_cache_info, route_cache_info,
 )
 from server.handler import MPKRequestHandler, _build_stops_json, _build_routes_json
 
@@ -51,10 +45,8 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
     def process_request(self, request, client_address):
         """Limit concurrent requests to prevent resource exhaustion."""
-        from server import handler as _h
         with self._active_lock:
             if self._active_requests >= self.MAX_CONCURRENT:
-                _h._bump_counter('blocked')
                 try:
                     # Raw response (no handler instance yet) — keep the same
                     # security headers the handler would send.
@@ -115,47 +107,6 @@ _rc_count, _rc_max, _rc_bytes, _rc_max_bytes = route_cache_info()
 log_cache_event(logger, 'route', 'startup', _rc_count, _rc_bytes, _rc_max_bytes)
 
 
-# ============================================================
-# Warmup: pre-compute routes for popular stop pairs at startup
-# ============================================================
-_warmup_started = False
-_warmup_lock = threading.Lock()
-
-
-def _warmup_cache():
-    """Pre-compute routes for popular stop pairs to warm up caches.
-
-    Kept light on purpose: the route cache is restored from disk anyway, and
-    this thread must not steal the GIL from real requests right after boot.
-    Each search yields the GIL briefly so early page loads stay fast.
-    """
-    group_ids = list(stops_grouped.keys())
-    sample = random.sample(group_ids, min(WARMUP_SAMPLE_SIZE, len(group_ids)))
-
-    count = 0
-    for i, g1 in enumerate(sample):
-        for g2 in sample[i+1:i+1+WARMUP_PAIRS_PER_SAMPLE]:
-            try:
-                find_route_between_groups(g1, g2)
-                count += 1
-            except Exception:
-                pass
-            time.sleep(WARMUP_YIELD_DELAY_SECONDS)  # yield the GIL — don't starve live requests
-
-    logger.info('Cache warmup completed', extra={'entries_warmed': count})
-
-
-def trigger_warmup():
-    """Start the warmup thread exactly once."""
-    global _warmup_started
-    with _warmup_lock:
-        if _warmup_started:
-            return
-        _warmup_started = True
-    threading.Thread(target=_warmup_cache, daemon=True,
-                     name='cache-warmup').start()
-
-
 def _request_shutdown(signum, frame):
     """Signal handler: break out of serve_forever via SystemExit so atexit
     handlers (route cache persistence) still run."""
@@ -170,10 +121,6 @@ def main():
     # Start background rate limit cleanup thread
     from server.handler import _start_rate_limit_cleanup
     _start_rate_limit_cleanup()
-
-    # Warmup is deferred until first health check passes (via trigger_warmup)
-    # to avoid stealing GIL from early requests.
-    MPKRequestHandler.on_health_check = staticmethod(trigger_warmup)
 
     signal.signal(signal.SIGTERM, _request_shutdown)
 

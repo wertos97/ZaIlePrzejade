@@ -8,41 +8,33 @@ import logging
 import logging.handlers
 import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Optional
+
+
+# Standard LogRecord attributes that are not user-defined "extra" fields.
+_STD_RECORD_ATTRS = frozenset(vars(logging.LogRecord(
+    '%(name)s', logging.INFO, '%(pathname)s', 0, '%(message)s', None, None
+))) | {'message', 'asctime'}
 
 
 class JsonFormatter(logging.Formatter):
-    """JSON log formatter with standard fields."""
+    """JSON log formatter; any extra fields are passed through as-is."""
 
     def format(self, record: logging.LogRecord) -> str:
-        log_entry: Dict[str, Any] = {
+        log_entry = {
             'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(record.created)),
             'level': record.levelname,
             'logger': record.name,
             'message': record.getMessage(),
         }
+        for key, value in record.__dict__.items():
+            if key not in _STD_RECORD_ATTRS and not key.startswith('_'):
+                log_entry[key] = value
 
-        # Add extra fields if present
-        if hasattr(record, 'request_id'):
-            log_entry['request_id'] = record.request_id
-        if hasattr(record, 'client_ip'):
-            log_entry['client_ip'] = record.client_ip
-        if hasattr(record, 'path'):
-            log_entry['path'] = record.path
-        if hasattr(record, 'method'):
-            log_entry['method'] = record.method
-        if hasattr(record, 'status_code'):
-            log_entry['status_code'] = record.status_code
-        if hasattr(record, 'duration_ms'):
-            log_entry['duration_ms'] = record.duration_ms
-        if hasattr(record, 'error'):
-            log_entry['error'] = record.error
-
-        # Include exception info if present
         if record.exc_info:
             log_entry['exception'] = self.formatException(record.exc_info)
 
-        return json.dumps(log_entry, ensure_ascii=False)
+        return json.dumps(log_entry, ensure_ascii=False, default=str)
 
 
 def setup_logging(
@@ -96,115 +88,6 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-class RequestLogger:
-    """Context manager for logging HTTP requests with timing."""
-
-    def __init__(self, logger: logging.Logger, method: str, path: str, client_ip: str):
-        self.logger = logger
-        self.method = method
-        self.path = path
-        self.client_ip = client_ip
-        self.start_time = time.time()
-        self.status_code = 200
-        self.error = None
-
-    def __enter__(self) -> 'RequestLogger':
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        duration_ms = int((time.time() - self.start_time) * 1000)
-        if exc_type:
-            self.status_code = 500
-            self.error = str(exc_val)
-        self.logger.info(
-            'HTTP request completed',
-            extra={
-                'method': self.method,
-                'path': self.path,
-                'client_ip': self.client_ip,
-                'status_code': self.status_code,
-                'duration_ms': duration_ms,
-                'error': self.error,
-            }
-        )
-
-
-def log_request(
-    logger: logging.Logger,
-    method: str,
-    path: str,
-    client_ip: str,
-    status_code: int,
-    duration_ms: int,
-    error: Optional[str] = None
-) -> None:
-    """Log an HTTP request with structured fields."""
-    logger.info(
-        'HTTP request',
-        extra={
-            'method': method,
-            'path': path,
-            'client_ip': client_ip,
-            'status_code': status_code,
-            'duration_ms': duration_ms,
-            'error': error,
-        }
-    )
-
-
-def log_rate_limit(
-    logger: logging.Logger,
-    client_ip: str,
-    endpoint: str,
-    limit: int
-) -> None:
-    """Log rate limit exceeded event."""
-    logger.warning(
-        'Rate limit exceeded',
-        extra={
-            'client_ip': client_ip,
-            'endpoint': endpoint,
-            'limit': limit,
-            'event': 'rate_limit_exceeded',
-        }
-    )
-
-
-def log_pathfinding(
-    logger: logging.Logger,
-    from_id: str,
-    to_id: str,
-    mode: str,
-    duration_ms: int,
-    success: bool,
-    error: Optional[str] = None
-) -> None:
-    """Log pathfinding operation."""
-    if success:
-        logger.info(
-            'Pathfinding completed',
-            extra={
-                'from_id': from_id,
-                'to_id': to_id,
-                'mode': mode,
-                'duration_ms': duration_ms,
-                'event': 'pathfinding_success',
-            }
-        )
-    else:
-        logger.warning(
-            'Pathfinding failed',
-            extra={
-                'from_id': from_id,
-                'to_id': to_id,
-                'mode': mode,
-                'duration_ms': duration_ms,
-                'error': error,
-                'event': 'pathfinding_failed',
-            }
-        )
-
-
 def log_cache_event(
     logger: logging.Logger,
     cache_type: str,
@@ -213,7 +96,7 @@ def log_cache_event(
     bytes_used: int,
     max_bytes: int
 ) -> None:
-    """Log cache operation."""
+    """Log a cache operation."""
     logger.info(
         f'Cache {event}',
         extra={

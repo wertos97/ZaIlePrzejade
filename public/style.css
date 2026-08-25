@@ -887,16 +887,6 @@ body {
     font-size: 1em;
 }
 
-.leaflet-popup-content .mode-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: 0.7em;
-    font-weight: bold;
-    text-transform: uppercase;
-    margin-top: 4px;
-}
-
 /* Cleaner map - hide unnecessary OSM features */
 .leaflet-tile-pane {
     filter: saturate(0.8) contrast(0.9);
@@ -1373,10 +1363,6 @@ body {
         min-width: 160px;
     }
 
-    .desktop-only {
-        display: none !important;
-    }
-
     .loading-overlay {
         display: none;
         position: fixed;
@@ -1437,4 +1423,236 @@ body {
     .sidebar-toggle {
         display: none !important;
     }
+}
+/* ============================================================
+   Micro-animations — subtelne, eleganckie przejścia UI
+   (wszystkie respektują prefers-reduced-motion na końcu pliku)
+   ============================================================ */
+
+/* Przyciski: płynniejszy hover + delikatny "klik" */
+.btn,
+.btn-header,
+.modal-close,
+.share-close {
+    transition: background 0.2s ease, color 0.2s ease,
+                transform 0.12s ease, box-shadow 0.2s ease;
+}
+
+.btn:active,
+.btn-header:active {
+    transform: scale(0.97);
+}
+
+/* Modale: wjazdem z lekkim skalowaniem; tło się wygasza */
+@keyframes modalIn {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -48%) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+@keyframes overlayIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.modal {
+    animation: modalIn 0.22s ease-out;
+}
+
+.modal-overlay {
+    animation: overlayIn 0.2s ease-out;
+}
+
+/* Panel wyników (desktop): wjazd z prawej */
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(24px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.right-panel {
+    animation: slideInRight 0.28s ease-out;
+}
+
+/* Panel wyników (mobile): wjazd od dołu */
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(24px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.mobile-result {
+    animation: slideInUp 0.28s ease-out;
+}
+
+/* Wyniki wyszukiwania: delikatny fade + kaskada pozycji */
+@keyframes fadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.search-results.show {
+    animation: fadeInDown 0.18s ease-out;
+}
+
+.search-results.show .search-item {
+    animation: fadeInDown 0.22s ease-out backwards;
+}
+
+.search-results.show .search-item:nth-child(2) { animation-delay: 0.03s; }
+.search-results.show .search-item:nth-child(3) { animation-delay: 0.06s; }
+.search-results.show .search-item:nth-child(4) { animation-delay: 0.09s; }
+.search-results.show .search-item:nth-child(5) { animation-delay: 0.12s; }
+.search-results.show .search-item:nth-child(n+6) { animation-delay: 0.15s; }
+
+/* Kroki trasy: kaskadowe pojawianie się */
+@keyframes stepIn {
+    from {
+        opacity: 0;
+        transform: translateX(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.route-step {
+    animation: stepIn 0.3s ease-out backwards;
+}
+
+.route-step:nth-child(1) { animation-delay: 0.05s; }
+.route-step:nth-child(2) { animation-delay: 0.10s; }
+.route-step:nth-child(3) { animation-delay: 0.15s; }
+.route-step:nth-child(4) { animation-delay: 0.20s; }
+.route-step:nth-child(5) { animation-delay: 0.25s; }
+.route-step:nth-child(n+6) { animation-delay: 0.30s; }
+
+/* "Wyczyść trasę": miękkie pojawienie się gdy trasa jest wytyczona */
+@keyframes popIn {
+    from {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+#clear-btn {
+    animation: popIn 0.2s ease-out;
+}
+
+/* Szacunek dla użytkowników preferujących ograniczony ruch */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ============================================================
+   Panel statystyk serwera (admin, prawy-klik na "Autor")
+   ============================================================ */
+.server-stats-panel {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1100;
+    width: min(330px, calc(100% - 20px));
+    box-sizing: border-box;
+    background: rgba(255, 255, 255, 0.97);
+    border: 1px solid #c8d8e8;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-family: monospace;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+    animation: popIn 0.18s ease-out;
+}
+
+.ssp-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.ssp-header b {
+    color: #1a5276;
+}
+
+.ssp-close {
+    border: none;
+    background: transparent;
+    color: #888;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 2px;
+}
+
+.ssp-close:hover {
+    color: #333;
+}
+
+.ssp-section {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.78em;
+    font-weight: bold;
+    color: #2874a6;
+    border-top: 1px solid #e4ecf3;
+    margin-top: 6px;
+    padding-top: 5px;
+    margin-bottom: 2px;
+}
+
+.ssp-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 1.5px 0;
+}
+
+.ssp-label {
+    color: #6b6b6b;
+    flex: none;
+}
+
+.ssp-value {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.ssp-legend {
+    margin-top: 6px;
+    font-size: 10px;
+    color: #999;
+    border-top: 1px solid #e4ecf3;
+    padding-top: 4px;
 }
