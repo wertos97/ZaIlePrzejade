@@ -16,6 +16,17 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/server.env"
 LOG_FILE="$SCRIPT_DIR/autoupdate.log"
+LOCK_FILE="/tmp/mpk_autoupdate.lock"
+
+# --- Blokada concurrency (flock) ---
+# Zapobiega nakładaniu się dwóch instancji autoupdate.sh (cron co 2 minuty)
+acquire_lock() {
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        log "⚠️ Inna instancja autoupdate już działa. Pomijam."
+        exit 0
+    fi
+}
 
 # --- Domyślne wartości (bezpieczne, bez sekretów) ---
 DEFAULT_PORT=8080

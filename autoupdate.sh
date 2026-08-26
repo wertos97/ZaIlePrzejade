@@ -23,6 +23,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/common.sh"
 
+# --- Blokada concurrency ---
+acquire_lock
+
 # --- Pliki, których NIGDY nie nadpisujemy podczas aktualizacji ---
 # (skrypty, konfiguracja, logi, środowisko, surowe dane)
 PROTECTED_FILES=(
@@ -46,15 +49,10 @@ sync_with_git() {
         return 0
     fi
 
-    log "📥 Pobieranie najnowszej wersji kodu z GitHub (gałąź: $GIT_BRANCH)..."
+    log "📥 Synchronizacja kodu z GitHub (gałąź: $GIT_BRANCH)..."
 
-    # Pobierz zmiany (bez łączenia)
-    git -C "$SCRIPT_DIR" fetch origin "$GIT_BRANCH" >> "$LOG_FILE" 2>&1 || {
-        log "❌ Błąd podczas git fetch."
-        return 1
-    }
-
-    # --- Backup chronionych plików przed resetem ---
+    # Fetch został już wykonany wcześniej (porównanie hashy) — tu tylko reset
+    # Backup chronionych plików przed resetem
     local BACKUP_DIR
     BACKUP_DIR=$(mktemp -d)
     local backed_up=false
@@ -65,6 +63,10 @@ sync_with_git() {
             backed_up=true
         fi
     done
+
+    # Pokaż co się zmienia przed resetem
+    log "📊 Zmiany w stosunku do origin/$GIT_BRANCH:"
+    git -C "$SCRIPT_DIR" diff --stat "HEAD" "origin/$GIT_BRANCH" >> "$LOG_FILE" 2>&1 || true
 
     # Zresetuj do stanu zdalnego
     git -C "$SCRIPT_DIR" reset --hard "origin/$GIT_BRANCH" >> "$LOG_FILE" 2>&1 || {
@@ -78,9 +80,12 @@ sync_with_git() {
         --exclude='*.log' \
         --exclude='venv/' \
         --exclude='data/' \
+        --exclude='processed/' \
         --exclude='__pycache__/' \
         --exclude='public/vendor/' \
         --exclude='server/' \
+        --exclude='autoupdate.sh' \
+        --exclude='restart.sh' \
         --exclude='common.sh' \
         --exclude='server.env' \
         --exclude='server.env.example' \
@@ -181,15 +186,6 @@ if [ -f "$SCRIPT_DIR/venv/bin/activate" ]; then
     # shellcheck disable=SC1091
     source "$SCRIPT_DIR/venv/bin/activate"
     PYTHON_BIN="$SCRIPT_DIR/venv/bin/python3"
-fi
-
-if [ -f "$SCRIPT_DIR/requirements.txt" ]; then
-    log "📦 Wykryto requirements.txt, instalowanie zależności..."
-    if command -v pip >/dev/null 2>&1; then
-        pip install -r "$SCRIPT_DIR/requirements.txt" >> "$LOG_FILE" 2>&1
-    else
-        log "⚠️ pip niedostępny - pomijam instalację zależności."
-    fi
 fi
 
 # Restart serwera
