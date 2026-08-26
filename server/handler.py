@@ -281,6 +281,7 @@ _server_start_time = time.time()
 # Route-search requests since server start (display metric; a plain int
 # increment is atomic enough under the GIL for this purpose).
 _route_requests = 0
+_route_timeouts = 0
 
 _cached_stops_json = None
 _cached_routes_json = None
@@ -738,7 +739,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             return
 
         # Always compute all modes in one call, with timeout protection
-        global _route_requests
+        global _route_requests, _route_timeouts
         _route_requests += 1
         result = run_pathfinding_with_timeout(
             pathfinding.find_route_between_groups,
@@ -752,6 +753,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             short_pair, convenient_pair, cheap_pair = result
         else:
             # Timeout or error
+            _route_timeouts += 1
             error_msg = result[1] if isinstance(result, tuple) and len(result) == 2 else "Nie znaleziono trasy między tymi przystankami"
             self.serve_json({'error': error_msg})
             return
@@ -823,6 +825,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             'max_concurrent': MAX_CONCURRENT_REQUESTS,
             'rss_mb': rss_mb,
             'route_requests': _route_requests,
+            'route_timeouts': _route_timeouts,
             'routes_from_disk': rc_disk,
             'routes_computed': rc_computed,
             'find_cache': {

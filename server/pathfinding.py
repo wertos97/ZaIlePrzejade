@@ -302,7 +302,7 @@ def find_shortest_path(start_id, end_id):
                 return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
             try:
                 with open('/proc/self/statm') as f:
-                    pages = int(f.read().split()[0])
+                    pages = int(f.read().split()[1])  # [1] = RSS, not [0] = VSZ
                 mem_mb = pages * 4  # page size = 4 KB on Linux
             except Exception:
                 mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
@@ -657,7 +657,7 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
                 return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
             try:
                 with open('/proc/self/statm') as f:
-                    pages = int(f.read().split()[0])
+                    pages = int(f.read().split()[1])  # [1] = RSS, not [0] = VSZ
                 mem_mb = pages * 4
             except Exception:
                 mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024

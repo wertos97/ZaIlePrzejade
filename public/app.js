@@ -321,8 +321,23 @@ function serverPanelSections() {
             title: 'Trasy',
             rows: [
                 { label: 'Zapytania',
-                  get: st => ({ text: `${st.route_requests || 0}` }),
+                  get: st => ({
+                      text: `${st.route_requests || 0}`,
+                  }),
                   tooltip: 'Ile razy ktoś szukał trasy od startu serwera.' },
+                { label: 'Timeouty',
+                  get: st => {
+                      const req = st.route_requests || 0;
+                      const timeouts = st.route_timeouts || 0;
+                      if (req === 0) return { text: '—', color: '#888' };
+                      const pct = timeouts / req;
+                      return {
+                          text: `${timeouts} / ${req} (${(pct * 100).toFixed(0)}%)`,
+                          color: pct > 0 ? '#e74c3c' : '#27ae60',
+                      };
+                  },
+                  tooltip: 'Zapytania które przekroczyły limit czasu serwera (25s). '
+                      + 'Wysoki odsetek = serwer nie wyrabia.' },
                 { label: 'Obliczone',
                   get: st => ({
                       text: `${st.routes_computed || 0}`,
