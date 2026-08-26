@@ -1153,12 +1153,19 @@ def _load_route_cache():
     except Exception:
         return 0
     with _route_cache_lock:
+        skipped = 0
         for key, triple in data.items():
             from_id, to_id, mode = key.split('|')
             ck = (from_id, to_id, mode)
             # JSON deserialises tuples as lists — restore the dual tuple
             # structure used in memory: ((result, error), ...) x3.
             triple = tuple(tuple(pair) for pair in triple)
+            # Skip poisoned entries: all three results are errors (None).
+            # These were cached during transient failures (memory, timeout)
+            # and would block correct recomputation.
+            if all(pair[0] is None for pair in triple):
+                skipped += 1
+                continue
             size = _estimate_bytes(triple)
             if size > _ROUTE_CACHE_MAX_BYTES:
                 continue
@@ -1375,7 +1382,9 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
     if best_short is None and best_convenient is None and best_cheap is None:
         err_msg = last_error or "Nie znaleziono trasy między tymi przystankami"
         err = ((None, err_msg), (None, err_msg), (None, err_msg))
-        return _cache_route(cache_key, err, mode)
+        # Do NOT cache all-error results — a transient error (memory,
+        # timeout) would poison the cache until eviction.
+        return err
 
     # Build the triple-mode return
     short_pair = (best_short, None) if best_short else (None, last_error)
