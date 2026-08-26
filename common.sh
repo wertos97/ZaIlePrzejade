@@ -114,6 +114,9 @@ stop_server() {
 # Używa PYTHON_BIN jeśli ustawione (np. przez autoupdate.sh), w przeciwnym razie python3
 start_server() {
     local PY="${PYTHON_BIN:-python3}"
+    # Zamknij flock fd (9) przed startem serwera — serwer nie powinien
+    # dziedziczyć deskryptora locka, bo wtedy blokuje cron na zawsze.
+    exec 9>&- 2>/dev/null || true
     if [ "$RUN_IN_BACKGROUND" = "true" ]; then
         PORT="$PORT" nohup "$PY" -u "$SCRIPT_DIR/server.py" >> "$SCRIPT_DIR/server.log" 2>&1 &
     else
