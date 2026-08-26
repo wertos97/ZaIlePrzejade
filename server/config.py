@@ -27,13 +27,18 @@ RATE_LIMIT_STALE_CUTOFF_MULTIPLIER = 3  # entries older than window * this are s
 # Pathfinding / A* Configuration
 # ============================================================
 # A* safety limits
-ASTAR_MAX_ITERATIONS = 100000
+ASTAR_MAX_ITERATIONS = 200000
 ASTAR_TIMEOUT_SECONDS = 30
 
 # Cheap (fare-based) search limits
 CHEAP_SEARCH_MAX_SECONDS = 10.0
 CHEAP_SEARCH_CONCURRENCY = 2  # max concurrent fare searches (GIL gate)
 CHEAP_HEURISTIC_CACHE_MAX = 10000  # cap unbounded memoization cache
+
+# Memory protection: RSS threshold (MB) — A* bails out to avoid OOM on
+# small servers.  Use current RSS (via /proc/self/statm) not peak (ru_maxrss)
+# because peak never decreases and would kill every search after first spike.
+MEMORY_LIMIT_MB = int(os.environ.get('MEMORY_LIMIT_MB', 190))
 
 # "Convenient" route: scalar cost = fare + this penalty per boarding.
 # Each transfer is "worth" this much extra zł — tunes the balance between
@@ -52,7 +57,7 @@ ROUTE_CACHE_MAX_ENTRIES = 3000
 ROUTE_CACHE_MAX_BYTES = int(os.environ.get('ROUTE_CACHE_MAX_BYTES', 15 * 1024 * 1024))
 
 # Platform pairing limits
-MAX_PLATFORMS_TO_TRY_PER_GROUP = 3
+MAX_PLATFORMS_TO_TRY_PER_GROUP = 2
 
 # Transfer time (5 minutes in seconds)
 TRANSFER_TIME_SECONDS = 300
@@ -134,4 +139,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"

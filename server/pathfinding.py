@@ -31,6 +31,7 @@ from .config import (
     CONVENIENT_BOARDING_PENALTY_ZL as _BOARDING_PENALTY,
     FIND_CACHE_MAX_BYTES as _FIND_CACHE_MAX_BYTES,
     MAX_PLATFORMS_TO_TRY_PER_GROUP as _MAX_PLATFORMS_TO_TRY,
+    MEMORY_LIMIT_MB as _MEMORY_LIMIT_MB,
     PRICE_LOOKUP_MAX_KM,
     ROUTE_CACHE_MAX_ENTRIES as _ROUTE_CACHE_MAX,
     ROUTE_CACHE_MAX_BYTES as _ROUTE_CACHE_MAX_BYTES,
@@ -299,8 +300,13 @@ def find_shortest_path(start_id, end_id):
             if time.monotonic() - start_time > _ASTAR_TIMEOUT_SECONDS:
                 # Never cache timeouts — the pair would be poisoned until eviction.
                 return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
-            mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
-            if mem_mb > 180:
+            try:
+                with open('/proc/self/statm') as f:
+                    pages = int(f.read().split()[0])
+                mem_mb = pages * 4  # page size = 4 KB on Linux
+            except Exception:
+                mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+            if mem_mb > _MEMORY_LIMIT_MB:
                 return None, "Serwer jest przeciążony. Spróbuj krótszą trasę."
 
         if pops >= _ASTAR_MAX_ITERATIONS:
@@ -649,8 +655,13 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
                     _cache_put_find(cache_key, result)
                     return result
                 return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
-            mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
-            if mem_mb > 180:
+            try:
+                with open('/proc/self/statm') as f:
+                    pages = int(f.read().split()[0])
+                mem_mb = pages * 4
+            except Exception:
+                mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+            if mem_mb > _MEMORY_LIMIT_MB:
                 with _counter_lock:
                     _cheap_timeout_count += 1
                 if greedy is not None:
