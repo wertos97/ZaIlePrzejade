@@ -157,7 +157,7 @@ class TestStatusPayload(unittest.TestCase):
         status, body = _request('/api/status')
         self.assertEqual(status, 200)
         payload = json.loads(body)
-        for forbidden in ('load_avg', 'rss_mb', 'process_cpu_pct', 'cpus', 'counters'):
+        for forbidden in ('load_avg', 'process_cpu_pct', 'cpus', 'counters'):
             self.assertNotIn(forbidden, payload)
 
     def test_has_version_and_uptime(self):

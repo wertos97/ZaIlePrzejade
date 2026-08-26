@@ -303,66 +303,78 @@ function serverPanelSections() {
                 { label: 'Uptime',
                   get: st => ({ text: fmtUptime(st.uptime_seconds || 0) }),
                   tooltip: 'Jak długo serwer działa bez restartu.' },
-                { label: 'Aktywne żądania',
-                  get: st => ({
-                      text: `${st.active_requests || 0} / ${st.max_concurrent || 20}`,
-                      color: statColor((st.active_requests || 0) / (st.max_concurrent || 20), 0.5, 0.8),
-                  }),
-                  tooltip: 'Żądania HTTP obsługiwane w tej chwili względem limitu współbieżności. '
-                      + 'Żądanie zajmuje slot tylko na czas odpowiedzi — nie jest to liczba osób na stronie.' },
+                { label: 'Obciążenie',
+                  get: st => {
+                      const active = st.active_requests || 0;
+                      const max = st.max_concurrent || 20;
+                      const rss = st.rss_mb || 0;
+                      return {
+                          text: `${active}/${max} żądań, ${rss} MB RAM`,
+                          color: statColor(active / max, 0.5, 0.8),
+                      };
+                  },
+                  tooltip: 'Aktywne żądania HTTP względem limitu współbieżności '
+                      + 'oraz aktualne zużycie pamięci serwera.' },
             ],
         },
         {
             title: 'Trasy',
             rows: [
-                { label: 'Zapytania o trasy',
+                { label: 'Zapytania',
                   get: st => ({ text: `${st.route_requests || 0}` }),
-                  tooltip: 'Ile razy ktoś szukał trasy od startu serwera (każde wyszukanie w aplikacji).' },
-                { label: 'Trasy z dysku',
-                  get: st => ({ text: `${st.routes_from_disk || 0}` }),
-                  tooltip: 'Trasy załadowane z pliku cache przy starcie serwera — wyliczone '
-                      + 'przy poprzednich uruchomieniach.' },
-                { label: 'Nowe (to uruchomienie)',
-                  get: st => ({ text: `${st.routes_computed || 0}` }),
-                  tooltip: 'Trasy wyliczone od zera podczas bieżącego uruchomienia serwera '
-                      + '(realne wyszukiwania użytkowników).' },
-                { label: 'Cache tras',
-                  get: st => ({ text: `${(st.find_cache || {}).route_entries || 0} / ${(st.find_cache || {}).route_max || '?'}` }),
-                  tooltip: 'Gotowe, wyliczone trasy trzymane w pamięci (limit wpisów). '
-                      + 'Powtórne zapytanie o tę samą parę przystanków zwraca wynik natychmiast.' },
-            ],
-        },
-        {
-            title: 'Wyszukiwania A*',
-            rows: [
-                { label: 'Cache wyszukiwań',
+                  tooltip: 'Ile razy ktoś szukał trasy od startu serwera.' },
+                { label: 'Obliczone',
+                  get: st => ({
+                      text: `${st.routes_computed || 0}`,
+                      color: st.routes_computed > 0 ? '#f39c12' : '',
+                  }),
+                  tooltip: 'Trasy wyliczone od zera (nie z cache). '
+                      + 'Duża liczba = cache nie wystarcza.' },
+                { label: 'Cache',
                   get: st => {
-                      const f = st.find_cache || {};
-                      const bytes = f.find_bytes || 0;
-                      const maxBytes = f.find_max_bytes || 1;
+                      const rc = st.find_cache || {};
+                      const entries = rc.route_entries || 0;
+                      const bytes = rc.route_bytes || 0;
+                      const maxBytes = rc.route_max_bytes || 1;
                       return {
-                          text: `${f.find_entries || 0}  (${(bytes / 1048576).toFixed(1)}/${(maxBytes / 1048576).toFixed(0)} MB)`,
+                          text: `${entries} wpisów (${(bytes / 1048576).toFixed(1)} MB)`,
                           color: statColor(bytes / maxBytes, 0.6, 0.9),
                       };
                   },
-                  tooltip: 'Wyniki A* między konkretnymi peronami oraz rozmiar pamięci zajmowanej '
-                      + 'przez ten cache względem budżetu. Przekroczenie budżetu usuwa najstarsze wpisy.' },
-                { label: 'Najtańsze — uruchomienia',
-                  get: st => ({ text: `${(st.cheap || {}).searches || 0}` }),
-                  tooltip: 'Ile razy uruchomiono algorytm najtańszej trasy (Pareto A*) od startu serwera.' },
-                { label: 'Najtańsze — timeouty',
+                  tooltip: 'Gotowe trasy w pamięci. Powtórne zapytanie '
+                      + 'o tę samą parę przystanków zwraca wynik natychmiast.' },
+            ],
+        },
+        {
+            title: 'Wyszukiwania',
+            rows: [
+                { label: 'Cache A*',
+                  get: st => {
+                      const f = st.find_cache || {};
+                      const entries = f.find_entries || 0;
+                      const bytes = f.find_bytes || 0;
+                      const maxBytes = f.find_max_bytes || 1;
+                      return {
+                          text: `${entries} wpisów (${(bytes / 1048576).toFixed(1)} MB)`,
+                          color: statColor(bytes / maxBytes, 0.6, 0.9),
+                      };
+                  },
+                  tooltip: 'Wyniki wyszukiwań między peronami. '
+                      + 'Przekroczenie budżetu usuwa najstarsze wpisy.' },
+                { label: 'Timeouty',
                   get: st => {
                       const cheap = st.cheap || {};
                       const found = cheap.searches || 0;
                       const timeouts = cheap.timeouts || 0;
-                      const pct = found ? timeouts / found : 0;
+                      if (found === 0) return { text: '—', color: '#888' };
+                      const pct = timeouts / found;
                       return {
-                          text: `${timeouts} (${(pct * 100).toFixed(0)}%)`,
+                          text: `${timeouts} / ${found} (${(pct * 100).toFixed(0)}%)`,
                           color: statColor(pct, 0.25, 0.6),
                       };
                   },
-                  tooltip: 'Ile szukań najtańszej trasy przekroczyło limit czasu. W takim wypadku '
-                      + 'aplikacja pokazuje trasę najkrótszą jako zastępczą.' },
+                  tooltip: 'Wyszukiwania najtańszej trasy które przekroczyły limit czasu. '
+                      + 'Wysoki odsetek = serwer nie wyrabia.' },
             ],
         },
     ];

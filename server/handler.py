@@ -797,8 +797,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     def _handle_status(self):
         """Application-level status: version, uptime, cache usage.
 
-        Deliberately excludes host internals (load average, RSS, per-process
-        CPU, request counters) — this endpoint is publicly reachable.
+        Deliberately excludes host internals (load average, per-process
+        CPU) — this endpoint is publicly reachable.  Includes RSS because
+        the admin needs to monitor memory on small servers.
         """
         fc_count, fc_bytes, fc_max = pathfinding.find_cache_info()
         rc_count, rc_max, rc_bytes, rc_max_bytes = pathfinding.route_cache_info()
@@ -809,11 +810,18 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         if server is not None:
             with server._active_lock:
                 active = server._active_requests
+        try:
+            with open('/proc/self/statm') as f:
+                rss_pages = int(f.read().split()[1])
+            rss_mb = rss_pages * 4  # pages are 4 KB on Linux
+        except Exception:
+            rss_mb = 0
         self.serve_json({
             'version': APP_VERSION,
             'uptime_seconds': int(time.time() - _server_start_time),
             'active_requests': active,
             'max_concurrent': MAX_CONCURRENT_REQUESTS,
+            'rss_mb': rss_mb,
             'route_requests': _route_requests,
             'routes_from_disk': rc_disk,
             'routes_computed': rc_computed,
