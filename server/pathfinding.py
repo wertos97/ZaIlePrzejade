@@ -303,7 +303,7 @@ def find_shortest_path(start_id, end_id):
             try:
                 with open('/proc/self/statm') as f:
                     pages = int(f.read().split()[1])  # [1] = RSS, not [0] = VSZ
-                mem_mb = pages * 4  # page size = 4 KB on Linux
+                mem_mb = pages * 4 // 1024  # pages * 4 KB / 1024 = MB
             except Exception:
                 mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
             if mem_mb > _MEMORY_LIMIT_MB:
@@ -658,7 +658,7 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
             try:
                 with open('/proc/self/statm') as f:
                     pages = int(f.read().split()[1])  # [1] = RSS, not [0] = VSZ
-                mem_mb = pages * 4
+                mem_mb = pages * 4 // 1024  # pages * 4 KB / 1024 = MB
             except Exception:
                 mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
             if mem_mb > _MEMORY_LIMIT_MB:

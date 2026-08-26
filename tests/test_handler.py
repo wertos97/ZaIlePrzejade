@@ -162,14 +162,15 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertTrue(path[0]['group_id'].startswith('group_'))
 
     def test_find_route_invalid_group(self):
-        status, _, body = self._get(
-            '/api/find-route?from=group_999999&to=group_1')
-        self.assertEqual(status, 200)
+        try:
+            status, _, body = self._get(
+                '/api/find-route?from=group_999999&to=group_1')
+        except urllib.error.HTTPError as e:
+            status = e.code
+            body = e.read()
+        self.assertEqual(status, 400)
         result = json.loads(body)
-        # Both modes fail -> single {error} response (frontend checks .error)
         self.assertIn('error', result)
-        self.assertIsNone(result.get('short'))
-        self.assertIsNone(result.get('convenient'))
 
     # ------------------------------------------------------------
     # Cost API

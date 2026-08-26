@@ -738,6 +738,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.serve_json({'error': error}, status=400)
             return
 
+        if from_stop not in data.stops_grouped:
+            self.serve_json({'error': 'Przystanek początkowy nie został znaleziony'}, status=400)
+            return
+        if to_stop not in data.stops_grouped:
+            self.serve_json({'error': 'Przystanek końcowy nie został znaleziony'}, status=400)
+            return
+
         # Always compute all modes in one call, with timeout protection
         global _route_requests, _route_timeouts
         _route_requests += 1
@@ -815,7 +822,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         try:
             with open('/proc/self/statm') as f:
                 rss_pages = int(f.read().split()[1])
-            rss_mb = rss_pages * 4  # pages are 4 KB on Linux
+            rss_mb = rss_pages * 4 // 1024  # pages * 4KB / 1024 = MB
         except Exception:
             rss_mb = 0
         self.serve_json({
