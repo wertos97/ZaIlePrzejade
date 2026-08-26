@@ -11,6 +11,9 @@ Key differences from the original server.py implementation:
 """
 
 import atexit
+import bisect
+import collections
+import concurrent.futures
 import heapq
 import itertools
 import json
@@ -381,7 +384,7 @@ def _dominates(closed_a, acc_a, closed_b, acc_b):
     return closed_a <= closed_b + 1e-9 and acc_a <= acc_b + 1e-9
 
 
-_cheap_heuristic_cache: dict = {}
+_cheap_heuristic_cache: collections.OrderedDict = collections.OrderedDict()
 
 
 def _cheap_heuristic(acc, remaining_km):
@@ -401,6 +404,7 @@ def _cheap_heuristic(acc, remaining_km):
     key = (round(acc, 2), math.floor(remaining_km * 4) / 4)
     cached = _cheap_heuristic_cache.get(key)
     if cached is not None:
+        _cheap_heuristic_cache.move_to_end(key)
         return cached
 
     remaining = key[1]
@@ -418,8 +422,9 @@ def _cheap_heuristic(acc, remaining_km):
                     + _ticket_price(remaining - x))
             best = min(best, cost)
     if len(_cheap_heuristic_cache) >= CHEAP_HEURISTIC_CACHE_MAX:
-        _cheap_heuristic_cache.clear()
+        _cheap_heuristic_cache.popitem(last=False)  # LRU: evict oldest
     _cheap_heuristic_cache[key] = best
+    _cheap_heuristic_cache.move_to_end(key)
     return best
 
 
@@ -540,7 +545,7 @@ def _find_greedy_route(start_ids, end_ids, boarding_penalty_zl=0.0,
                 new_boardings = boardings
 
             new_acc = min(new_acc, _ACC_CAP)
-            new_acc = round(new_acc * 20) / 20
+            new_acc = round(new_acc * 10) / 10  # 0.10 km grid
             g = (new_closed + _ticket_price(new_acc)
                  + boarding_penalty_zl * new_boardings)
             nxt = (next_stop, next_route)
@@ -618,12 +623,15 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
             continue
 
         # Dominance: skip states dominated by an already-settled one at the
-        # same node. (frontier holds settled states, so no self-comparison)
+        # same node. (frontier holds settled states, sorted by closed cost)
         states = frontier.get((stop, route))
         if states is not None:
+            # Find first entry with closed >= current closed via bisect.
+            # Any dominator must have closed <= ours, so scan only left side.
+            idx = bisect.bisect_left(states, (closed,))
             dominated = False
-            for (c2, a2) in states:
-                if _dominates(c2, a2, closed, acc):
+            for i in range(idx):
+                if states[i][1] <= acc + 1e-9:
                     dominated = True
                     break
             if dominated:
@@ -637,10 +645,18 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
         if states is None:
             frontier[(stop, route)] = [(closed, acc)]
         else:
-            pruned = [(c, a) for (c, a) in states
-                      if not _dominates(closed, acc, c, a)]
-            pruned.append((closed, acc))
-            frontier[(stop, route)] = pruned
+            # Merge: keep entries NOT dominated by new state, then insert new.
+            new_states = []
+            new_inserted = False
+            for entry in states:
+                if not _dominates(closed, acc, entry[0], entry[1]):
+                    if not new_inserted and entry[0] > closed + 1e-9:
+                        new_states.append((closed, acc))
+                        new_inserted = True
+                    new_states.append(entry)
+            if not new_inserted:
+                new_states.append((closed, acc))
+            frontier[(stop, route)] = new_states
 
         iterations += 1
 
@@ -711,7 +727,7 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
                 new_acc = acc + dist
 
             new_acc = min(new_acc, _ACC_CAP)  # beyond cap riding is free
-            new_acc = round(new_acc * 20) / 20  # 0.05 km grid (<< 0.5 km price step)
+            new_acc = round(new_acc * 10) / 10  # 0.10 km grid (prices step at 0.5 km)
             g = new_closed + _ticket_price(new_acc)
             if g > upper_bound + 1e-9:
                 continue
@@ -1303,16 +1319,29 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
     best_cheap = None
     last_error = None
 
-    for from_platform in from_platforms:
-        for to_platform in to_platforms:
-            # Distance-based search (feeds short)
-            result, error = find_shortest_path(
-                from_platform['id'], to_platform['id'])
+    # Parallel short A*: run all platform pairs concurrently.
+    _short_cancel = threading.Event()
 
+    def _run_short(fs, ts):
+        set_thread_cancel_event(_short_cancel)
+        try:
+            return find_shortest_path(fs, ts)
+        finally:
+            clear_thread_cancel_event()
+
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=_MAX_PLATFORMS_TO_TRY ** 2) as pool:
+        short_futures = []
+        for from_platform in from_platforms:
+            for to_platform in to_platforms:
+                fut = pool.submit(
+                    _run_short, from_platform['id'], to_platform['id'])
+                short_futures.append(fut)
+
+        for fut in short_futures:
+            result, error = fut.result(timeout=25.0)
             if result is not None:
                 dist = result.get('total_distance', float('inf'))
-
-                # Update short (minimum distance)
                 if best_short is None or dist < best_short['total_distance']:
                     best_short = result
             elif last_error is None:
