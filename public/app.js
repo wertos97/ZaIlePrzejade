@@ -163,7 +163,7 @@ function initMap() {
     }).setView([50.0647, 19.9450], 13);
 
     // Use a cleaner tile style - CartoDB Positron (light, no POI clutter)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_26qm_1_98430037de145fbe58b64b9b', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, &copy; <a href="https://carto.com/">CARTO</a>',
         maxZoom: 19,
         subdomains: 'abcd',
