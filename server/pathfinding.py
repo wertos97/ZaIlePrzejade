@@ -12,10 +12,12 @@ Key differences from the original server.py implementation:
 
 import atexit
 import heapq
+import itertools
 import json
 import logging
 import math
 import os
+import resource
 import threading
 import time
 
@@ -23,6 +25,7 @@ from .config import (
     ACC_CAP_KM as _ACC_CAP,
     ASTAR_MAX_ITERATIONS as _ASTAR_MAX_ITERATIONS,
     ASTAR_TIMEOUT_SECONDS as _ASTAR_TIMEOUT_SECONDS,
+    CHEAP_HEURISTIC_CACHE_MAX,
     CHEAP_SEARCH_CONCURRENCY,
     CHEAP_SEARCH_MAX_SECONDS,
     CONVENIENT_BOARDING_PENALTY_ZL as _BOARDING_PENALTY,
@@ -100,16 +103,17 @@ def init_pathfinding(adj, stops_by_id_ref, stops_grouped_ref,
         while True:
             time.sleep(120)
             with _route_cache_lock:
-                sig = (len(_route_cache), _route_cache_bytes)
-            # flush: every 2 min or when 30+ entries were added since last
-            if len(_route_cache) - last_count >= 30:
-                last_count = len(_route_cache)
-                _save_route_cache()
-                last_sig = sig
-            elif sig != last_sig and len(_route_cache) > 0:
-                last_sig = sig
-                last_count = len(_route_cache)
-                _save_route_cache()
+                count = len(_route_cache)
+                sig = (count, _route_cache_bytes)
+                # flush: every 2 min or when 30+ entries were added since last
+                if count - last_count >= 30:
+                    last_count = count
+                    _save_route_cache()
+                    last_sig = sig
+                elif sig != last_sig and count > 0:
+                    last_sig = sig
+                    last_count = count
+                    _save_route_cache()
 
     threading.Thread(target=_flush_loop, daemon=True,
                      name='route-cache-flush').start()
@@ -290,14 +294,17 @@ def find_shortest_path(start_id, end_id):
         if est_total >= best_found_real:
             continue
 
-        # Timeout / iteration limit check (every 1000 pops is cheap)
+        # Timeout / iteration limit / memory check (every 1000 pops is cheap)
         if pops % 1000 == 0:
             if time.monotonic() - start_time > _ASTAR_TIMEOUT_SECONDS:
                 # Never cache timeouts — the pair would be poisoned until eviction.
                 return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
+            mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+            if mem_mb > 180:
+                return None, "Serwer jest przeciążony. Spróbuj krótszą trasę."
 
         if pops >= _ASTAR_MAX_ITERATIONS:
-            return None, "Przekroczono limit iteracji A*"
+            return None, "Serwer jest przeciążony. Spróbuj krótszą trasę."
 
         if stop == end_id:
             result = reconstruct_path(prev, start_id, end_id, route), None
@@ -338,6 +345,7 @@ def find_shortest_path(start_id, end_id):
 _PRICE_BOUNDS = [3.5 + 0.5 * k for k in range(11)]  # 3.5 .. 8.5
 _cheap_search_count = 0
 _cheap_timeout_count = 0
+_counter_lock = threading.Lock()
 # CPU gate: the fare A* is CPU-bound, so parallel searches would thrash.
 # At most CHEAP_SEARCH_CONCURRENCY run at once; the rest queue briefly.
 _CHEAP_SEARCH_GATE = threading.Semaphore(CHEAP_SEARCH_CONCURRENCY)
@@ -403,6 +411,8 @@ def _cheap_heuristic(acc, remaining_km):
             cost = (_ticket_price(acc + x) - _ticket_price(acc)
                     + _ticket_price(remaining - x))
             best = min(best, cost)
+    if len(_cheap_heuristic_cache) >= CHEAP_HEURISTIC_CACHE_MAX:
+        _cheap_heuristic_cache.clear()
     _cheap_heuristic_cache[key] = best
     return best
 
@@ -426,12 +436,13 @@ def find_cheapest_path(start_ids, end_ids, upper_bound=float('inf')):
 
     Returns (result_dict, None) or (None, error_string); cached.
     """
-    global _cheap_search_count, _cheap_timeout_count
+    global _cheap_search_count
     cache_key = ('cheap', tuple(start_ids), tuple(end_ids))
     cached = _cache_get_find(cache_key)
     if cached is not None:
         return cached
-    _cheap_search_count += 1
+    with _counter_lock:
+        _cheap_search_count += 1
 
     if not start_ids or not end_ids:
         return None, "Nie podano przystanków"
@@ -627,23 +638,34 @@ def _find_cheapest_path_gated(start_ids, end_ids, cache_key, upper_bound,
 
         iterations += 1
 
-        # Timeout / iteration limits: hard wall-clock cap keeps the UI
+        # Timeout / iteration limits / memory: hard wall-clock cap keeps the UI
         # responsive; the greedy route (if found) is served instead.
         if iterations % 1000 == 0:
             if time.monotonic() - start_time > max_seconds:
-                _cheap_timeout_count += 1
+                with _counter_lock:
+                    _cheap_timeout_count += 1
                 if greedy is not None:
                     result = greedy, None
                     _cache_put_find(cache_key, result)
                     return result
                 return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
+            mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+            if mem_mb > 180:
+                with _counter_lock:
+                    _cheap_timeout_count += 1
+                if greedy is not None:
+                    result = greedy, None
+                    _cache_put_find(cache_key, result)
+                    return result
+                return None, "Serwer jest przeciążony. Spróbuj krótszą trasę."
         if iterations >= _ASTAR_MAX_ITERATIONS:
-            _cheap_timeout_count += 1
+            with _counter_lock:
+                _cheap_timeout_count += 1
             if greedy is not None:
                 result = greedy, None
                 _cache_put_find(cache_key, result)
                 return result
-            return None, "Przekroczono limit iteracji A*"
+            return None, "Serwer jest przeciążony. Spróbuj krótszą trasę."
 
         if stop in end_set:
             # Close the current segment: total = closed + price(acc).
@@ -1408,7 +1430,8 @@ def find_cache_info():
 
 def cheap_search_info():
     """Return (searches, timeouts) for the fare-based A*."""
-    return _cheap_search_count, _cheap_timeout_count
+    with _counter_lock:
+        return _cheap_search_count, _cheap_timeout_count
 
 
 def route_cache_info():

@@ -50,7 +50,12 @@ is_server_healthy() {
         HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$HEALTH_URL" 2>/dev/null)
         [ "$HTTP_STATUS" -eq 200 ]
     else
-        python3 -c "import urllib.request; res = urllib.request.urlopen('$HEALTH_URL', timeout=3); exit(0 if res.getcode() == 200 else 1)" 2>/dev/null
+        HEALTH_URL="$HEALTH_URL" python3 -c "
+import os, urllib.request
+url = os.environ['HEALTH_URL']
+res = urllib.request.urlopen(url, timeout=3)
+exit(0 if res.getcode() == 200 else 1)
+" 2>/dev/null
     fi
 }
 

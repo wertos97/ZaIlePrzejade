@@ -30,9 +30,9 @@
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <!-- Leaflet CSS (local) -->
-    <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=1.2.5" />
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=__VERSION__" />
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="style.css?v=1.2.5" />
+    <link rel="stylesheet" href="style.css?v=__VERSION__" />
     <!-- Structured data (Schema.org) -->
     <script type="application/ld+json">
     {
@@ -108,7 +108,7 @@
                         <span class="mode-label">Tania trasa</span>
                         <span class="mode-desc">Najtańszy przejazd</span>
                     </button>
-                    <div class="mode-equal" id="mode-equal" style="display: none;">
+                    <div class="mode-equal hidden" id="mode-equal">
                         <span class="mode-equal-icon">=</span>
                     </div>
                     <button class="btn-mode" id="mode-convenient" data-mode="convenient">
@@ -118,8 +118,8 @@
                     </button>
                 </div>
             </div>
-            <button class="btn btn-clear" id="clear-btn" aria-label="Wyczyść wybraną trasę" style="display: none;">🗑️ Wyczyść trasę</button>
-            <div class="loading-indicator" id="loading-indicator" style="display: none;">
+            <button class="btn btn-clear hidden" id="clear-btn" aria-label="Wyczyść wybraną trasę">🗑️ Wyczyść trasę</button>
+            <div class="loading-indicator hidden" id="loading-indicator">
                 <div class="loading-spinner"></div>
                 <span class="loading-text">Szukam trasy...</span>
             </div>
@@ -159,7 +159,7 @@
     </main>
 
     <!-- Right Panel - Route Result (desktop) -->
-    <aside class="right-panel" id="right-panel" style="display: none;">
+    <aside class="right-panel hidden" id="right-panel">
         <div class="panel">
             <div class="result-header">
                 <h2>Wynik</h2>
@@ -200,7 +200,7 @@
     </div>
 
     <!-- Mobile Result Panel -->
-    <div class="mobile-result" id="mobile-result" style="display: none;">
+    <div class="mobile-result hidden" id="mobile-result">
         <div class="mobile-result-sticky">
             <button class="mobile-result-toggle" id="mobile-result-toggle">
                 <svg class="chevron-icon" width="20" height="12" viewBox="0 0 20 12" fill="none">
@@ -211,7 +211,7 @@
                 <button class="btn-mode-sm btn-mode-sm-active" id="mobile-mode-cheap" data-mode="cheap">
                     💸 Tania
                 </button>
-                <span class="mode-equal-sm" id="mobile-mode-equal" style="display: none;">=</span>
+                <span class="mode-equal-sm hidden" id="mobile-mode-equal">=</span>
                 <button class="btn-mode-sm" id="mobile-mode-convenient" data-mode="convenient">
                     🛋️ Wygodna
                 </button>
@@ -244,8 +244,8 @@
     </div>
 
     <!-- Share Modal -->
-    <div class="modal-overlay" id="share-overlay" style="display: none;"></div>
-    <div class="modal share-modal" id="share-modal" style="display: none;">
+    <div class="modal-overlay hidden" id="share-overlay"></div>
+    <div class="modal share-modal hidden" id="share-modal">
         <div class="modal-header">
             <span class="modal-title">Udostępnij trasę</span>
             <button class="modal-close" id="share-close" aria-label="Zamknij">✕</button>
@@ -256,7 +256,7 @@
                     <div class="loading-spinner"></div>
                     <span class="loading-text">Generuję podgląd…</span>
                 </div>
-                <img id="share-og-image" src="" alt="" style="display: none;" />
+                <img id="share-og-image" src="" alt="" class="hidden" />
             </div>
             <div class="share-link-box">
                 <input type="text" id="share-link" readonly aria-label="Link do trasy" />
@@ -266,8 +266,8 @@
     </div>
 
     <!-- Modal overlay -->
-    <div class="modal-overlay" id="modal-overlay" style="display: none;"></div>
-    <div class="modal" id="modal" style="display: none;">
+    <div class="modal-overlay hidden" id="modal-overlay"></div>
+    <div class="modal hidden" id="modal">
         <div class="modal-header">
             <span class="modal-title" id="modal-title"></span>
             <button class="modal-close" id="modal-close">✕</button>
@@ -276,9 +276,9 @@
     </div>
 
     <!-- Leaflet JS (local) -->
-    <script src="vendor/leaflet/leaflet.js?v=1.2.5" defer></script>
+    <script src="vendor/leaflet/leaflet.js?v=__VERSION__" defer></script>
     <!-- App JS -->
-    <script src="app.js?v=1.2.5" defer></script>
-    <script src="js/route.js?v=1.2.5" defer></script>
+    <script src="app.js?v=__VERSION__" defer></script>
+    <script src="js/route.js?v=__VERSION__" defer></script>
 </body>
 </html>

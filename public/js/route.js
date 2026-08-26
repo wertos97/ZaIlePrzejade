@@ -8,6 +8,32 @@ const ROUTE_COLORS = [
 
 // escapeHtml / createElementFromHtml are shared with app.js (loaded first).
 
+function delay(ms) {
+    return new Promise(function(resolve) { setTimeout(resolve, ms); });
+}
+
+async function fetchWithRetry(url, maxRetries, updateText) {
+    var delays = [0, 2000, 5000];
+    for (var attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            var response = await fetch(url);
+            if ((response.status === 429 || response.status === 503) && attempt < maxRetries) {
+                if (updateText) updateText('Ponawiam wyszukiwanie... (' + attempt + '/' + maxRetries + ')');
+                await delay(delays[attempt]);
+                continue;
+            }
+            return response;
+        } catch (error) {
+            if (attempt < maxRetries) {
+                if (updateText) updateText('Ponawiam wyszukiwanie... (' + attempt + '/' + maxRetries + ')');
+                await delay(delays[attempt]);
+                continue;
+            }
+            throw error;
+        }
+    }
+}
+
 // Format a duration in seconds as "X min" or "1 h 5 min"
 function formatDuration(seconds) {
     if (!seconds || seconds <= 0 || !isFinite(seconds)) {
@@ -49,12 +75,22 @@ async function findRoute() {
     const isMobile = window.innerWidth <= 768;
     const loadingEl = document.getElementById('loading-indicator');
     const loadingOverlay = document.getElementById('loading-overlay');
+    const loadingText = loadingEl ? loadingEl.querySelector('.loading-text') : null;
 
     // On mobile, only show full-screen overlay; on desktop show inline spinner
     if (isMobile && loadingOverlay) {
         loadingOverlay.classList.add('show');
     } else {
-        loadingEl.style.display = 'flex';
+        loadingEl.classList.remove('hidden');
+    }
+
+    // Update loading text after 5 seconds for long searches
+    var longSearchTimer = setTimeout(function() {
+        if (loadingText) loadingText.textContent = 'Szukam trasy... to może potrwać do 30 sekund przy długich trasach';
+    }, 5000);
+
+    function updateLoadingText(text) {
+        if (loadingText) loadingText.textContent = text;
     }
 
     try {
@@ -62,13 +98,15 @@ async function findRoute() {
         const toId = state.toStop.id;
 
         const url = `/api/find-route?from=${fromId}&to=${toId}`;
-        const response = await fetch(url);
+        const response = await fetchWithRetry(url, 3, updateLoadingText);
         const result = await response.json();
 
         if (result.error) {
-            loadingEl.style.display = 'none';
-            if (isMobile && loadingOverlay) loadingOverlay.classList.remove('show');
-            showToast(result.error + ' Kliknij trasę ponownie, aby spróbować.', 5000);
+            if (result.error.includes('przeciążony') || result.error.includes('pamięci')) {
+                showToast(result.error, 6000, 'warning');
+            } else {
+                showToast(result.error + ' Kliknij trasę ponownie, aby spróbować.', 5000);
+            }
             return;
         }
 
@@ -107,18 +145,20 @@ async function findRoute() {
         updateURL();
     } catch (error) {
         console.error('Route finding error:', error);
-        showToast('Wystąpił błąd podczas wyszukiwania trasy');
+        showToast('Serwer chwilowo niedostępny. Spróbuj ponownie za chwilę.', 5000, 'error');
     } finally {
-        loadingEl.style.display = 'none';
+        clearTimeout(longSearchTimer);
+        loadingEl.classList.add('hidden');
         if (isMobile && loadingOverlay) loadingOverlay.classList.remove('show');
+        if (loadingText) loadingText.textContent = 'Szukam trasy...';
     }
 }
 
 function updateEqualityIndicators(cheapResult, convenientResult) {
     // If either mode is missing, hide the equality indicator
     if (!cheapResult || !convenientResult || cheapResult.error || convenientResult.error) {
-        document.getElementById('mode-equal').style.display = 'none';
-        document.getElementById('mobile-mode-equal').style.display = 'none';
+        document.getElementById('mode-equal').classList.add('hidden');
+        document.getElementById('mobile-mode-equal').classList.add('hidden');
         return;
     }
 
@@ -130,21 +170,23 @@ function updateEqualityIndicators(cheapResult, convenientResult) {
     const equalEl = document.getElementById('mode-equal');
     if (equal) {
         equalEl.style.display = 'flex';
+        equalEl.classList.remove('hidden');
         equalEl.style.animation = 'none';
         equalEl.offsetHeight;
         equalEl.style.animation = '';
     } else {
-        equalEl.style.display = 'none';
+        equalEl.classList.add('hidden');
     }
 
     const mobileEqualEl = document.getElementById('mobile-mode-equal');
     if (equal) {
         mobileEqualEl.style.display = 'flex';
+        mobileEqualEl.classList.remove('hidden');
         mobileEqualEl.style.animation = 'none';
         mobileEqualEl.offsetHeight;
         mobileEqualEl.style.animation = '';
     } else {
-        mobileEqualEl.style.display = 'none';
+        mobileEqualEl.classList.add('hidden');
     }
 }
 
@@ -166,13 +208,15 @@ function displayRoute(result) {
     // Show right panel (desktop) or mobile result
     const isMobile = window.innerWidth <= 768;
     if (isMobile) {
-        document.getElementById('right-panel').style.display = 'none';
+        document.getElementById('right-panel').classList.add('hidden');
         document.querySelector('.main-content').classList.remove('with-result');
         document.getElementById('mobile-result').style.display = 'block';
+        document.getElementById('mobile-result').classList.remove('hidden');
     } else {
         document.getElementById('right-panel').style.display = 'block';
+        document.getElementById('right-panel').classList.remove('hidden');
         document.querySelector('.main-content').classList.add('with-result');
-        document.getElementById('mobile-result').style.display = 'none';
+        document.getElementById('mobile-result').classList.add('hidden');
     }
 
     // Update marker visibility

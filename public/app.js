@@ -40,12 +40,12 @@ function createElementFromHtml(html) {
 // Toast notification (lightweight, no dependencies)
 // ============================================================
 
-function showToast(message, duration) {
+function showToast(message, duration, type) {
     duration = duration || 3000;
     const existing = document.querySelector('.toast-notification');
     if (existing) existing.remove();
     var toast = document.createElement('div');
-    toast.className = 'toast-notification';
+    toast.className = 'toast-notification' + (type ? ' toast-' + type : '');
     toast.textContent = message;
     document.body.appendChild(toast);
     requestAnimationFrame(function() { toast.classList.add('show'); });
@@ -53,6 +53,17 @@ function showToast(message, duration) {
         toast.classList.remove('show');
         setTimeout(function() { toast.remove(); }, 300);
     }, duration);
+}
+
+function showBanner(message) {
+    if (document.querySelector('.server-banner')) return;
+    var banner = document.createElement('div');
+    banner.className = 'server-banner';
+    banner.innerHTML = '<span>' + message + '</span><button class="banner-close" aria-label="Zamknij">&times;</button>';
+    banner.querySelector('.banner-close').addEventListener('click', function() {
+        banner.remove();
+    });
+    document.body.appendChild(banner);
 }
 
 // Global state
@@ -85,6 +96,12 @@ var searchAbortController = null;
 document.addEventListener('DOMContentLoaded', function() {
     initMap();
     setupEventListeners();
+    // Non-blocking health check — show banner if server is overloaded
+    fetch('/api/health').then(function(r) {
+        if (!r.ok) showBanner('Serwer chwilowo niedostępny. Odśwież stronę za chwilę.');
+    }).catch(function() {
+        showBanner('Serwer chwilowo niedostępny. Odśwież stronę za chwilę.');
+    });
     // Wait for both stops and routes to load before restoring from URL
     Promise.all([loadStops(), loadRouteInfo()]).then(function() {
         restoreFromURL();
@@ -206,7 +223,7 @@ function initMap() {
     document.getElementById('map').appendChild(statusEl);
     // Hide on narrow screens — keep the map clean on mobile.
     if (window.innerWidth <= 768) {
-        statusEl.style.display = 'none';
+        statusEl.classList.add('hidden');
     }
 
     // The app version never changes while the server runs — one fetch on
@@ -548,7 +565,7 @@ function setupEventListeners() {
 
     // Mobile result close (button in mode bar)
     document.getElementById('mobile-result-close').addEventListener('click', function() {
-        document.getElementById('mobile-result').style.display = 'none';
+        document.getElementById('mobile-result').classList.add('hidden');
         setTimeout(function() { state.map.invalidateSize(); }, 50);
     });
 
@@ -590,8 +607,8 @@ function clearRoute() {
     state.routeGroupIds = null;
     document.getElementById('from-search').value = '';
     document.getElementById('to-search').value = '';
-    document.getElementById('right-panel').style.display = 'none';
-    document.getElementById('mobile-result').style.display = 'none';
+    document.getElementById('right-panel').classList.add('hidden');
+    document.getElementById('mobile-result').classList.add('hidden');
     document.querySelector('.main-content').classList.remove('with-result');
     state.routeLayer.clearLayers();
     updateSelectedStops();
@@ -679,15 +696,17 @@ async function showModal(title, file) {
         modalBody.innerHTML = '';
         modalBody.appendChild(createElementFromHtml(parseMarkdown(text)));
         document.getElementById('modal-overlay').style.display = 'block';
+        document.getElementById('modal-overlay').classList.remove('hidden');
         document.getElementById('modal').style.display = 'flex';
+        document.getElementById('modal').classList.remove('hidden');
     } catch (error) {
         console.error('Error loading modal content:', error);
     }
 }
 
 function closeModal() {
-    document.getElementById('modal-overlay').style.display = 'none';
-    document.getElementById('modal').style.display = 'none';
+    document.getElementById('modal-overlay').classList.add('hidden');
+    document.getElementById('modal').classList.add('hidden');
 }
 
 // ============================================================
@@ -714,25 +733,35 @@ function openShareModal() {
         '&mode=' + encodeURIComponent(state.routeMode);
     var ogImage = document.getElementById('share-og-image');
     var ogLoading = document.getElementById('share-og-loading');
-    ogImage.style.display = 'none';
+    var ogRetryCount = 0;
+    ogImage.classList.add('hidden');
     ogLoading.style.display = 'flex';
+    ogLoading.classList.remove('hidden');
     ogImage.onload = function() {
-        ogLoading.style.display = 'none';
+        ogLoading.classList.add('hidden');
         ogImage.style.display = 'block';
+        ogImage.classList.remove('hidden');
     };
     ogImage.onerror = function() {
-        ogLoading.innerHTML = '<span class="loading-text">Nie udało się wygenerować podglądu.</span>';
+        if (ogRetryCount < 2) {
+            ogRetryCount++;
+            setTimeout(function() { ogImage.src = ogImageUrl; }, 2000);
+        } else {
+            ogLoading.innerHTML = '<span class="loading-text">Podgląd niedostępny. Udostępnij link bezpośrednio.</span>';
+        }
     };
     ogImage.src = ogImageUrl;
 
     // Show the modal
     document.getElementById('share-overlay').style.display = 'block';
+    document.getElementById('share-overlay').classList.remove('hidden');
     document.getElementById('share-modal').style.display = 'flex';
+    document.getElementById('share-modal').classList.remove('hidden');
 }
 
 function closeShareModal() {
-    document.getElementById('share-overlay').style.display = 'none';
-    document.getElementById('share-modal').style.display = 'none';
+    document.getElementById('share-overlay').classList.add('hidden');
+    document.getElementById('share-modal').classList.add('hidden');
 }
 
 function copyShareLink() {
@@ -1065,7 +1094,7 @@ function collapseMobileSidebar() {
 
 function updateSelectedStops() {
     // "Wyczyść trasę" ma sens tylko gdy trasa jest wytyczona
-    document.getElementById('clear-btn').style.display = state.hasRoute ? '' : 'none';
+    document.getElementById('clear-btn').classList.toggle('hidden', !state.hasRoute);
 
     // Update marker colors and visibility
     const routeShown = !!state.hasRoute;

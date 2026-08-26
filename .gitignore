@@ -10,6 +10,7 @@ data/GTFS_*.zip
 data/A_bus/
 data/M_mob/
 data/T_tram/
+data/.gtfs_hashes.json
 
 # OS files
 .DS_Store

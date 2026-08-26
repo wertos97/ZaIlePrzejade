@@ -9,6 +9,7 @@ Reads tram, bus, and Mobilis GTFS feeds and produces:
 """
 
 import csv
+import hashlib
 import json
 import math
 import os
@@ -17,8 +18,12 @@ import urllib.request
 import zipfile
 from collections import defaultdict
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from server.config import TRANSFER_TIME_SECONDS
+
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'processed')
+_HASH_CACHE_PATH = os.path.join(DATA_DIR, '.gtfs_hashes.json')
 
 # Feed configurations: (directory, feed_name, mode, zip_filename, download_url)
 FEEDS = [
@@ -28,7 +33,7 @@ FEEDS = [
 ]
 
 # Default transfer time in seconds (5 minutes, added per transfer)
-DEFAULT_TRANSFER_TIME = 300
+DEFAULT_TRANSFER_TIME = TRANSFER_TIME_SECONDS
 
 # Krakow center coordinates for map initialization
 KRAKOW_LAT = 50.0647
@@ -44,6 +49,52 @@ def haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
     c = 2 * math.asin(math.sqrt(a))
     return R * c
+
+
+def _load_hash_cache():
+    """Load previously stored SHA-256 hashes of verified GTFS ZIPs."""
+    try:
+        with open(_HASH_CACHE_PATH, 'r') as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_hash_cache(cache):
+    """Persist SHA-256 hashes for future integrity checks."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(_HASH_CACHE_PATH, 'w') as f:
+        json.dump(cache, f, indent=2)
+
+
+def _sha256_file(filepath):
+    """Compute SHA-256 hex digest of a file."""
+    h = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _verify_zip_integrity(zip_path):
+    """Verify that a ZIP file is valid and not corrupted.
+
+    Checks that the file is a valid ZIP archive and that at least one
+    expected GTFS file (stops.txt, trips.txt, or routes.txt) is present.
+    Returns (ok, error_message).
+    """
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            names = zf.namelist()
+            expected = {'stops.txt', 'trips.txt', 'routes.txt'}
+            if not expected.intersection(names):
+                return False, f"ZIP contains no expected GTFS files (got {names[:5]})"
+            bad = zf.testzip()
+            if bad is not None:
+                return False, f"Corrupted file in ZIP: {bad}"
+    except zipfile.BadZipFile as e:
+        return False, f"Not a valid ZIP file: {e}"
+    return True, None
 
 
 def parse_float(val):
@@ -80,8 +131,12 @@ def download_gtfs(force=False):
     Download the latest GTFS feeds from ZTP Kraków and extract them into data/.
     By default skips download if the zip file already exists (allows offline
     processing). With force=True, always re-downloads and re-extracts.
+
+    After download, verifies ZIP integrity (valid archive + expected GTFS files)
+    and checks SHA-256 against previously stored hashes to detect tampering.
     """
     os.makedirs(DATA_DIR, exist_ok=True)
+    hash_cache = _load_hash_cache()
 
     for feed_dir, feed_name, mode, zip_filename, url in FEEDS:
         zip_path = os.path.join(DATA_DIR, zip_filename)
@@ -100,6 +155,23 @@ def download_gtfs(force=False):
         else:
             print(f"  {zip_filename} already exists, skipping download.")
 
+        # Verify ZIP integrity
+        ok, err = _verify_zip_integrity(zip_path)
+        if not ok:
+            print(f"    WARNING: Integrity check failed for {zip_filename}: {err}")
+            print(f"    The file may be corrupted or tampered with. Re-download with --force.")
+            continue
+
+        # SHA-256 tamper detection: compare against previously stored hash
+        current_hash = _sha256_file(zip_path)
+        prev_hash = hash_cache.get(zip_filename)
+        if prev_hash is not None and prev_hash != current_hash:
+            print(f"    WARNING: SHA-256 mismatch for {zip_filename}!")
+            print(f"    Expected: {prev_hash}")
+            print(f"    Got:      {current_hash}")
+            print(f"    The file may have been tampered with. Re-download with --force to override.")
+        hash_cache[zip_filename] = current_hash
+
         # Extract if the directory doesn't exist, is empty, or force is requested
         if force or not os.path.isdir(extract_dir) or not os.listdir(extract_dir):
             print(f"  Extracting {zip_filename}...")
@@ -111,6 +183,8 @@ def download_gtfs(force=False):
                 print(f"    ERROR extracting {zip_filename}: {e}")
         else:
             print(f"  {feed_dir} already extracted, skipping.")
+
+    _save_hash_cache(hash_cache)
 
 
 def read_feed_metadata():

@@ -50,15 +50,17 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
                 try:
                     # Raw response (no handler instance yet) — keep the same
                     # security headers the handler would send.
+                    body = b'{"error":"Serwer jest przeciazony. Sprobuj ponownie za chwile."}'
                     request.sendall(b'HTTP/1.1 503 Service Unavailable\r\n'
-                                    b'Content-Type: text/plain; charset=utf-8\r\n'
-                                    b'Content-Length: 0\r\n'
+                                    b'Content-Type: application/json; charset=utf-8\r\n'
+                                    b'Content-Length: ' + str(len(body)).encode() + b'\r\n'
                                     b'Connection: close\r\n'
-                                    b'Retry-After: 1\r\n'
+                                    b'Retry-After: 2\r\n'
                                     b'X-Content-Type-Options: nosniff\r\n'
                                     b'X-Frame-Options: DENY\r\n'
                                     b'Referrer-Policy: no-referrer\r\n'
-                                    b'\r\n')
+                                    b'\r\n'
+                                    + body)
                 except OSError:
                     pass
                 finally:

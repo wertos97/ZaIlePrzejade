@@ -15,11 +15,11 @@ REQUEST_QUEUE_SIZE = 64
 # ============================================================
 # Rate Limiting
 # ============================================================
-RATE_LIMIT_WINDOW_SECONDS = 10.0
+RATE_LIMIT_WINDOW_SECONDS = 30.0
 # One page load issues ~12 requests (HTML + CSS + JS + icons); the limit
 # must comfortably cover a few loads in a row from one IP.
 RATE_LIMIT_MAX_REQUESTS = 120
-RATE_LIMIT_EXPENSIVE_MAX_REQUESTS = 10
+RATE_LIMIT_EXPENSIVE_MAX_REQUESTS = 8
 RATE_LIMIT_CLEANUP_INTERVAL_SECONDS = 60.0
 RATE_LIMIT_STALE_CUTOFF_MULTIPLIER = 3  # entries older than window * this are stale
 
@@ -27,12 +27,13 @@ RATE_LIMIT_STALE_CUTOFF_MULTIPLIER = 3  # entries older than window * this are s
 # Pathfinding / A* Configuration
 # ============================================================
 # A* safety limits
-ASTAR_MAX_ITERATIONS = 200000
+ASTAR_MAX_ITERATIONS = 100000
 ASTAR_TIMEOUT_SECONDS = 30
 
 # Cheap (fare-based) search limits
 CHEAP_SEARCH_MAX_SECONDS = 10.0
 CHEAP_SEARCH_CONCURRENCY = 2  # max concurrent fare searches (GIL gate)
+CHEAP_HEURISTIC_CACHE_MAX = 10000  # cap unbounded memoization cache
 
 # "Convenient" route: scalar cost = fare + this penalty per boarding.
 # Each transfer is "worth" this much extra zł — tunes the balance between
@@ -45,10 +46,10 @@ CONVENIENT_BOARDING_PENALTY_ZL = 2.0
 PATHFINDING_EXECUTOR_WORKERS = 4
 
 # Cache configuration (byte budgets can be tuned via environment variables)
-FIND_CACHE_MAX_BYTES = int(os.environ.get('FIND_CACHE_MAX_BYTES', 20 * 1024 * 1024))
+FIND_CACHE_MAX_BYTES = int(os.environ.get('FIND_CACHE_MAX_BYTES', 12 * 1024 * 1024))
 
 ROUTE_CACHE_MAX_ENTRIES = 3000
-ROUTE_CACHE_MAX_BYTES = int(os.environ.get('ROUTE_CACHE_MAX_BYTES', 24 * 1024 * 1024))
+ROUTE_CACHE_MAX_BYTES = int(os.environ.get('ROUTE_CACHE_MAX_BYTES', 15 * 1024 * 1024))
 
 # Platform pairing limits
 MAX_PLATFORMS_TO_TRY_PER_GROUP = 3
@@ -133,4 +134,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.2.6"
+APP_VERSION = "1.3.0"

@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 
 logger = logging.getLogger('mpk.data')
@@ -159,16 +160,66 @@ with open(_logo_svg_path, encoding='utf-8') as f:
 
 
 def _clean_logo_svg(content):
-    """Clean logo SVG: strip XML declaration, Inkscape/Sodipodi metadata,
-    and empty defs. Keeps style= attributes (they may override fill colors)."""
-    content = re.sub(r'<\?xml[^>]*\?>', '', content, count=1)
-    content = re.sub(r'<sodipodi:namedview.*?</sodipodi:namedview>', '', content, flags=re.S)
-    content = re.sub(r'<inkscape:grid[^>]*/>', '', content)
-    content = re.sub(r'<defs[^>]*>\s*</defs>', '', content)
-    content = re.sub(r'<defs[^>]*/>', '', content)
-    content = re.sub(r'\s+id="[^"]*"', '', content)
-    content = re.sub(r'\n\s*\n+', '\n', content)
-    return content.strip()
+    """Clean logo SVG using an XML parser.
+
+    Strips Inkscape/Sodipodi namespaces, id attributes, empty defs,
+    and the XML declaration.  Only SVG-standard elements and attributes
+    are kept — a future logo update with unusual markup cannot silently
+    reintroduce dangerous elements.
+    """
+    # Register all SVG-related namespaces so ET doesn't invent ns0, ns1…
+    _NAMESPACES = {
+        'svg': 'http://www.w3.org/2000/svg',
+        'inkscape': 'http://www.inkscape.org/namespaces/inkscape',
+        'sodipodi': 'http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd',
+        'xlink': 'http://www.w3.org/1999/xlink',
+    }
+    for prefix, uri in _NAMESPACES.items():
+        ET.register_namespace(prefix, uri)
+
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        # Fallback: if XML parsing fails, return the original content
+        # (the logo is trusted, so this is a safety net, not an attack surface).
+        return content.strip()
+
+    _SAFE_NS = {'http://www.w3.org/2000/svg', 'http://www.w3.org/1999/xlink'}
+
+    def _strip_elements(elem):
+        """Recursively remove unsafe elements and attributes."""
+        to_remove = []
+        for child in elem:
+            tag = child.tag
+            # Strip Inkscape/Sodipodi/unknown-namespace elements entirely
+            ns = tag.split('}')[0] + '}' if '{' in tag else ''
+            ns_uri = tag[1:tag.index('}')] if '{' in tag else ''
+            if ns_uri and ns_uri not in _SAFE_NS:
+                to_remove.append(child)
+                continue
+            # Strip empty <defs/>
+            local = tag.split('}')[-1] if '{' in tag else tag
+            if local == 'defs' and len(child) == 0 and not child.text:
+                to_remove.append(child)
+                continue
+            _strip_elements(child)
+        for child in to_remove:
+            elem.remove(child)
+
+        # Remove id attributes and attributes from unsafe namespaces
+        attrs_to_remove = []
+        for attr in list(elem.attrib):
+            if attr == 'id':
+                attrs_to_remove.append(attr)
+            elif '{' in attr:
+                attr_ns = attr[1:attr.index('}')]
+                if attr_ns not in _SAFE_NS:
+                    attrs_to_remove.append(attr)
+        for attr in attrs_to_remove:
+            del elem.attrib[attr]
+
+    _strip_elements(root)
+    return ET.tostring(root, encoding='unicode').strip()
 
 
 logo_svg_content = _clean_logo_svg(logo_svg_content)

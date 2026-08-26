@@ -248,21 +248,20 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertEqual(json.loads(body), {'status': 'ok'})
 
     def test_status_reports_metrics(self):
-        """/api/status exposes version, load, caches and counters."""
+        """/api/status exposes version, uptime, and cache info — but no host internals."""
         status, _, body = self._get('/api/status')
         self.assertEqual(status, 200)
         s = json.loads(body)
         self.assertEqual(s['version'], APP_VERSION)
         self.assertIn('uptime_seconds', s)
-        self.assertIn('load_avg', s)
         self.assertIn('active_requests', s)
-        self.assertIn('rss_mb', s)
         self.assertIn('find_cache', s)
         self.assertIn('route_entries', s['find_cache'])
-        self.assertIn('counters', s)
-        self.assertIn('api_total', s['counters'])
         self.assertIn('cheap', s)
         self.assertIn('searches', s['cheap'])
+        # Host internals must NOT be exposed (see test_security.py)
+        for forbidden in ('load_avg', 'rss_mb', 'counters'):
+            self.assertNotIn(forbidden, s)
 
 
 if __name__ == '__main__':

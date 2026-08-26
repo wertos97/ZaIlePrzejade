@@ -5,6 +5,10 @@
     box-sizing: border-box;
 }
 
+.hidden {
+    display: none !important;
+}
+
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background: #f5f5f5;
@@ -947,9 +951,50 @@ body {
     text-align: center;
 }
 
+.toast-notification.toast-warning {
+    background: #d4ac0d;
+    color: #333;
+}
+
+.toast-notification.toast-error {
+    background: #c0392b;
+}
+
 .toast-notification.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+}
+
+.server-banner {
+    position: fixed;
+    top: 52px;
+    left: 0;
+    right: 0;
+    background: #e74c3c;
+    color: white;
+    padding: 10px 20px;
+    text-align: center;
+    font-size: 0.9em;
+    font-weight: 500;
+    z-index: 2500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.server-banner .banner-close {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 1.2em;
+    cursor: pointer;
+    padding: 0 4px;
+    opacity: 0.8;
+}
+
+.server-banner .banner-close:hover {
+    opacity: 1;
 }
 
 /* ============================================================

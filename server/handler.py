@@ -64,8 +64,9 @@ def generate_nonce() -> str:
 def sanitize_svg(content: str) -> str:
     """Sanitize SVG content for safe embedding.
 
-    Removes script elements, event handlers, javascript: URLs, and other
-    potentially dangerous content. Keeps only safe presentation elements.
+    Removes script elements, event handlers, javascript:/data: URLs,
+    and other potentially dangerous content. Keeps only safe
+    presentation elements.
     """
     if not content:
         return ''
@@ -74,13 +75,15 @@ def sanitize_svg(content: str) -> str:
     content = re.sub(r'<script\b[^>]*>.*?</script>', '', content, flags=re.IGNORECASE | re.DOTALL)
     content = re.sub(r'<script\b[^>]*/?>', '', content, flags=re.IGNORECASE)
 
-    # Remove event handlers (onclick, onload, etc.)
-    content = re.sub(r'\s+on\w+\s*=\s*["\'][^"\']*["\']', '', content, flags=re.IGNORECASE)
-    content = re.sub(r'\s+on\w+\s*=\s*\S+', '', content, flags=re.IGNORECASE)
+    # Remove event handlers (onclick, onload, etc.) — covers quoted,
+    # unquoted, and bare attribute values.
+    content = re.sub(r'\s+on\w+\s*=\s*"[^"]*"', '', content, flags=re.IGNORECASE)
+    content = re.sub(r"\s+on\w+\s*=\s*'[^']*'", '', content, flags=re.IGNORECASE)
+    content = re.sub(r'\s+on\w+\s*=\s*[^\s>"\']+', '', content, flags=re.IGNORECASE)
 
-    # Remove javascript: URLs
-    content = re.sub(r'href\s*=\s*["\']javascript:[^"\']*["\']', 'href="#"', content, flags=re.IGNORECASE)
-    content = re.sub(r'xlink:href\s*=\s*["\']javascript:[^"\']*["\']', 'xlink:href="#"', content, flags=re.IGNORECASE)
+    # Remove javascript: and data: URLs in href/xlink:href attributes
+    content = re.sub(r'(?:href|xlink:href)\s*=\s*["\']javascript:[^"\']*["\']', 'href="#"', content, flags=re.IGNORECASE)
+    content = re.sub(r'(?:href|xlink:href)\s*=\s*["\']data:[^"\']*["\']', 'href="#"', content, flags=re.IGNORECASE)
 
     # Remove style attributes that could contain expression() or behavior
     content = re.sub(r'style\s*=\s*["\'][^"\']*expression\s*\([^"\']*["\']', 'style=""', content, flags=re.IGNORECASE)
@@ -230,24 +233,18 @@ def _cleanup_stale_rate_limits():
 
 
 def _get_client_ip(handler):
-    """Get real client IP.
+    """Get real client IP for rate limiting.
 
-    When TRUST_PROXY_HEADERS is enabled, X-Real-IP is trusted — it must be
-    set by the reverse proxy from $remote_addr and cannot be influenced by
-    the client; X-Forwarded-For may contain client-supplied values, so it is
-    only used as a fallback. With TRUST_PROXY_HEADERS=false (default, direct
-    exposure) the socket address is always used, so a spoofed header cannot
-    rotate rate-limit buckets.
+    When TRUST_PROXY_HEADERS is enabled, only X-Real-IP is trusted — it
+    must be set by the reverse proxy from $remote_addr and cannot be
+    influenced by the client.  X-Forwarded-For is deliberately NOT used
+    because the client can set it to an arbitrary value, rotating
+    rate-limit buckets on every request.
     """
     if TRUST_PROXY_HEADERS:
         real = handler.headers.get('X-Real-IP', '')
         if real:
             return real.strip()
-        forwarded = handler.headers.get('X-Forwarded-For', '')
-        if forwarded:
-            first = forwarded.split(',')[0].strip()
-            if first:
-                return first
     return handler.client_address[0] if handler.client_address else 'unknown'
 
 
@@ -483,6 +480,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                     return f'<script{attrs} nonce="{nonce}">'
 
                 page_html = re.sub(r'<script\b([^>]*)>', _add_nonce, page_html)
+                page_html = page_html.replace('?v=__VERSION__', f'?v={APP_VERSION}')
                 body = page_html.encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -492,6 +490,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 self._send_body(body)
                 return
             except Exception:
+                get_logger('mpk.http').warning('Failed to serve index.html with nonce injection', exc_info=True)
                 pass  # Fall through to default handler
 
         super().do_GET()
@@ -539,6 +538,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 'twitter:image': og_image_url,
             })
 
+            page_html = page_html.replace('?v=__VERSION__', f'?v={APP_VERSION}')
             body = page_html.encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -563,7 +563,14 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             if expensive:
                 client_ip = _get_client_ip(self)
                 if not _rate_limit_ok(client_ip, expensive=True):
-                    self.serve_json({'error': 'Zbyt wiele zapytań. Spróbuj ponownie za chwilę.'}, status=429)
+                    self.send_response(429)
+                    self.send_header('Retry-After', '3')
+                    self.send_header('Content-Type', 'application/json; charset=utf-8')
+                    body = '{"error":"Zbyt wiele zapytan. Sprobuj ponownie za chwile."}'.encode()
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self._send_body(body)
                     return
 
             if path == '/api/stops':
@@ -873,16 +880,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
         self.send_header('Referrer-Policy', 'no-referrer')
-        self.send_header('X-XSS-Protection', '1; mode=block')
+        self.send_header('Strict-Transport-Security',
+                         'max-age=63072000; includeSubDomains')
         self.send_header(
             'Content-Security-Policy',
             "default-src 'self'; "
             f"script-src 'self' 'nonce-{nonce}'; "
-            # 'unsafe-inline' for styles is required: the initial hidden state
-            # of modals/panels uses style="display:none" ATTRIBUTES in HTML,
-            # and CSP cannot allowlist those with a nonce (only <style>
-            # elements). Scripts stay strictly nonce-gated.
-            "style-src 'self' 'unsafe-inline'; "
+            "style-src 'self'; "
             "img-src 'self' data: https:; "
             "connect-src 'self'; "
             "font-src 'self'; "
