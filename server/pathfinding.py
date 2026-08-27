@@ -1319,33 +1319,32 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
     best_cheap = None
     last_error = None
 
-    # Parallel short A*: run all platform pairs concurrently.
-    _short_cancel = threading.Event()
-
-    def _run_short(fs, ts):
-        set_thread_cancel_event(_short_cancel)
-        try:
-            return find_shortest_path(fs, ts)
-        finally:
-            clear_thread_cancel_event()
-
-    with concurrent.futures.ThreadPoolExecutor(
-            max_workers=_MAX_PLATFORMS_TO_TRY ** 2) as pool:
-        short_futures = []
-        for from_platform in from_platforms:
-            for to_platform in to_platforms:
-                fut = pool.submit(
-                    _run_short, from_platform['id'], to_platform['id'])
-                short_futures.append(fut)
-
-        for fut in short_futures:
-            result, error = fut.result(timeout=25.0)
+    # Short A*: try all platform pairs sequentially.
+    # NOTE: Do NOT use a nested ThreadPoolExecutor here — on timeout,
+    # run_pathfinding_with_timeout sets a cancel event and the outer
+    # executor frees the worker.  A nested pool's shutdown(wait=True)
+    # would block the worker from returning, permanently draining the
+    # executor pool until a server restart.
+    for from_platform in from_platforms:
+        for to_platform in to_platforms:
+            if _check_cancelled():
+                break
+            result, error = find_shortest_path(
+                from_platform['id'], to_platform['id'])
             if result is not None:
                 dist = result.get('total_distance', float('inf'))
                 if best_short is None or dist < best_short['total_distance']:
                     best_short = result
             elif last_error is None:
                 last_error = error
+        if _check_cancelled():
+            break
+
+    # If we were cancelled mid-short-search, skip remaining phases.
+    if _check_cancelled():
+        err = last_error or "Anulowano wyszukiwanie"
+        return ((best_short, None) if best_short else (None, err),
+                (None, err), (None, err))
 
     # Convenient: dedicated fare+transfers balance search (multi-source over
     # all platform pairs). Cost = fare + penalty per boarding, so it prefers
