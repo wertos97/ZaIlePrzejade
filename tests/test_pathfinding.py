@@ -370,7 +370,12 @@ class TestExactSearchExactness(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from server.data import (adjacency, stops_by_id, stops_grouped,
+                                 stop_to_group, routes_by_id, route_shapes)
+        from server.pathfinding import init_pathfinding
         import server.pathfinding as pf
+        init_pathfinding(adjacency, stops_by_id, stops_grouped, stop_to_group,
+                         routes_by_id, route_shapes)
         cls.pf = pf
 
     def setUp(self):
@@ -421,12 +426,14 @@ class TestExactSearchExactness(unittest.TestCase):
         pf.stop_to_group = {sid: sid for sid in coords}
         # Fresh find cache per test — cached successes ignore upper_bound,
         # which would defeat the bound-pruning test below.
+        pf._rebuild_line_index()
         pf._find_cache.clear()
         pf._find_cache_bytes = 0
 
     def tearDown(self):
         for name, value in self._saved.items():
             setattr(self.pf, name, value)
+        self.pf._rebuild_line_index()
 
     # ------------------------------------------------------------
     # Oracle: brute-force every simple path, score with the same rules
@@ -452,16 +459,20 @@ class TestExactSearchExactness(unittest.TestCase):
         return paths
 
     def _score(self, path, penalty):
-        """Score a path exactly like the search does (same ticket rules)."""
+        """Score a path exactly like the search does (same ticket rules).
+
+        Ticket rules (matching the displayed-fare merge in
+        _build_route_result): a walk between platforms does NOT close the
+        ticket — re-boarding the SAME line continues the ride; boarding a
+        different line closes it and opens a new ticket.
+        """
         pf = self.pf
         closed, acc, boardings, cur = 0.0, 0.0, 0, None
         for _u, _v, e in path:
             rid, dist = e['route_id'], e['distance']
             if rid == 'transfer':
-                closed += pf._ticket_price(acc)
-                acc = 0.0
-                cur = 'transfer'
-            elif cur is None or cur == 'transfer' or rid != cur:
+                continue  # ticket stays open, route/acc unchanged
+            elif cur is None or rid != cur:
                 closed += pf._ticket_price(acc)
                 acc = dist
                 boardings += 1
@@ -509,26 +520,86 @@ class TestExactSearchExactness(unittest.TestCase):
         self.assertEqual(len(conv['segments']), 1)
 
     def test_upper_bound_pruning_stays_exact(self):
-        """Pruning by a bound must never lose the optimum: with a bound just
-        below the optimum the search must report 'no route', with the exact
-        optimum as the bound it must find it."""
-        result, err = self.pf.find_cheapest_path(['s1'], ['s3'],
-                                                 upper_bound=7.9)
+        """Pruning by a bound must never lose the optimum (tested directly
+        on the capped A*: with a bound well below the optimum it must report
+        'no route', with the exact optimum as the bound it must find it).
+        The top-level driver treats the bound as a hint only — the ride
+        enumeration returns the proven optimum regardless."""
+        result, err = self.pf._find_exact_fare_route_capped(
+            ['s1'], ['s3'], upper_bound=7.0, boarding_penalty_zl=0.0,
+            max_boardings=2, max_seconds=5)
         self.assertIsNone(result)
         self.assertIn('Nie znaleziono', err)
-        result, err = self.pf.find_cheapest_path(['s1'], ['s3'],
-                                                 upper_bound=8.0)
+        result, err = self.pf._find_exact_fare_route_capped(
+            ['s1'], ['s3'], upper_bound=8.0, boarding_penalty_zl=0.0,
+            max_boardings=2, max_seconds=5)
         self.assertIsNotNone(result, err)
         self.assertAlmostEqual(self._raw_fare(result), 8.0, places=6)
 
-        conv, cerr = self.pf.find_most_convenient_path(['s1'], ['s3'],
-                                                       upper_bound=10.5)
+        conv, cerr = self.pf._find_exact_fare_route_capped(
+            ['s1'], ['s3'], upper_bound=10.5, boarding_penalty_zl=2.0,
+            max_boardings=1, max_seconds=5)
         self.assertIsNone(conv)
         self.assertIn('Nie znaleziono', cerr)
-        conv, cerr = self.pf.find_most_convenient_path(['s1'], ['s3'],
-                                                       upper_bound=11.0)
+        conv, cerr = self.pf._find_exact_fare_route_capped(
+            ['s1'], ['s3'], upper_bound=11.0, boarding_penalty_zl=2.0,
+            max_boardings=1, max_seconds=5)
         self.assertIsNotNone(conv, cerr)
         self.assertAlmostEqual(self._raw_fare(conv), 9.0, places=6)
+
+    def test_same_line_across_platform_walk_is_one_ticket(self):
+        """Regression for ticket semantics: walking between platforms of the
+        same stop and re-boarding the SAME line must price as ONE ticket
+        (the display merges such segments), not two.
+
+        Graph: m1 -L1 3.5-> m2 -walk 0.1-> m3 -L1 3.5-> m4 costs
+        price(7.0) = 7.50 with 1 boarding, beating m1 -X-> m5 -Y-> m4
+        (8.00, 2 boardings)."""
+        pf = self.pf
+
+        def edge(to, route, dist):
+            return {'to': to, 'route_id': route, 'distance': dist,
+                    'time': int(dist * 120), 'mode': 'bus', 'headsign': 'T'}
+
+        pf.adjacency = {
+            'm1': [edge('m2', 'L1', 3.5), edge('m5', 'X', 3.5)],
+            'm2': [edge('m1', 'L1', 3.5), edge('m3', 'transfer', 0.1)],
+            'm3': [edge('m2', 'transfer', 0.1), edge('m4', 'L1', 3.5)],
+            'm4': [edge('m3', 'L1', 3.5), edge('m5', 'Y', 3.5)],
+            'm5': [edge('m1', 'X', 3.5), edge('m4', 'Y', 3.5)],
+        }
+        coords = {
+            'm1': (50.000, 19.900), 'm2': (50.032, 19.900),
+            'm3': (50.033, 19.901), 'm4': (50.065, 19.901),
+            'm5': (50.000, 19.935),
+        }
+        pf.stop_coords = dict(coords)
+        pf.stops_by_id = {
+            sid: {'id': sid, 'name': sid, 'lat': lat, 'lon': lon,
+                  'code': '', 'mode': 'bus'}
+            for sid, (lat, lon) in coords.items()}
+        pf.stops_grouped = {
+            sid: {'id': sid, 'name': sid, 'lat': lat, 'lon': lon,
+                  'modes': ['bus'],
+                  'platforms': [{'id': sid, 'code': '', 'lat': lat,
+                                 'lon': lon, 'mode': 'bus'}]}
+            for sid, (lat, lon) in coords.items()}
+        pf.stop_to_group = {sid: sid for sid in coords}
+        pf._rebuild_line_index()
+        pf._find_cache.clear()
+        pf._find_cache_bytes = 0
+
+        result, err = pf.find_cheapest_path(['m1'], ['m4'])
+        self.assertIsNotNone(result, err)
+        self.assertAlmostEqual(self._raw_fare(result), 7.5, places=6)
+        # One ticket: L1 + walk + L1 merged into a single segment.
+        self.assertEqual(len(result['segments']), 1)
+
+        conv, cerr = pf.find_most_convenient_path(['m1'], ['m4'])
+        self.assertIsNotNone(conv, cerr)
+        # convenient: 7.50 + 1 boarding (2.00) = 9.50 beats X+Y (8+4=12).
+        self.assertAlmostEqual(
+            self._raw_fare(conv) + 2.0 * len(conv['segments']), 9.5, places=6)
 
 
 if __name__ == '__main__':

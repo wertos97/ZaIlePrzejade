@@ -62,6 +62,17 @@ stop_coords: dict = {}
 
 # Derived: stop_pair_routes built from adjacency during init
 stop_pair_routes: dict = {}
+# Line-graph index (built in init_pathfinding): route edges by from-stop,
+# routes serving each stop — used by the ride enumeration.
+_route_edges: dict = {}
+_stop_routes: dict = {}
+_walk_edges: dict = {}
+_walk_component: dict = {}
+# LRU of line-sweep results (dist/parents per (line, platform)) shared by
+# the ride enumerations of both modes and across requests. Bounded memory:
+# entries store ride distances only.
+_sweep_memo: collections.OrderedDict = collections.OrderedDict()
+_SWEEP_MEMO_MAX = 2000
 
 
 # ============================================================
@@ -89,6 +100,42 @@ def _flush_route_cache_once(last_sig, last_count):
         last_count = count
         last_sig = sig
     return last_sig, last_count
+
+
+def _rebuild_line_index():
+    """(Re)build the line-graph index from the CURRENT adjacency global.
+
+    Built once at init; the synthetic-graph tests call it after swapping
+    adjacency so the enumeration always walks the live graph.
+    """
+    global _route_edges, _stop_routes, _walk_edges, _walk_component
+    _route_edges = {}
+    _stop_routes = {}
+    _walk_edges = {}
+    for stop_id, edges in adjacency.items():
+        for edge in edges:
+            rid = edge['route_id']
+            if rid == 'transfer':
+                _walk_edges.setdefault(stop_id, []).append(edge)
+                continue
+            _route_edges.setdefault(rid, {}).setdefault(stop_id, []).append(edge)
+            _stop_routes.setdefault(stop_id, set()).add(rid)
+    _walk_component = {}  # platform -> frozenset of walk-connected platforms
+    for stop_id in _walk_edges:
+        if stop_id in _walk_component:
+            continue
+        comp = {stop_id}
+        queue = [stop_id]
+        while queue:
+            s = queue.pop()
+            for wedge in _walk_edges.get(s, ()):
+                t = wedge['to']
+                if t not in comp:
+                    comp.add(t)
+                    queue.append(t)
+        frozen = frozenset(comp)
+        for s in comp:
+            _walk_component[s] = frozen
 
 
 def init_pathfinding(adj, stops_by_id_ref, stops_grouped_ref,
@@ -156,6 +203,9 @@ def init_pathfinding(adj, stops_by_id_ref, stops_grouped_ref,
                     stop_pair_routes[key] = []
                 if edge['route_id'] not in stop_pair_routes[key]:
                     stop_pair_routes[key].append(edge['route_id'])
+
+    # Line-graph index for the ride enumeration (see _enumerate_ride_bound)
+    _rebuild_line_index()
 
 
 # ============================================================
@@ -429,6 +479,9 @@ _PRICE_LOOKUP = tuple(
     calculate_cost(min(i / 100.0, PRICE_LOOKUP_MAX_KM))[0]
     for i in range(_PRICE_LOOKUP_MAX_INDEX + 1)
 )
+# Base ticket price — the minimum cost of any ride segment. Used by the
+# exact searches for the boarding-count certification bounds.
+_BASE_FARE = calculate_cost(0.5)[0]
 
 
 def _ticket_price(acc_km):
@@ -492,58 +545,533 @@ def _cheap_heuristic(acc, remaining_km):
     return best
 
 
-def find_cheapest_path(start_ids, end_ids, upper_bound=float('inf')):
+def find_cheapest_path(start_ids, end_ids, upper_bound=float('inf'),
+                       bound_route=None):
     """A* for the CHEAPEST (fare-minimising) path between stop sets.
 
-    EXACT Pareto search — the returned route is the proven optimum of the
-    objective "total fare" (each ride is a separate ticket priced from zero).
-    No approximate results are ever returned: if the search cannot finish
-    within its time budget, an error is returned instead of a heuristic route.
+    EXACT Pareto search with iterative deepening on the number of boardings
+    (see :func:`_find_exact_fare_route`): the returned route is the PROVEN
+    optimum of "total fare", or an error if the budget ran out before the
+    optimum was certified. No approximate results are ever returned.
 
-    State: (stop, route, acc) where acc is the distance accumulated in the
-    current ticket segment. Moving along the same route extends the segment;
-    transfers / direct route changes close it (each segment is a separate
-    ticket priced from zero). The (stop, route) frontier keeps a Pareto set
-    of (closed_cost, acc) with exact dominance, so the search is optimal.
+    State: (stop, route) with a Pareto frontier of (closed_cost, acc,
+    boardings). Moving along the same route extends the current ticket
+    segment; transfers / direct route changes close it (each segment is a
+    separate ticket priced from zero).
 
-    start_ids / end_ids: lists of individual stop (platform) ids — the search
-    runs from all starts at once and stops at the FIRST reachable end
-    (multi-source A*, one search instead of one per platform pair).
-
-    upper_bound: scalar cost of some known complete route — states whose
-    partial cost already exceeds it are pruned (optimality preserved: any
-    completion would cost >= partial cost).
+    upper_bound: scalar cost of a known complete route (bound_route's fare).
+    bound_route: that route itself — returned as the certified optimum when
+    the search proves nothing cheaper exists without needing to enumerate it.
 
     Returns (result_dict, None) or (None, error_string); successes cached.
     """
     return _find_exact_fare_route(start_ids, end_ids, upper_bound,
                                   boarding_penalty_zl=0.0,
                                   max_seconds=CHEAP_SEARCH_MAX_SECONDS,
-                                  cache_prefix='cheap')
+                                  cache_prefix='cheap',
+                                  bound_route=bound_route)
 
 
-def find_most_convenient_path(start_ids, end_ids, upper_bound=float('inf')):
+def find_most_convenient_path(start_ids, end_ids, upper_bound=float('inf'),
+                              bound_route=None):
     """A* for the MOST CONVENIENT path: the exact minimum of
     "total fare + CONVENIENT_BOARDING_PENALTY_ZL per boarding".
 
-    Same exact Pareto machinery as :func:`find_cheapest_path`, with the
-    boarding penalty folded into the closed cost. Dominance on (closed, acc)
-    stays exact: the cost of continuing from a state depends only on `acc`
-    (ticket price steps) and on FUTURE boardings — never on how the state was
-    reached. The fare-only heuristic remains admissible (penalty >= 0).
+    Same exact machinery as :func:`find_cheapest_path` with the boarding
+    penalty folded into the closed cost. Dominance stays exact: the cost of
+    continuing from a state depends only on `acc` and FUTURE boardings —
+    never on how the state was reached. The fare-only heuristic remains
+    admissible (penalty >= 0).
 
     Returns (result_dict, None) or (None, error_string); successes cached.
     """
     return _find_exact_fare_route(start_ids, end_ids, upper_bound,
                                   boarding_penalty_zl=_BOARDING_PENALTY,
                                   max_seconds=CONVENIENT_SEARCH_MAX_SECONDS,
-                                  cache_prefix='convenient')
+                                  cache_prefix='convenient',
+                                  bound_route=bound_route)
+
+
+def _walk_platforms(stop_id):
+    """Platforms reachable from stop_id by walking transfers — the whole
+    transitive walk component (chained walks are free and legal), stop_id
+    itself included."""
+    comp = _walk_component.get(stop_id)
+    if comp is None:
+        return (stop_id,)
+    return tuple(comp)
+
+
+def _walk_fragment(from_stop, to_stop):
+    """Walking-transfer hop(s) from from_stop to to_stop as a path
+    fragment (BFS over the walk edges), or None when unreachable."""
+    if from_stop == to_stop:
+        return []
+    parents = {from_stop: None}
+    queue = collections.deque([from_stop])
+    while queue:
+        s = queue.popleft()
+        for wedge in _walk_edges.get(s, ()):
+            t = wedge['to']
+            if t in parents:
+                continue
+            parents[t] = (s, wedge)
+            if t == to_stop:
+                fragment = []
+                cur = t
+                while parents[cur] is not None:
+                    prev_s, edge = parents[cur]
+                    fragment.append((cur, 'transfer', edge))
+                    cur = prev_s
+                fragment.reverse()
+                return fragment
+            queue.append(t)
+    return None
+
+
+def _ride_sweep(route_id, start_stop, want_parents=False):
+    """Dijkstra over one line's edges from start_stop, PLUS the free
+    walking transfers between platforms of the same stop cluster (a walk
+    does not consume ticket distance — it just re-locates the passenger,
+    who may continue riding the same line on a different platform).
+
+    This makes the sweep COMPLETE for the "one ticket on this line" class:
+    every stop reachable by riding line route_id with arbitrary same-cluster
+    walks is found with its exact ticket distance.
+
+    By default returns the minimum ride distance per stop, cached in the
+    global LRU (shared across modes and requests). With want_parents=True
+    returns (dist, parents) for path reconstruction (not cached).
+    """
+    if want_parents:
+        return _ride_sweep_with_parents(route_id, start_stop)
+    key = (route_id, start_stop)
+    cached = _sweep_memo.get(key)
+    if cached is not None:
+        _sweep_memo.move_to_end(key)
+        return cached
+    redges = _route_edges.get(route_id)
+    dist = None
+    if redges and (start_stop in redges or _walk_edges.get(start_stop)
+                   or adjacency.get(start_stop)):
+        dist = {start_stop: 0.0}
+        pq = [(0.0, start_stop)]
+        while pq:
+            d, s = heapq.heappop(pq)
+            if d > dist.get(s, float('inf')) + 1e-12:
+                continue
+            for edge in redges.get(s, ()):
+                t = edge['to']
+                nd = d + edge['distance']
+                if nd < dist.get(t, float('inf')) - 1e-12:
+                    dist[t] = nd
+                    heapq.heappush(pq, (nd, t))
+            for wedge in _walk_edges.get(s, ()):
+                t = wedge['to']
+                if d < dist.get(t, float('inf')) - 1e-12:
+                    dist[t] = d
+                    heapq.heappush(pq, (d, t))
+    _sweep_memo[key] = dist
+    _sweep_memo.move_to_end(key)
+    while len(_sweep_memo) > _SWEEP_MEMO_MAX:
+        _sweep_memo.popitem(last=False)
+    return dist
+
+
+def _ride_sweep_with_parents(route_id, start_stop):
+    """As _ride_sweep, but returns (dist, parents) for path reconstruction.
+    Not cached (used rarely — only to rebuild the winning route)."""
+    redges = _route_edges.get(route_id)
+    if not redges or start_stop not in redges and not _walk_edges.get(start_stop):
+        return None, None
+    dist = {start_stop: 0.0}
+    parents = {}
+    pq = [(0.0, start_stop)]
+    while pq:
+        d, s = heapq.heappop(pq)
+        if d > dist.get(s, float('inf')) + 1e-12:
+            continue
+        for edge in redges.get(s, ()):
+            t = edge['to']
+            nd = d + edge['distance']
+            if nd < dist.get(t, float('inf')) - 1e-12:
+                dist[t] = nd
+                parents[t] = (s, edge)
+                heapq.heappush(pq, (nd, t))
+        for wedge in _walk_edges.get(s, ()):
+            t = wedge['to']
+            if d < dist.get(t, float('inf')) - 1e-12:
+                dist[t] = d
+                parents[t] = (s, wedge)
+                heapq.heappush(pq, (d, t))
+    return dist, parents
+
+
+def _ride_fragment(parents, start, end):
+    """Reconstruct a ride path as [(stop, route, edge), ...] fragment
+    (WITHOUT the leading origin entry)."""
+    fragment = []
+    cur = end
+    while cur != start:
+        prev_stop, edge = parents[cur]
+        fragment.append((cur, edge['route_id'], edge))
+        cur = prev_stop
+    fragment.reverse()
+    return fragment
+
+
+def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
+                          deadline):
+    """Exact-for-up-to-4-rides fare enumeration over the line graph (no A*).
+
+    Composes WHOLE rides instead of expanding per-hop states:
+      F1 — one sweep per (origin-group platform, its line): every 1-ride
+           prefix, complete (sweeps include the free same-group walks, so
+           walk-merged same-line continuations are priced correctly);
+      F2 — per (stop, line) the Pareto set of (closed2, acc2) over all
+           2-ride prefixes (complete);
+      B1 — per (platform, line) the cheapest single ride TO the destination
+           (complete); per-platform top-2 supports the line exclusions;
+      B2 — lazily per (platform, line) the cheapest 2-ride suffix to the
+           destination (complete).
+
+    Composing F1/F2 with B1/B2 enumerates ALL routes with up to 4 rides, so
+    the best found route is CERTIFIABLY optimal: a 5th boarding costs at
+    least base_fare + penalty, and displayed fares are capped at the daily
+    limit, so no 5+-ride route can strictly beat the best <=4-ride route
+    (the driver certifies this explicitly). The A* remains as the fallback
+    for the degenerate case of the enumeration hitting its deadline.
+
+    Returns (path_with_edges, scalar) for the best route, or (None, inf).
+    """
+    end_set = set(end_platforms)
+    penalty = boarding_penalty_zl
+    # Straight-line distance to the destination group, per platform (memo):
+    # a lower bound on the distance any suffix of rides must still cover.
+    end_coords_list = [stop_coords.get(e, (0, 0)) for e in end_platforms]
+    hav_memo = {}
+
+    def _hav_to_dest(stop):
+        d = hav_memo.get(stop)
+        if d is None:
+            sc = stop_coords.get(stop, (0, 0))
+            d = min(haversine_km(sc[0], sc[1], ec[0], ec[1])
+                    for ec in end_coords_list)
+            hav_memo[stop] = d
+        return d
+    # Compositions may board/alight at ANY platform of the origin/destination
+    # groups (walks are free) — expand the platform sets to whole groups.
+    from_platforms = {p for o in from_platforms for p in _walk_platforms(o)}
+    end_platforms = {p for e in end_platforms for p in _walk_platforms(e)}
+    best_scalar = float('inf')
+    best = None  # ride list [(line, from_platform, to_platform), ...]
+
+    def consider(scalar, rides):
+        nonlocal best_scalar, best
+        if scalar < best_scalar - 1e-9:
+            best_scalar = scalar
+            best = rides
+
+    # ---- F1: first rides, complete per (arrival platform, line)
+    f1 = {}  # (platform, line) -> (acc, origin_platform)
+    for o in from_platforms:
+        for route_id in _stop_routes.get(o, ()):
+            dist = _ride_sweep(route_id, o)
+            if dist is None:
+                continue
+            for t, d in dist.items():
+                acc = round(min(d, _ACC_CAP) * 10) / 10
+                key = (t, route_id)
+                cur = f1.get(key)
+                if cur is None or acc < cur[0]:
+                    f1[key] = (acc, o)
+                    # 1-ride completion (sweeps include walks, so t covers
+                    # every platform of its stop group)
+                    if t in end_set:
+                        consider(penalty + _ticket_price(acc),
+                                 [(route_id, o, t)])
+
+    # ---- stage 1 exit: if the best 1-ride route can already be certified
+    # (every route with 2+ boardings costs >= per_floor * 2), stop here.
+    per_floor = _BASE_FARE + penalty
+    if best_scalar <= per_floor * 2 + 1e-9:
+        return _materialize(best), best_scalar
+
+    # ---- B1: cheapest single rides TO the destination.
+    # b1[(platform, line)] = (acc, dest_platform); b1_top[platform] holds
+    # the 2 smallest values over DISTINCT lines (supports exclusions).
+    b1 = {}
+    for e in end_platforms:
+        for route_id in _stop_routes.get(e, ()):
+            dist = _ride_sweep(route_id, e)
+            if dist is None:
+                continue
+            for s, d in dist.items():
+                if s in end_set:
+                    continue  # degenerate: already at the destination
+                acc = round(min(d, _ACC_CAP) * 10) / 10
+                key = (s, route_id)
+                cur = b1.get(key)
+                if cur is None or _ticket_price(acc) < _ticket_price(cur[0]):
+                    b1[key] = (acc, e)
+    b1_top = {}
+    for (s, line), (acc, e) in b1.items():
+        lst = b1_top.setdefault(s, [])
+        lst.append((_ticket_price(acc), line, e))
+        lst.sort()
+        del lst[2:]
+
+    def b1_best(platform, exclude_line):
+        for val, line, e in b1_top.get(platform, ()):
+            if line != exclude_line:
+                return val, (line, platform, e)
+        return None
+
+    # ---- 2-ride composition: F1 arrival + B1
+    for (t, line1), (acc1, o) in f1.items():
+        if time.monotonic() > deadline:
+            break
+        for t2 in _walk_platforms(t):
+            pair = b1_best(t2, line1)
+            if pair is not None:
+                val, b1_desc = pair
+                consider(penalty + _ticket_price(acc1) + val + penalty,
+                         [(line1, o, t), b1_desc])
+
+    # ---- stage 2 exit: <= 2-ride routes fully enumerated
+    if best_scalar <= per_floor * 3 + 1e-9:
+        return _materialize(best), best_scalar
+
+    # ---- F2: second rides — Pareto (closed2, acc2) per (platform, line).
+    # closed2 = p (board ride 1) + price(acc1) + p (board ride 2).
+    # Boarding ride 2 from any WALK-REACHABLE platform (same walk component
+    # as ride 1's arrival — the walk is free and the ticket stays open)
+    # closes ride 1 at price(acc1); per component keep the 2 cheapest
+    # DISTINCT lines (the exclusion pattern again).
+    comp_f1 = {}  # walk component -> [(price(acc1), line, origin, arrival)]
+    for (t, line), (acc, o) in f1.items():
+        comp = _walk_component.get(t) or frozenset((t,))
+        comp_f1.setdefault(comp, []).append((_ticket_price(acc), line, o, t))
+    comp_top2 = {}
+    for comp, lst in comp_f1.items():
+        lst.sort()
+        top = []
+        seen = set()
+        for item in lst:
+            if item[1] in seen:
+                continue
+            seen.add(item[1])
+            top.append(item)
+            if len(top) == 2:
+                break
+        comp_top2[comp] = top
+
+    f2 = {}  # (platform, line) -> [(closed2, acc2, (line1, o, t, t2)), ...]
+
+    def f2_insert(u, line_m, closed2, acc2, f1_desc):
+        lst = f2.get((u, line_m))
+        if lst is None:
+            f2[(u, line_m)] = [(closed2, acc2, f1_desc)]
+            return
+        for (c2, a2, _d) in lst:
+            if c2 <= closed2 + 1e-9 and a2 <= acc2 + 1e-9:
+                return  # dominated
+        kept = [(c2, a2, d) for (c2, a2, d) in lst
+                if not (closed2 <= c2 + 1e-9 and acc2 <= a2 + 1e-9)]
+        kept.append((closed2, acc2, f1_desc))
+        f2[(u, line_m)] = kept
+
+    for comp, top in comp_top2.items():
+        if time.monotonic() > deadline:
+            break
+        for t2 in comp:
+            for route2 in _stop_routes.get(t2, ()):
+                cands = [x for x in top if x[1] != route2]
+                if not cands:
+                    continue
+                dist2 = _ride_sweep(route2, t2)
+                if dist2 is None:
+                    continue
+                for u, d2 in dist2.items():
+                    acc2 = round(min(d2, _ACC_CAP) * 10) / 10
+                    for price_acc1, line1, o, t in cands:
+                        f2_insert(u, route2, price_acc1 + 2 * penalty,
+                                  acc2, (line1, o, t, t2))
+
+    # ---- 3-ride composition: F2 arrival + B1
+    for (u, line_m), entries in list(f2.items()):
+        if time.monotonic() > deadline:
+            break
+        for u2 in _walk_platforms(u):
+            pair = b1_best(u2, line_m)
+            if pair is None:
+                continue
+            val, b1_desc = pair
+            for closed2, acc2, f1_desc in entries:
+                total = closed2 + _ticket_price(acc2) + val + penalty
+                rides = ([f1_desc[:3]]
+                         + [(line_m, f1_desc[3], u), b1_desc])
+                consider(total, rides)
+
+    # ---- B2 (lazy): cheapest 2-ride suffix from s2 to the destination,
+    # first ride on line L3. Value = price(acc3) + p + price(acc4) + p.
+    # Early-breaks once acc3 grows past the point where ride 3 (+ the
+    # cheapest conceivable ride 4) cannot improve its own best.
+    b2_cache = {}
+    b2_floor = 2 * _BASE_FARE + 2 * penalty  # cheapest conceivable B2
+
+    def b2_get(prefix, s2, line3):
+        """Best 2-ride suffix (a ride on line3 from s2, then one more
+        boarding) worth less than `best_scalar - prefix` in total. Runs a
+        BOUNDED Dijkstra along line3: stops are popped in ticket-distance
+        order, and once price(acc3) alone makes an improvement impossible
+        (price(acc3) + p + base_fare + p >= best - prefix), every later
+        stop is worse too and the sweep stops. Keeps the typical sweep to
+        a few km around the boarding platform."""
+        key = (s2, line3)
+        cached = b2_cache.get(key)
+        if cached is not None:
+            return cached if cached != 'none' else None
+        # improvement needs prefix + p + price(acc3) + p + price(acc4) + p
+        # < best_scalar, and price(acc4) >= _BASE_FARE
+        limit3 = best_scalar - prefix - 3 * penalty - _BASE_FARE
+        redges = _route_edges.get(line3)
+        result = None
+        if redges and (s2 in redges or _walk_edges.get(s2)):
+            best_val = float('inf')
+            best_rides = None
+            dist = {s2: 0.0}
+            pq = [(0.0, s2)]
+            while pq:
+                d, m = heapq.heappop(pq)
+                if d > dist.get(m, float('inf')) + 1e-12:
+                    continue
+                acc3 = round(min(d, _ACC_CAP) * 10) / 10
+                if _ticket_price(acc3) + penalty >= limit3 - 1e-9:
+                    break  # acc3 monotone along the sweep
+                base3 = _ticket_price(acc3) + penalty
+                if m in end_set:
+                    if base3 < best_val - 1e-9:
+                        best_val = base3
+                        best_rides = [(line3, s2, m)]
+                    continue
+                for m2 in _walk_platforms(m):
+                    for line4 in _stop_routes.get(m2, ()):
+                        if line4 == line3:
+                            continue
+                        entry = b1.get((m2, line4))
+                        if entry is None:
+                            continue
+                        acc4, e = entry
+                        cand_val = base3 + _ticket_price(acc4) + penalty
+                        if cand_val < best_val - 1e-9:
+                            best_val = cand_val
+                            best_rides = [(line3, s2, m), (line4, m2, e)]
+                for edge in redges.get(m, ()):
+                    t = edge['to']
+                    nd = d + edge['distance']
+                    if nd < dist.get(t, float('inf')) - 1e-12:
+                        dist[t] = nd
+                        heapq.heappush(pq, (nd, t))
+                for wedge in _walk_edges.get(m, ()):
+                    t = wedge['to']
+                    if d < dist.get(t, float('inf')) - 1e-12:
+                        dist[t] = d
+                        heapq.heappush(pq, (d, t))
+            if best_rides is None:
+                b2_cache[key] = 'none'
+                return None
+            result = (best_val, best_rides)
+            b2_cache[key] = result
+        return result
+
+    # ---- 4-ride composition: F2 arrival + B2 (lazy, gated, sorted)
+    f2_sorted = sorted(
+        f2.items(),
+        key=lambda kv: min(closed2 + _ticket_price(acc2)
+                           for closed2, acc2, _d in kv[1]))
+    for (u, line_m), entries in f2_sorted:
+        floor4 = min((closed2 + _ticket_price(acc2)
+                      for closed2, acc2, _d in entries), default=None)
+        if floor4 is None:
+            continue
+        # sorted: once the cheapest conceivable 4-ride completion from this
+        # entry cannot improve, no later entry can either
+        if floor4 + penalty + b2_floor >= best_scalar - 1e-9:
+            break
+        # tighter bound: the 2-ride suffix from u must still cover the
+        # straight-line distance to the destination
+        if floor4 + penalty + _ticket_price(_hav_to_dest(u)) \
+                + 2 * penalty >= best_scalar - 1e-9:
+            continue
+        if time.monotonic() > deadline:
+            break
+        for u2 in _walk_platforms(u):
+            if time.monotonic() > deadline:
+                break
+            entry_s2 = min(closed2 + _ticket_price(acc2)
+                           for closed2, acc2, _d in entries)
+            b2 = b2_get(entry_s2, u2, line_m)
+            if b2 is None:
+                continue
+            val, b2_rides = b2
+            for closed2, acc2, f1_desc in entries:
+                total = closed2 + _ticket_price(acc2) + val
+                rides = ([f1_desc[:3]]
+                         + [(line_m, f1_desc[3], u)] + list(b2_rides))
+                consider(total, rides)
+
+    return _materialize(best), best_scalar
+
+
+
+
+
+def _materialize(best):
+    """Rebuild path_with_edges from a ride list [(line, frm, to), ...] by
+    re-sweeping each winning ride once (walks between rides are added from
+    the adjacency transfer edges)."""
+    if not best:
+        return None
+    path = [(best[0][1], None, None)]
+    cur = best[0][1]
+    for line, frm, to in best:
+        if frm != cur:
+            walk = _walk_fragment(cur, frm)
+            if walk is None:
+                return None
+            path += walk
+        dist, parents = _ride_sweep_with_parents(line, frm)
+        if dist is None or to not in dist:
+            return None
+        path += _ride_fragment(parents, frm, to)
+        cur = to
+    return path
 
 
 def _find_exact_fare_route(start_ids, end_ids, upper_bound, boarding_penalty_zl,
-                           max_seconds, cache_prefix):
-    """Shared entry: exact Pareto A* under the CPU gate, with caching."""
-    global _cheap_search_count
+                           max_seconds, cache_prefix, bound_route=None):
+    """Exact Pareto A* under the CPU gate, with caching.
+
+    Iterative deepening on the number of boardings — this is what keeps the
+    search EXACT yet fast. Every ticket costs at least the base fare, so a
+    route with j boardings costs at least
+        PER_SEGMENT_FLOOR * j   (4 zł cheap, 6 zł convenient incl. penalty).
+
+    The search runs with a cap of k = 1, 2, 3... boardings; each cap bounds
+    the combinatorial explosion of transfer chains, so low-k searches are
+    cheap. After a cap-k search finds a best route with scalar cost f*:
+      * if PER_SEGMENT_FLOOR * (k+1) >= f*, every route with more boardings
+        costs more than f* -> f* is the CERTIFIED global optimum; done.
+      * else if PER_SEGMENT_FLOOR * (k+1) >= upper_bound (a real route's
+        cost) and nothing with <= k boardings beat it -> bound_route is the
+        certified optimum; return it.
+      * else escalate to k+1.
+
+    On budget exhaustion mid-deepening the result is NOT certified, so an
+    error is returned (exact-only product — no approximate results).
+    """
+    global _cheap_search_count, _cheap_timeout_count
     cache_key = (cache_prefix, tuple(start_ids), tuple(end_ids))
     cached = _cache_get_find(cache_key)
     if cached is not None:
@@ -557,134 +1085,211 @@ def _find_exact_fare_route(start_ids, end_ids, upper_bound, boarding_penalty_zl,
     # CPU gate: at most 2 exact fare searches run concurrently (GIL).
     _CHEAP_SEARCH_GATE.acquire()
     try:
-        return _find_exact_fare_route_gated(start_ids, end_ids, cache_key,
-                                            upper_bound, boarding_penalty_zl,
-                                            max_seconds)
+        deadline = time.monotonic() + max_seconds
+        # Minimum scalar cost of any route with j boardings.
+        per_segment_floor = _BASE_FARE + boarding_penalty_zl
+
+        # --- fast bound enumeration (<= 2 rides, direct line-graph DP).
+        # For most pairs this either CERTIFIES the optimum outright (every
+        # route with 3+ rides costs >= per_segment_floor * 3) or provides a
+        # tight upper bound that shrinks the A* ball by an order of
+        # magnitude. It never affects exactness: its route is a real route,
+        # and the floor argument holds regardless of completeness.
+        enum_frag, enum_scalar = _enumerate_ride_bound(
+            start_ids, end_ids, boarding_penalty_zl, deadline)
+        if enum_frag is not None:
+            enum_result = _build_route_result(enum_frag)
+            # Certify on the DISPLAYED scalar (daily-capped fare + penalty
+            # per ride): the enumeration covers ALL routes with <= 4 rides,
+            # and every 5-ride route displays at least per_segment_floor * 5
+            # (its uncapped fare alone reaches the daily cap), so the check
+            # below always holds once the <= 4-ride enumeration completed.
+            enum_scalar = (enum_result['cost_regular']
+                           + boarding_penalty_zl
+                           * len(enum_result.get('segments', [])))
+            if per_segment_floor * 5 >= enum_scalar - 1e-9:
+                result = enum_result, None
+                _cache_put_find(cache_key, result)
+                return result
+            if enum_scalar < upper_bound:
+                upper_bound = enum_scalar
+                bound_route = enum_result
+
+        best = None          # (result_dict, scalar) of the best route so far
+        best_scalar = float('inf')
+        k = 0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                with _counter_lock:
+                    _cheap_timeout_count += 1
+                return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
+            k += 1
+            res, err = _find_exact_fare_route_capped(
+                start_ids, end_ids, upper_bound, boarding_penalty_zl, k,
+                max_seconds=remaining)
+            if res is not None:
+                scalar = _route_scalar(res, boarding_penalty_zl)
+                if scalar < best_scalar - 1e-9:
+                    best, best_scalar = res, scalar
+            if best is not None and per_segment_floor * (k + 1) >= best_scalar - 1e-9:
+                # Certified: routes with > k boardings cannot beat best.
+                result = best, None
+                _cache_put_find(cache_key, result)
+                return result
+            if per_segment_floor * (k + 1) > upper_bound + 1e-9:
+                # Every route with more boardings is STRICTLY worse than the
+                # bound route, and none with <= k beat it (the cap-k search
+                # is exact under the bound) -> bound_route IS the certified
+                # optimum. (With >=, tying routes would be cut off before a
+                # cap-k search could find them.)
+                if bound_route is not None:
+                    result = bound_route, None
+                    _cache_put_find(cache_key, result)
+                    return result
+                return None, "Nie znaleziono trasy między tymi przystankami"
+            # else: a cheaper route with more boardings may exist — escalate.
     finally:
         _CHEAP_SEARCH_GATE.release()
 
 
-def _find_exact_fare_route_gated(start_ids, end_ids, cache_key, upper_bound,
-                                 boarding_penalty_zl, max_seconds):
-    """Exact Pareto A* minimising "fare + boarding_penalty_zl * boardings".
+def _route_scalar(result, boarding_penalty_zl):
+    """Scalar objective of a built route result (uncapped fare + penalty)."""
+    fare = sum(seg.get('cost_regular', 0.0)
+               for seg in result.get('segments', []))
+    return fare + boarding_penalty_zl * len(result.get('segments', []))
 
-    The boarding penalty is folded into `closed` at every boarding, so the
-    dominance bookkeeping is unchanged (see find_most_convenient_path).
 
-    No approximate results: on timeout / memory pressure / iteration cap the
-    search returns an ERROR — the caller decides what to show the user.
+def _find_exact_fare_route_capped(start_ids, end_ids, upper_bound,
+                                  boarding_penalty_zl, max_boardings,
+                                  max_seconds):
+    """One exact Pareto A* limited to routes with <= max_boardings rides.
+
+    Dominance is 3D on (closed, acc, boardings): a state (c, a, b) dominates
+    (c', a', b') at the same (stop, route) iff c <= c', a <= a' AND b <= b'
+    (with the boarding cap, fewer boardings means more headroom). The cap
+    prunes deep transfer chains — the source of the combinatorial explosion.
+
+    Returns (result_dict, None) or (None, error_string); NOT cached (the
+    driver caches only the certified optimum).
     """
-    global _cheap_timeout_count
     end_set = set(end_ids)
     end_coords = stop_coords.get(end_ids[0], (0, 0))
+    # The search prices tickets like the displayed result does: a walk
+    # between platforms of the same stop group does NOT close the ticket —
+    # re-boarding the SAME line afterwards continues the ride (the display
+    # merges such segments into one ticket). Boarding a DIFFERENT line
+    # closes it. This keeps the search's optimum identical to the fare the
+    # user is actually shown. Internal scalars deviate from displayed fares
+    # by up to ~0.05 zł per segment (the 0.1 km acc grid), hence the +0.05
+    # slack when pruning against a bound computed from displayed fares.
+    prune_slack = 0.05 * (max_boardings + 1) + 1e-9
+    # Straight-line distance to the destination, memoised per stop (the
+    # heuristic is queried on every edge relaxation).
+    dist_memo = {}
 
-    # pq entries: (f, closed, acc, seq, stop, route, parent_key)
+    def _straight_km(stop):
+        d = dist_memo.get(stop)
+        if d is None:
+            sc = stop_coords.get(stop, (0, 0))
+            d = haversine_km(sc[0], sc[1], end_coords[0], end_coords[1])
+            dist_memo[stop] = d
+        return d
+
+    # pq entries: (f, closed, acc, boardings, seq, stop, route, parent_key)
     pq = []
     seq = 0
     for start_id in start_ids:
         if start_id not in adjacency:
             continue
-        start_coords = stop_coords.get(start_id, (0, 0))
-        h_start = _cheap_heuristic(
-            0.0, haversine_km(start_coords[0], start_coords[1],
-                              end_coords[0], end_coords[1]))
-        heapq.heappush(pq, (h_start, 0.0, 0.0, seq, start_id, None, None))
+        heapq.heappush(pq, (_cheap_heuristic(0.0, _straight_km(start_id)),
+                            0.0, 0.0, 0, seq, start_id, None, None))
         seq += 1
     if not pq:
         return None, "Przystanek początkowy nie został znaleziony w grafie"
 
-    frontier = {}  # (stop, route) -> [(closed, acc)] — only SETTLED states
-    prev = {}  # (stop, route, acc) -> (parent_stop, parent_route, parent_acc, edge)
+    frontier = {}  # (stop, route) -> [(closed, acc, boardings)] — SETTLED only
+    prev = {}  # (stop, route, acc, boardings) -> parent key + edge
     start_time = time.monotonic()
     iterations = 0
 
     while pq:
         # Cooperative cancellation check
         if _check_cancelled():
-            # Do NOT cache cancellations — the pair would be poisoned with a
-            # permanent error for every future request until eviction.
             return None, "Anulowano: wyszukiwanie przerwane"
 
-        f_val, closed, acc, _, stop, route, parent = heapq.heappop(pq)
+        (f_val, closed, acc, boardings, _, stop, route,
+         parent) = heapq.heappop(pq)
 
         # Prune states that already cost MORE than a known full route
         # (states with cost == bound may still be the optimum itself).
-        if closed + _ticket_price(acc) > upper_bound + 1e-9:
+        if closed + _ticket_price(acc) > upper_bound + prune_slack:
             continue
 
-        # Dominance: skip states dominated by an already-settled one at the
-        # same node. (frontier holds settled states, sorted by closed cost)
+        # 3D dominance against settled states at the same (stop, route).
         states = frontier.get((stop, route))
         if states is not None:
-            # Find first entry with closed >= current closed via bisect.
-            # Any dominator must have closed <= ours, so scan only left side.
             idx = bisect.bisect_left(states, (closed,))
             dominated = False
             for i in range(idx):
-                if states[i][1] <= acc + 1e-9:
+                s_c, s_a, s_b = states[i]
+                if s_a <= acc + 1e-9 and s_b <= boardings:
                     dominated = True
                     break
             if dominated:
                 continue
 
         # Settle: record the parent chain and add to the frontier,
-        # Pareto-pruning entries dominated by the new one.
-        state_key = (stop, route, acc)
+        # Pareto-pruning entries dominated by the new state.
+        state_key = (stop, route, acc, boardings)
         if parent is not None:
             prev[state_key] = parent
         if states is None:
-            frontier[(stop, route)] = [(closed, acc)]
+            frontier[(stop, route)] = [(closed, acc, boardings)]
         else:
-            # Merge: keep entries NOT dominated by new state, then insert new.
             new_states = []
             new_inserted = False
             for entry in states:
-                if not _dominates(closed, acc, entry[0], entry[1]):
-                    if not new_inserted and entry[0] > closed + 1e-9:
-                        new_states.append((closed, acc))
+                if not (closed <= entry[0] + 1e-9
+                        and acc <= entry[1] + 1e-9
+                        and boardings <= entry[2]):
+                    if (not new_inserted
+                            and closed < entry[0] - 1e-9):
+                        new_states.append((closed, acc, boardings))
                         new_inserted = True
                     new_states.append(entry)
             if not new_inserted:
-                new_states.append((closed, acc))
+                new_states.append((closed, acc, boardings))
             frontier[(stop, route)] = new_states
 
         iterations += 1
 
-        # Timeout / iteration limits / memory: return an ERROR — the exact
-        # search never yields an approximate (possibly non-optimal) route.
+        # Timeout / iteration limits / memory checks (every 1000 pops).
         if iterations % 1000 == 0:
             if time.monotonic() - start_time > max_seconds:
-                with _counter_lock:
-                    _cheap_timeout_count += 1
                 return None, "Timeout: nie znaleziono trasy w wymaganym czasie"
             try:
                 with open('/proc/self/statm') as f:
-                    pages = int(f.read().split()[1])  # [1] = RSS, not [0] = VSZ
-                mem_mb = pages * 4 // 1024  # pages * 4 KB / 1024 = MB
+                    pages = int(f.read().split()[1])  # [1] = RSS, not [0]
+                mem_mb = pages * 4 // 1024
             except Exception:
                 mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
             if mem_mb > _MEMORY_LIMIT_MB:
-                with _counter_lock:
-                    _cheap_timeout_count += 1
                 return None, "Serwer jest przeciążony. Spróbuj ponownie za chwilę."
         if iterations >= _ASTAR_MAX_ITERATIONS:
-            with _counter_lock:
-                _cheap_timeout_count += 1
             return None, "Serwer jest przeciążony. Spróbuj ponownie za chwilę."
 
         if stop in end_set:
             # Close the current segment: total = closed + price(acc).
             path_with_edges = []
-            current = (stop, route, acc)
+            current = state_key
             while current in prev:
-                prev_stop, prev_route, prev_acc, edge = prev[current]
+                prev_key, edge = prev[current]
                 path_with_edges.append((current[0], current[1], edge))
-                current = (prev_stop, prev_route, prev_acc)
+                current = prev_key
             path_with_edges.append((current[0], None, None))
             path_with_edges.reverse()
-            result = _build_route_result(path_with_edges), None
-            _cache_put_find(cache_key, result)
-            return result
+            return _build_route_result(path_with_edges), None
 
         for edge in adjacency.get(stop, []):
             next_stop = edge['to']
@@ -692,47 +1297,51 @@ def _find_exact_fare_route_gated(start_ids, end_ids, cache_key, upper_bound,
             dist = edge['distance']
 
             if next_route == 'transfer':
-                # Walking transfer: close the current segment, open none.
-                # No boarding penalty — no new vehicle is boarded.
-                new_closed = closed + _ticket_price(acc)
-                new_acc = 0.0
-            elif route is None or route == 'transfer' or next_route != route:
-                # Boarding / direct route change: close the old segment
-                # (0 if none) and pay the boarding penalty for the new one.
+                # Walking transfer between platforms: the ticket stays open
+                # (route + acc unchanged) — re-boarding the SAME line
+                # continues the ride, matching the displayed-fare merge.
+                new_closed = closed
+                new_acc = acc
+                new_boardings = boardings
+            elif route is None or next_route != route:
+                # Boarding a different line: close the old ticket (0 if
+                # none) and pay the boarding penalty for the new one.
                 new_closed = closed + _ticket_price(acc) + boarding_penalty_zl
                 new_acc = dist
+                new_boardings = boardings + 1
+                if new_boardings > max_boardings:
+                    continue  # boarding cap — deeper chains searched later
             else:
-                # Continue the same ride: extend the segment.
+                # Continue the same ride (also after a platform walk).
                 new_closed = closed
                 new_acc = acc + dist
+                new_boardings = boardings
 
             new_acc = min(new_acc, _ACC_CAP)  # beyond cap riding is free
-            new_acc = round(new_acc * 10) / 10  # 0.10 km grid (prices step at 0.5 km)
+            new_acc = round(new_acc * 10) / 10  # 0.10 km grid
             g = new_closed + _ticket_price(new_acc)
-            if g > upper_bound + 1e-9:
+            if g > upper_bound + prune_slack:
                 continue
 
             # Pareto pruning against settled states at the next node.
             states = frontier.get((next_stop, next_route))
             if states is not None:
                 dominated = False
-                for (c2, a2) in states:
-                    if _dominates(c2, a2, new_closed, new_acc):
+                for (c2, a2, b2) in states:
+                    if (c2 <= new_closed + 1e-9 and a2 <= new_acc + 1e-9
+                            and b2 <= new_boardings):
                         dominated = True
                         break
                 if dominated:
                     continue
 
-            coords = stop_coords.get(next_stop, (0, 0))
-            h = _cheap_heuristic(
-                new_acc, haversine_km(coords[0], coords[1],
-                                      end_coords[0], end_coords[1]))
-            parent_key = (stop, route, acc, edge)
+            h = _cheap_heuristic(new_acc, _straight_km(next_stop))
+            parent_key = (state_key, edge)
             seq += 1
-            heapq.heappush(pq, (g + h, new_closed, new_acc, seq,
-                                next_stop, next_route, parent_key))
+            heapq.heappush(pq, (g + h, new_closed, new_acc, new_boardings,
+                                seq, next_stop, next_route, parent_key))
 
-    # Priority queue exhausted: no route within the bound exists.
+    # Priority queue exhausted: no route within cap + bound exists.
     return None, "Nie znaleziono trasy między tymi przystankami"
 
 
@@ -1359,30 +1968,33 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
 
     # --- convenient (EXACT: fare + penalty per boarding). The short route's
     # scalar cost is a valid complete-route cost — seeding the upper bound
-    # with it prunes the search but never affects optimality.
+    # with it prunes the search but never affects optimality, and lets the
+    # iterative deepening certify the short route itself as the optimum.
     conv_upper = float('inf')
     if best_short is not None:
         conv_upper = (_raw_fare(best_short)
                       + _BOARDING_PENALTY * len(best_short.get('segments', [])))
     best_convenient, convenient_error = find_most_convenient_path(
-        from_ids, to_ids, upper_bound=conv_upper)
+        from_ids, to_ids, upper_bound=conv_upper,
+        bound_route=best_short)
 
     # --- cheap (EXACT: fare). Upper bound = cheapest known complete route
     # (any real route's fare bounds the optimum from above).
     cheap_upper = min(_raw_fare(best_short), _raw_fare(best_convenient))
+    cheap_bound_route = (best_short
+                         if _raw_fare(best_short) <= _raw_fare(best_convenient)
+                         else best_convenient)
     best_cheap = None
     cheap_error = None
-    base_fare = calculate_cost(0.5)[0]  # base ticket price
-    if cheap_upper <= base_fare + 1e-9:
+    if cheap_upper <= _BASE_FARE + 1e-9:
         # A route costing the base fare already exists and nothing can be
         # cheaper than a single base-priced ticket — that route IS the exact
         # optimum (mathematical shortcut, not a fallback).
-        best_cheap = (best_short
-                      if _raw_fare(best_short) <= _raw_fare(best_convenient)
-                      else best_convenient)
+        best_cheap = cheap_bound_route
     else:
         best_cheap, cheap_error = find_cheapest_path(
-            from_ids, to_ids, upper_bound=cheap_upper)
+            from_ids, to_ids, upper_bound=cheap_upper,
+            bound_route=cheap_bound_route)
 
     if best_convenient is None and best_cheap is None:
         err_msg = (convenient_error or cheap_error or last_error
