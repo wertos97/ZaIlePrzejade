@@ -13,7 +13,10 @@ function delay(ms) {
 }
 
 async function fetchWithRetry(url, maxRetries, updateText) {
-    var delays = [0, 2000, 5000];
+    // Retries on 429/503 (rate limit / peak shedding). The delays give the
+    // search queue time to drain — a retry usually lands on a freshly
+    // cached result instead of re-joining the queue.
+    var delays = [0, 4000, 10000];
     for (var attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             var response = await fetch(url);

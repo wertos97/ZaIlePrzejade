@@ -9,7 +9,9 @@ import os
 # Server Configuration
 # ============================================================
 DEFAULT_PORT = int(os.environ.get('PORT', 8080))
-MAX_CONCURRENT_REQUESTS = 10  # ≤ PATHFINDING_EXECUTOR_WORKERS * 3
+# Searches hold their HTTP thread for up to 30s, so the cap must leave
+# room for everyone else's static/page requests during that window.
+MAX_CONCURRENT_REQUESTS = 24
 REQUEST_QUEUE_SIZE = 64
 
 # ============================================================
@@ -53,7 +55,17 @@ CONVENIENT_BOARDING_PENALTY_ZL = 2.0
 # Executor threads running pathfinding. More than the cheap-search gate so
 # that distance-based searches are never queued behind fare searches that
 # are waiting for the gate.
-PATHFINDING_EXECUTOR_WORKERS = 1  # 1-core VPS: single worker = no GIL contention
+# The GIL serialises CPU-bound searches anyway (total throughput is the
+    # same for any pool size), but a larger pool lets queued requests START
+    # earlier — their 30s budget then covers real work instead of queue
+    # wait. 2 workers ≈ 2 searches in flight; memory is guarded by
+    # MEMORY_LIMIT_MB and the queue shed below.
+PATHFINDING_EXECUTOR_WORKERS = 2
+# Peak shedding: when this many searches are already WAITING in the
+# executor queue, new requests fail fast with 503 + Retry-After instead of
+# sitting 30s for a guaranteed timeout. The frontend retries 503s
+# automatically, and by then earlier results are cached / dedup applies.
+PATHFINDING_QUEUE_SHED = 2
 
 # Cache configuration (byte budgets can be tuned via environment variables)
 FIND_CACHE_MAX_BYTES = int(os.environ.get('FIND_CACHE_MAX_BYTES', 20 * 1024 * 1024))
@@ -144,4 +156,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"

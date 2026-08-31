@@ -166,6 +166,42 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertIn('group_id', path[0])
         self.assertTrue(path[0]['group_id'].startswith('group_'))
 
+    def test_find_route_busy_shed_503(self):
+        """Peak shedding: when the search queue is full, find-route answers
+        503 + Retry-After immediately instead of sitting 30s for a timeout.
+        The frontend retries 503s automatically."""
+        import time as _time
+        from server import handler as handler_mod
+
+        # Fill the executor (2 workers) and its queue beyond the shed
+        # threshold: 4 event-gated tasks = 2 running + 2 waiting.
+        release = threading.Event()
+        blockers = [handler_mod._pathfinding_executor.submit(
+            release.wait, 5) for _ in range(4)]
+        _time.sleep(0.3)  # let the executor distribute them
+        try:
+            t0 = _time.monotonic()
+            try:
+                status, _, body = self._get(
+                    f'/api/find-route?from={self.from_id}&to={self.to_id}')
+            except urllib.error.HTTPError as e:
+                status, body = e.code, e.read()
+            dt = _time.monotonic() - t0
+            self.assertEqual(status, 503)
+            self.assertLess(dt, 10, 'shed request should fail fast')
+            result = json.loads(body)
+            self.assertIn('error', result)
+            self.assertIn('przeciążony', result['error'])
+        finally:
+            release.set()
+            # let the executor drain so later tests start from a clean pool
+            drain_deadline = _time.monotonic() + 6
+            while _time.monotonic() < drain_deadline:
+                if handler_mod._pathfinding_executor._work_queue.qsize() == 0:
+                    _time.sleep(0.3)
+                    break
+                _time.sleep(0.1)
+
     def test_find_route_invalid_group(self):
         try:
             status, _, body = self._get(

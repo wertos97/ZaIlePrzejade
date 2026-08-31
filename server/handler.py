@@ -34,6 +34,7 @@ from .config import (
     MAX_STOP_ID_LENGTH,
     OG_IMAGE_CACHE_MAX_AGE,
     PATHFINDING_EXECUTOR_WORKERS,
+    PATHFINDING_QUEUE_SHED,
     PUBLIC_BASE_URL,
     RATE_LIMIT_CLEANUP_INTERVAL_SECONDS,
     RATE_LIMIT_EXPENSIVE_MAX_REQUESTS as _RATE_LIMIT_EXPENSIVE_MAX,
@@ -108,6 +109,14 @@ def run_pathfinding_with_timeout(func, *args, timeout=25.0):
     a PRIVATE cancellation event is signalled so only this request's search
     stops — concurrent searches are unaffected.
     """
+    # Peak shedding: when searches are already waiting in the executor
+    # queue, a new request would sit there for tens of seconds and end in
+    # a timeout anyway. Fail fast instead — the frontend retries 503s
+    # automatically, and by the time it retries, earlier results are
+    # cached (or in-flight dedup applies).
+    if _pathfinding_executor._work_queue.qsize() >= PATHFINDING_QUEUE_SHED:
+        return ('busy', None)
+
     cancel_event = threading.Event()
 
     def _runner():
@@ -291,6 +300,7 @@ _server_start_time = time.time()
 # increment is atomic enough under the GIL for this purpose).
 _route_requests = 0
 _route_timeouts = 0
+_route_busy = 0
 
 _cached_stops_json = None
 _cached_routes_json = None
@@ -769,6 +779,18 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
         if isinstance(result, tuple) and len(result) == 3:
             short_pair, convenient_pair, cheap_pair = result
+        elif isinstance(result, tuple) and len(result) == 2 \
+                and result[0] == 'busy':
+            # Queue shed: tell the client to retry soon (the frontend
+            # retries 503s automatically, and the message lands in the
+            # frontend's warning-toast branch).
+            global _route_busy
+            _route_busy += 1
+            self.serve_json(
+                {'error': 'Serwer jest chwilowo przeciążony — '
+                          'spróbuj ponownie za chwilę.'},
+                status=503, retry_after=8)
+            return
         else:
             _route_timeouts += 1
             error_msg = result[1] if isinstance(result, tuple) and len(result) >= 2 else "Timeout lub błąd wyszukiwania"
@@ -844,6 +866,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             'rss_mb': rss_mb,
             'route_requests': _route_requests,
             'route_timeouts': _route_timeouts,
+            'route_busy': _route_busy,
             'routes_from_disk': rc_disk,
             'routes_computed': rc_computed,
             'find_cache': {
@@ -933,7 +956,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.send_header('X-App-Version', APP_VERSION)
         super().end_headers()
 
-    def serve_json(self, data_obj, status=200):
+    def serve_json(self, data_obj, status=200, retry_after=None):
         """Serve JSON response with optional gzip compression."""
         body = json.dumps(data_obj, ensure_ascii=False).encode('utf-8')
         accept = self.headers.get('Accept-Encoding', '')
@@ -945,6 +968,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_header('Vary', 'Accept-Encoding')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-cache')
+            if retry_after:
+                self.send_header('Retry-After', str(retry_after))
             self.end_headers()
         else:
             self.send_response(status)
@@ -952,6 +977,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_header('Vary', 'Accept-Encoding')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-cache')
+            if retry_after:
+                self.send_header('Retry-After', str(retry_after))
             self.end_headers()
         self._send_body(body)
 
