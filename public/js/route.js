@@ -241,17 +241,27 @@ function displayRoute(result) {
 }
 
 function drawRouteOnMap(result) {
-    const path = result.path;
-    if (!path || path.length === 0) return;
+    state.hasRoute = true;
+    state.routeLayer.clearLayers();
+    state.routeSegLayers = [];
+    state.routeWalkLayers = [];
+    const path = result.path || [];
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    const drawPoints = path.filter(s => !s.is_transfer);
+    // Collect stop group IDs on the route for hiding other stops
+    state.routeGroupIds = new Set();
+    if (result.path) {
+        result.path.forEach(s => {
+            if (s.group_id) state.routeGroupIds.add(s.group_id);
+        });
+    }
 
-    // Build a lookup: stop_id -> {lat, lon} for all non-transfer stops.
+    // Build a lookup: stop_id -> [lat, lon] for all non-transfer stops.
     // The path list is deduplicated per stop group, so also merge the exact
     // peron positions carried by each segment.
     const coordLookup = {};
+    const drawPoints = path.filter(s => !s.is_transfer);
     drawPoints.forEach(s => {
-        // route.js path items use 'stop_id'
         if (s.stop_id) coordLookup[s.stop_id] = [s.lat, s.lon];
     });
     if (result.segments) {
@@ -269,7 +279,7 @@ function drawRouteOnMap(result) {
     let colorIndex = 0;
 
     if (result.segments && result.segments.length > 0) {
-        result.segments.forEach(seg => {
+        result.segments.forEach((seg, segIndex) => {
             let points = [];
 
             if (seg.shape && Array.isArray(seg.shape) && seg.shape.length >= 2) {
@@ -284,16 +294,94 @@ function drawRouteOnMap(result) {
             }
 
             if (points.length >= 2) {
+                // GTFS shapes may run opposite to the travel direction —
+                // orient the geometry from the segment's first stop towards
+                // its last stop, so the draw-in reveals the ride the way the
+                // passenger actually travels it
+                const sPos = seg.stop_positions || {};
+                const stopsArr = seg.stops || [];
+                const sFirst = stopsArr.length ? sPos[stopsArr[0]] : null;
+                const sLast = stopsArr.length ? sPos[stopsArr[stopsArr.length - 1]] : null;
+                if (sFirst && sLast) {
+                    const d2 = (p, q) => (p[0]-q[0])*(p[0]-q[0]) + (p[1]-q[1])*(p[1]-q[1]);
+                    if (d2(points[points.length - 1], sFirst) < d2(points[0], sFirst)) {
+                        points.reverse();
+                    }
+                }
                 const color = ROUTE_COLORS[colorIndex % ROUTE_COLORS.length];
-                L.polyline(points, {
-                    color: color,
-                    weight: 5,
-                    opacity: 0.75,
-                    smoothFactor: 1,
+                // white casing under the colored line — makes the route
+                // stand out from the street grid
+                const casing = L.polyline(points, {
+                    color: '#ffffff', weight: 9, opacity: 0.95,
+                    smoothFactor: 1, interactive: false, className: 'route-casing',
                 }).addTo(state.routeLayer);
+                const line = L.polyline(points, {
+                    color: color, weight: 5, opacity: 0.95,
+                    smoothFactor: 1, className: 'route-line',
+                }).addTo(state.routeLayer);
+
+                const entry = { casing: casing, line: line, points: points };
+                if (!reduceMotion) {
+                    // progressive draw-in: dash offset from the full path
+                    // length down to 0, staggered per segment
+                    const el = line.getElement();
+                    if (el && el.getTotalLength) {
+                        try {
+                            const len = el.getTotalLength();
+                            el.style.strokeDasharray = len;
+                            el.style.strokeDashoffset = len;
+                            el.classList.add('route-line-anim');
+                            const delay = Math.min(segIndex * 0.4, 2.0);
+                            el.style.animationDelay = delay + 's';
+                            setTimeout(function() {
+                                el.style.strokeDasharray = '';
+                                el.style.strokeDashoffset = '';
+                                el.classList.remove('route-line-anim');
+                            }, (delay + 1.2) * 1000);
+                        } catch (e) { /* drawing aid only — ignore */ }
+                    }
+                }
+                line.on('mouseover', function() { highlightRouteSegment(segIndex); });
+                line.on('mouseout', function() { highlightRouteSegment(null); });
+                line.on('click', function() { flyToSegment(segIndex); });
+                state.routeSegLayers[segIndex] = entry;
                 colorIndex++;
             }
         });
+
+        // walking transfers between consecutive rides: dashed gray hop +
+        // a pulsing marker at the alighting platform
+        const segs = result.segments;
+        for (let i = 0; i < segs.length - 1; i++) {
+            const a = segEndpointCoords(segs[i], 'last', coordLookup);
+            const b = segEndpointCoords(segs[i + 1], 'first', coordLookup);
+            if (!a || !b) continue;
+            if (a[0] === b[0] && a[1] === b[1]) continue;
+            const walk = L.polyline([a, b], {
+                color: '#666666', weight: 3, opacity: 0.95,
+                dashArray: '2 7', interactive: false, className: 'route-walk',
+            }).addTo(state.routeLayer);
+            state.routeWalkLayers[i] = walk;
+            const transfer = L.circleMarker(a, {
+                radius: 6, color: '#ffffff', weight: 2,
+                fillColor: '#f39c12', fillOpacity: 1, interactive: false,
+                className: 'route-transfer-anim',
+            }).addTo(state.routeLayer);
+            if (!reduceMotion) {
+                const wEl = walk.getElement();
+                if (wEl) {
+                    wEl.classList.add('route-walk-anim');
+                    wEl.style.animationDelay = (Math.min(i * 0.4, 2.0) + 0.35) + 's';
+                    setTimeout(function() { wEl.classList.remove('route-walk-anim'); },
+                               (Math.min(i * 0.4, 2.0) + 1.0) * 1000);
+                }
+                const tEl = transfer.getElement();
+                if (tEl) {
+                    tEl.classList.add('route-transfer-anim');
+                    tEl.style.animationDelay = (Math.min(i * 0.4, 2.0) + 0.5) + 's';
+                }
+            }
+        }
     }
 
     // Draw stop markers on route — these are the REAL peron positions,
@@ -334,7 +422,7 @@ function drawRouteOnMap(result) {
 
     // Draw price/distance labels at the END of each segment (ride)
     if (result.segments && result.segments.length > 0) {
-        result.segments.forEach(seg => {
+        result.segments.forEach((seg, segIndex) => {
             if (!seg.stops || seg.stops.length < 2) return;
             const lastId = seg.stops[seg.stops.length - 1];
             const lastCoord = coordLookup[lastId];
@@ -354,9 +442,80 @@ function drawRouteOnMap(result) {
                 iconAnchor: [0, 0],
             });
 
-            L.marker([lastCoord[0], lastCoord[1]], { icon: icon, interactive: false }).addTo(state.routeLayer);
+            const labelMarker = L.marker([lastCoord[0], lastCoord[1]], { icon: icon, interactive: false }).addTo(state.routeLayer);
+            if (state.routeSegLayers[segIndex]) {
+                state.routeSegLayers[segIndex].label = labelMarker;
+            }
         });
     }
+}
+
+function segEndpointCoords(seg, which, coordLookup) {
+    const stops = seg.stops || [];
+    if (!stops.length) return null;
+    const sid = which === 'first' ? stops[0] : stops[stops.length - 1];
+    if (seg.stop_positions && seg.stop_positions[sid]) return seg.stop_positions[sid];
+    return coordLookup[sid] || null;
+}
+
+function highlightRouteSegment(idx) {
+    (state.routeSegLayers || []).forEach((entry, i) => {
+        if (!entry) return;
+        const active = idx !== null && i === idx;
+        const dim = idx !== null && i !== idx;
+        // class-based (not setStyle) — CSS transitions animate class-driven
+        // opacity/stroke-width changes; attribute changes do not animate
+        entry.line.getElement().classList.toggle('route-active', active);
+        entry.line.getElement().classList.toggle('route-dim', dim);
+        entry.casing.getElement().classList.toggle('route-active', active);
+        entry.casing.getElement().classList.toggle('route-dim', dim);
+        if (entry.label && entry.label.getElement()) {
+            entry.label.getElement().classList.toggle('route-dim', dim);
+        }
+    });
+    (state.routeWalkLayers || []).forEach((walk, i) => {
+        if (!walk) return;
+        walk.getElement().classList.toggle('route-dim', idx !== null && i !== idx);
+    });
+    document.querySelectorAll('.route-step[data-seg-index]').forEach(el => {
+        el.classList.toggle('step-hover', idx !== null && Number(el.dataset.segIndex) === idx);
+    });
+}
+
+function highlightRouteWalk(idx) {
+    (state.routeWalkLayers || []).forEach((walk, i) => {
+        if (!walk) return;
+        walk.getElement().classList.toggle('route-active', idx !== null && i === idx);
+        walk.getElement().classList.toggle('route-dim', idx !== null && i !== idx);
+    });
+    document.querySelectorAll('.route-step[data-walk-index]').forEach(el => {
+        el.classList.toggle('step-hover', idx !== null && Number(el.dataset.walkIndex) === idx);
+    });
+}
+
+function flyToSegment(idx) {
+    const entry = (state.routeSegLayers || [])[idx];
+    if (!entry || !entry.points || !entry.points.length || !state.map) return;
+    const bounds = L.latLngBounds(entry.points);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        state.map.fitBounds(bounds, { paddingTopLeft: [60, 80], paddingBottomRight: [60, 60] });
+    } else {
+        state.map.flyToBounds(bounds, { paddingTopLeft: [60, 80], paddingBottomRight: [60, 60], duration: 0.7 });
+    }
+}
+
+function bindStepMapInterplay() {
+    document.querySelectorAll('.route-step[data-seg-index]').forEach(el => {
+        const idx = Number(el.dataset.segIndex);
+        el.addEventListener('mouseenter', function() { highlightRouteSegment(idx); });
+        el.addEventListener('mouseleave', function() { highlightRouteSegment(null); });
+        el.addEventListener('click', function() { flyToSegment(idx); });
+    });
+    document.querySelectorAll('.route-step[data-walk-index]').forEach(el => {
+        const idx = Number(el.dataset.walkIndex);
+        el.addEventListener('mouseenter', function() { highlightRouteWalk(idx); });
+        el.addEventListener('mouseleave', function() { highlightRouteWalk(null); });
+    });
 }
 
 function displayResult(result) {
@@ -401,6 +560,8 @@ function displayResult(result) {
         mobileSteps.innerHTML = '';
         mobileSteps.appendChild(createElementFromHtml(stepsHtml));
     }
+
+    bindStepMapInterplay();
 }
 
 function buildStepsHtml(result) {
@@ -436,7 +597,7 @@ function buildStepsHtml(result) {
             const segTime = formatDuration(segment.time);
             const segTimeText = segTime ? ` · ${segTime}` : '';
             html += `
-                <div class="route-step">
+                <div class="route-step" data-seg-index="${index}">
                     <div class="step-header">
                         <span class="step-title">${modeIcon} Przejazd</span>
                         <span class="step-distance">${segment.distance.toFixed(2)} km${segTimeText} · ${segCost} zł</span>
@@ -457,7 +618,7 @@ function buildStepsHtml(result) {
                 const fromRoute = getRouteInfo(transfer.from_route);
                 const toRoute = getRouteInfo(transfer.to_route);
                 html += `
-                    <div class="route-step transfer">
+                    <div class="route-step transfer" data-walk-index="${index}">
                         <div class="step-header">
                             <span class="step-title">🔄 Przesiadka</span>
                         </div>

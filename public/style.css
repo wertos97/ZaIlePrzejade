@@ -1701,3 +1701,47 @@ body {
     border-top: 1px solid #e4ecf3;
     padding-top: 4px;
 }
+
+
+/* ==== Route visualization: draw-in, transfers, panel <-> map interplay ==== */
+
+.route-line, .route-casing, .route-walk, .segment-label {
+    transition: stroke-width .3s ease, opacity .3s ease;
+}
+.route-line.route-active { stroke-width: 8px; }
+.route-casing.route-active { stroke-width: 12px; }
+.route-walk.route-active { stroke-width: 5px; }
+.route-line.route-dim, .route-casing.route-dim { opacity: .18; }
+.route-walk.route-dim, .segment-label.route-dim { opacity: .15; }
+
+.route-step-hover {
+    background: #fff8e8;
+    box-shadow: inset 3px 0 0 #f0a500;
+    cursor: pointer;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+
+    .route-line-anim {
+        animation: route-draw .9s ease-out forwards;
+    }
+    @keyframes route-draw {
+        to { stroke-dashoffset: 0; }
+    }
+
+    .route-walk-anim {
+        opacity: 0;
+        animation: route-fade .45s ease-out forwards;
+    }
+    @keyframes route-fade {
+        to { opacity: 1; }
+    }
+
+    .route-transfer-anim {
+        animation: route-transfer-pulse 1.1s ease-out 2;
+    }
+    @keyframes route-transfer-pulse {
+        0%   { stroke-width: 9;  stroke-opacity: .85; }
+        100% { stroke-width: 2;  stroke-opacity: 1;  }
+    }
+}
