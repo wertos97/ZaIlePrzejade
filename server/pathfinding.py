@@ -2158,6 +2158,19 @@ def route_cache_info():
             _route_cache_bytes, _ROUTE_CACHE_MAX_BYTES)
 
 
+def cache_db_size():
+    """Size of the sqlite route-cache file on disk, in bytes (0 if missing)."""
+    try:
+        return os.path.getsize(_cache_db_path())
+    except OSError:
+        return 0
+
+
+def sweep_cache_info():
+    """Number of line sweeps currently in the shared LRU."""
+    return len(_sweep_memo)
+
+
 def route_cache_origin_info():
     """Return (db_routes, computed_this_run) for the route cache.
 

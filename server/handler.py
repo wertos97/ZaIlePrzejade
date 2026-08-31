@@ -32,6 +32,7 @@ from .config import (
     MAX_CONCURRENT_REQUESTS,
     MAX_ROUTE_ID_LENGTH,
     MAX_STOP_ID_LENGTH,
+    MEMORY_LIMIT_MB,
     OG_IMAGE_CACHE_MAX_AGE,
     PATHFINDING_EXECUTOR_WORKERS,
     PATHFINDING_QUEUE_SHED,
@@ -872,6 +873,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             'route_busy': _route_busy,
             'routes_from_disk': rc_disk,
             'routes_computed': rc_computed,
+            'memory_limit_mb': MEMORY_LIMIT_MB,
+            'cache_db_bytes': pathfinding.cache_db_size(),
+            'sweep_lru': pathfinding.sweep_cache_info(),
             'find_cache': {
                 'entries': rc_count + fc_count,
                 'find_entries': fc_count,

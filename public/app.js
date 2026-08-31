@@ -295,102 +295,129 @@ function fmtUptime(sec) {
 function serverPanelSections() {
     return [
         {
-            title: 'Serwer',
+            title: 'Kondycja',
             rows: [
-                { label: 'Wersja',
-                  get: st => ({ text: 'v' + (st.version || '?') }),
-                  tooltip: 'Wersja aplikacji.' },
-                { label: 'Uptime',
-                  get: st => ({ text: fmtUptime(st.uptime_seconds || 0) }),
-                  tooltip: 'Jak długo serwer działa bez restartu.' },
-                { label: 'Obciążenie',
+                { label: 'Serwer',
+                  get: st => ({ text: 'v' + (st.version || '?') + ' · '
+                                      + fmtUptime(st.uptime_seconds || 0) }),
+                  tooltip: 'Wersja aplikacji i czas pracy bez restartu. '
+                      + 'Liczniki ruchu zerują się przy restarcie.' },
+                { label: 'Pamięć',
+                  get: st => {
+                      const rss = st.rss_mb || 0;
+                      const lim = st.memory_limit_mb || 180;
+                      return { text: `${rss} / ${lim} MB`,
+                               color: statColor(rss / lim, 0.6, 0.85) };
+                  },
+                  tooltip: 'Zużycie RAM serwera względem limitu. Powyżej '
+                      + 'limitu wyszukiwania bezpiecznie się wyłączają, '
+                      + 'zanim serwerowi skończy się pamięć.' },
+                { label: 'Żądania HTTP',
                   get: st => {
                       const active = st.active_requests || 0;
-                      const max = st.max_concurrent || 20;
-                      const rss = st.rss_mb || 0;
-                      return {
-                          text: `${active}/${max} żądań, ${rss} MB RAM`,
-                          color: statColor(active / max, 0.5, 0.8),
-                      };
+                      const max = st.max_concurrent || 24;
+                      return { text: `${active} / ${max}`,
+                               color: statColor(active / max, 0.5, 0.8) };
                   },
-                  tooltip: 'Aktywne żądania HTTP względem limitu współbieżności '
-                      + 'oraz aktualne zużycie pamięci serwera.' },
+                  tooltip: 'Aktywne żądania HTTP względem limitu '
+                      + 'współbieżności.' },
             ],
         },
         {
-            title: 'Trasy',
+            title: 'Cache tras',
             rows: [
-                { label: 'Zapytania',
-                  get: st => ({
-                      text: `${st.route_requests || 0}`,
-                  }),
-                  tooltip: 'Ile razy ktoś szukał trasy od startu serwera.' },
+                { label: 'Na dysku',
+                  get: st => {
+                      const n = st.routes_from_disk || 0;
+                      const mb = ((st.cache_db_bytes || 0) / 1048576).toFixed(1);
+                      return { text: `${n} tras · ${mb} MB`,
+                               color: n > 0 ? '#27ae60' : '#f39c12' };
+                  },
+                  tooltip: 'Trasy zapisane trwale w bazie sqlite — '
+                      + 'przetrwają restart serwera i wymiatanie z pamięci. '
+                      + 'Czyszczą się tylko przy zmianie danych GTFS.' },
+                { label: 'W pamięci',
+                  get: st => {
+                      const rc = st.find_cache || {};
+                      const entries = rc.route_entries || 0;
+                      const bytes = rc.route_bytes || 0;
+                      const maxBytes = rc.route_max_bytes || 1;
+                      return { text: `${entries} tras · ${(bytes / 1048576).toFixed(1)} MB`,
+                               color: statColor(bytes / maxBytes, 0.6, 0.9) };
+                  },
+                  tooltip: 'Gorący zestaw w RAM — odczyt natychmiastowy. '
+                      + 'Wyrzucone stamtąd trasy nie giną: czekają w bazie '
+                      + 'na dysku.' },
+                { label: 'Wyliczone',
+                  get: st => ({ text: `${st.routes_computed || 0}`,
+                                color: st.routes_computed > 0 ? '#f39c12' : '#27ae60' }),
+                  tooltip: 'Nowe wyliczenia od restartu (poza cache). '
+                      + 'Każde od razu zapisuje się trwale w bazie — '
+                      + 'przy tym ruchu rzadkość jest normalna.' },
+            ],
+        },
+        {
+            title: 'Ruch',
+            rows: [
+                { label: 'Wyszukiwania',
+                  get: st => ({ text: `${st.route_requests || 0}` }),
+                  tooltip: 'Ile razy ktoś szukał trasy od restartu serwera.' },
                 { label: 'Timeouty',
                   get: st => {
                       const req = st.route_requests || 0;
                       const timeouts = st.route_timeouts || 0;
                       if (req === 0) return { text: '—', color: '#888' };
                       const pct = timeouts / req;
-                      return {
-                          text: `${timeouts} / ${req} (${(pct * 100).toFixed(0)}%)`,
-                          color: pct > 0 ? '#e74c3c' : '#27ae60',
-                      };
+                      return { text: `${timeouts} / ${req} (${(pct * 100).toFixed(0)}%)`,
+                               color: pct > 0.1 ? '#e74c3c' : (pct > 0 ? '#f39c12' : '#27ae60') };
                   },
-                  tooltip: 'Zapytania które przekroczyły limit czasu serwera (30s). '
-                      + 'Wysoki odsetek = serwer nie wyrabia.' },
-                { label: 'Obliczone',
-                  get: st => ({
-                      text: `${st.routes_computed || 0}`,
-                      color: st.routes_computed > 0 ? '#f39c12' : '',
-                  }),
-                  tooltip: 'Trasy wyliczone od zera (nie z cache). '
-                      + 'Duża liczba = cache nie wystarcza.' },
-                { label: 'Cache',
+                  tooltip: 'Wyszukiwania które przekroczyły 30 s. Wysoki '
+                      + 'odsetek = pary zbyt trudne albo serwer przeciążony.' },
+                { label: 'Odrzucone',
                   get: st => {
-                      const rc = st.find_cache || {};
-                      const entries = rc.route_entries || 0;
-                      const bytes = rc.route_bytes || 0;
-                      const maxBytes = rc.route_max_bytes || 1;
-                      return {
-                          text: `${entries} wpisów (${(bytes / 1048576).toFixed(1)} MB)`,
-                          color: statColor(bytes / maxBytes, 0.6, 0.9),
-                      };
+                      const req = st.route_requests || 0;
+                      const busy = st.route_busy || 0;
+                      if (req === 0) return { text: '—', color: '#888' };
+                      const pct = busy / req;
+                      return { text: `${busy} / ${req} (${(pct * 100).toFixed(0)}%)`,
+                               color: pct > 0.2 ? '#f39c12' : '#27ae60' };
                   },
-                  tooltip: 'Gotowe trasy w pamięci. Powtórne zapytanie '
-                      + 'o tę samą parę przystanków zwraca wynik natychmiast.' },
+                  tooltip: 'Żądania odrzucone od razu w szczycie (pełna '
+                      + 'kolejka) — przeglądarka ponawia je automatycznie '
+                      + 'po kilku sekundach.' },
             ],
         },
         {
-            title: 'Wyszukiwania',
+            title: 'Silnik',
             rows: [
-                { label: 'Cache A*',
+                { label: 'Cache peronów',
                   get: st => {
                       const f = st.find_cache || {};
                       const entries = f.find_entries || 0;
                       const bytes = f.find_bytes || 0;
                       const maxBytes = f.find_max_bytes || 1;
-                      return {
-                          text: `${entries} wpisów (${(bytes / 1048576).toFixed(1)} MB)`,
-                          color: statColor(bytes / maxBytes, 0.6, 0.9),
-                      };
+                      return { text: `${entries} · ${(bytes / 1048576).toFixed(1)} MB`,
+                               color: statColor(bytes / maxBytes, 0.6, 0.9) };
                   },
-                  tooltip: 'Wyniki wyszukiwań między peronami. '
-                      + 'Przekroczenie budżetu usuwa najstarsze wpisy.' },
-                { label: 'Timeouty',
+                  tooltip: 'Wyniki wyszukiwań między peronami (gorący '
+                      + 'zestaw algorytmu).' },
+                { label: 'Sweeps linii',
+                  get: st => `${st.sweep_lru || 0} / 2000`,
+                  tooltip: 'Zbuforowane przejazdy po liniach — współdzielone '
+                      + 'przez oba tryby wyszukiwania i kolejne zapytania.' },
+                { label: 'Wyszukiwań',
                   get: st => {
                       const cheap = st.cheap || {};
                       const found = cheap.searches || 0;
                       const timeouts = cheap.timeouts || 0;
                       if (found === 0) return { text: '—', color: '#888' };
                       const pct = timeouts / found;
-                      return {
-                          text: `${timeouts} / ${found} (${(pct * 100).toFixed(0)}%)`,
-                          color: statColor(pct, 0.25, 0.6),
-                      };
+                      return { text: `${found} (${(pct * 100).toFixed(0)}% timeout)`,
+                               color: statColor(pct, 0.25, 0.6) };
                   },
-                  tooltip: 'Dokładne wyszukiwania Pareto (tania + wygodna) które '
-                      + 'przekroczyły swój budżet czasu. Przy timeoutzie tryb '
-                      + 'zwraca brak wyniku — bez wyników przybliżonych.' },
+                  tooltip: 'Uruchomione dokładne wyszukiwania (enumeracje '
+                      + 'i A*) oraz ich timeouty. Timeout = tryb zwraca '
+                      + 'brak wyniku, bez wyników przybliżonych.' },
             ],
         },
     ];
