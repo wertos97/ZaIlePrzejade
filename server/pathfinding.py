@@ -14,6 +14,7 @@ import atexit
 import bisect
 import collections
 import concurrent.futures
+import sqlite3
 import heapq
 import itertools
 import json
@@ -79,29 +80,6 @@ _SWEEP_MEMO_MAX = 2000
 # Initialisation
 # ============================================================
 
-def _flush_route_cache_once(last_sig, last_count):
-    """One decision + save iteration of the background route-cache flusher.
-
-    Snapshot the cache state under _route_cache_lock, release it, and only
-    then call _save_route_cache() (which acquires _route_cache_lock itself —
-    the lock is a non-reentrant Lock, so calling it while still holding the
-    lock would self-deadlock the flusher WHILE it holds the lock, wedging
-    the pathfinding worker and timing out every route search).
-
-    Returns (last_sig, last_count) — update the caller's bookkeeping only
-    after a successful save decision.
-    """
-    with _route_cache_lock:
-        count = len(_route_cache)
-        sig = (count, _route_cache_bytes)
-    # flush: every 2 min or when 30+ entries were added since last save
-    if count - last_count >= 30 or (sig != last_sig and count > 0):
-        _save_route_cache()
-        last_count = count
-        last_sig = sig
-    return last_sig, last_count
-
-
 def _rebuild_line_index():
     """(Re)build the line-graph index from the CURRENT adjacency global.
 
@@ -155,37 +133,28 @@ def init_pathfinding(adj, stops_by_id_ref, stops_grouped_ref,
     routes_by_id = routes_by_id_ref
     route_shapes = route_shapes_ref
 
-    # Disk cache: restore previously computed routes on restart and save the
-    # route cache periodically + at exit. A background flusher (every 2 min,
-    # only when entries changed) keeps the disk copy fresh even if the
-    # process is killed with SIGKILL/SIGTERM (atexit doesn't run then).
+    # Disk cache: a sqlite database holding EVERY computed route pair
+    # (write-through, incremental). The in-memory dict is only the hot set —
+    # on a memory miss the pair is read back from sqlite. The database
+    # filename embeds the GTFS feed version and the cache algo version, so
+    # a GTFS update (or a fare-semantics change) simply starts a new file.
     global _feed_version
     try:
         from . import data as _data
         _feed_version = _data.feed_metadata.get('version', '')
     except Exception:
         _feed_version = ''
-    loaded = _load_route_cache()
-    atexit.register(_save_route_cache)
+    _open_cache_db()
+    atexit.register(_close_cache_db)
 
-    global _route_cache_disk_loaded
-    with _route_cache_lock:
-        _route_cache_disk_loaded = len(_route_cache)
-
-    def _flush_loop():
-        last_sig = None
-        last_count = 0
-        while True:
-            time.sleep(120)
-            last_sig, last_count = _flush_route_cache_once(last_sig, last_count)
-
-    threading.Thread(target=_flush_loop, daemon=True,
-                     name='route-cache-flush').start()
+    global _route_cache_db_entries
+    _route_cache_db_entries = _db_count()
 
     logging.getLogger('mpk.pathfinding').info(
-        'Route cache restored',
-        extra={'entries': len(_route_cache), 'loaded_from_disk': loaded,
-               'bytes_kb': _route_cache_bytes // 1024})
+        'Route cache opened',
+        extra={'db_routes': _route_cache_db_entries,
+               'memory_entries': len(_route_cache),
+               'memory_bytes_kb': _route_cache_bytes // 1024})
 
     # Build coordinate lookup from adjacency + stops_by_id
     stop_coords = {}
@@ -1706,14 +1675,9 @@ def _extract_shape_segment(route_id, stops):
 _route_cache: dict = {}
 _route_cache_bytes = 0
 _route_cache_lock = threading.Lock()
-# Serialises disk writes: the background flusher and the atexit handler may
-# call _save_route_cache() concurrently; interleaved writes could corrupt
-# the cache file. (Acquired only AROUND the file write, never while holding
-# _route_cache_lock — no lock-order cycle.)
-_save_route_cache_lock = threading.Lock()
 _feed_version = ''
-# Number of entries restored from the disk cache at startup (metrics only).
-_route_cache_disk_loaded = 0
+# Number of routes available in the sqlite disk cache (metrics only).
+_route_cache_db_entries = 0
 # Entries computed fresh (not loaded from disk) during this server run.
 # Cumulative — eviction may later remove some of them from the cache.
 _route_cache_computed = 0
@@ -1724,87 +1688,116 @@ _route_inflight = {}
 # How long an in-flight waiter waits for the producer before recomputing.
 _INFLIGHT_MAX_WAIT_SECONDS = 60.0
 
-# Disk persistence: on shutdown the route cache is written to
-# processed/route_cache_<feed_version>.json so a restart starts warm.
+# Disk persistence: every computed pair is written through to a sqlite
+# database, processed/route_cache_<feed>_<algo>.sqlite. The in-memory dict
+# is only the hot set; evicted entries live on in the database, and the
+# whole cache survives restarts. The database filename embeds the GTFS feed
+# version and the cache algo version — a GTFS update starts a fresh file.
 _CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           'processed')
 # Bump when the computed result format/semantics changes — old disk caches
 # become unreadable under a new name and stale entries never leak back in
-# (e.g. v3: convenient = dedicated fare+transfers balance search;
-#  v4: exact-only search — convenient is the exact fare+penalty optimum,
-#  no greedy/heuristic results, no fallbacks).
-_CACHE_ALGO_VERSION = 'v4'
+# (e.g. v4: exact-only search — convenient is the exact fare+penalty
+#  optimum, no greedy/heuristic results, no fallbacks;
+#  v5: cache stores the two user-facing routes only (no internal short),
+#  strips derivable stop_positions, and moves persistence to sqlite).
+_CACHE_ALGO_VERSION = 'v5'
+
+_sqlite_conn = None
+_SQLITE_LOCK = threading.Lock()
 
 
-def _cache_file_path():
+def _cache_db_path():
     ver = str(_feed_version) if _feed_version else 'unknown'
-    return os.path.join(_CACHE_DIR, f'route_cache_{ver}_{_CACHE_ALGO_VERSION}.json')
+    return os.path.join(_CACHE_DIR,
+                        f'route_cache_{ver}_{_CACHE_ALGO_VERSION}.sqlite')
 
 
-def _save_route_cache():
-    """Write the route cache to disk (best-effort, at exit).
-
-    Acquires _route_cache_lock itself — callers must NOT hold it (the lock is
-    non-reentrant; nesting would self-deadlock the calling thread).
-    """
-    global _route_cache, _route_cache_bytes
+def _open_cache_db():
+    """Open (and create) the sqlite route cache. WAL + NORMAL synchronous:
+    durable across process crashes without per-write fsync storms on the
+    1-core VPS."""
+    global _sqlite_conn
     try:
-        with _route_cache_lock:
-            data = {f"{k[0]}|{k[1]}|{k[2]}": v[0]
-                    for k, v in _route_cache.items()}
-        with _save_route_cache_lock:
-            with open(_cache_file_path(), 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False)
+        conn = sqlite3.connect(_cache_db_path(), check_same_thread=False)
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA synchronous=NORMAL')
+        conn.execute('CREATE TABLE IF NOT EXISTS routes ('
+                     'k TEXT PRIMARY KEY, v TEXT NOT NULL, size INTEGER NOT NULL)')
+        conn.commit()
+        _sqlite_conn = conn
         _cleanup_stale_cache_files()
     except Exception:
-        pass
+        _sqlite_conn = None  # cache is best-effort; searches must not fail
+    return _sqlite_conn
 
 
-def _load_route_cache():
-    """Load a previously saved route cache, if the feed version matches."""
-    global _route_cache, _route_cache_bytes
+def _close_cache_db():
+    global _sqlite_conn
+    if _sqlite_conn is not None:
+        try:
+            _sqlite_conn.close()
+        except Exception:
+            pass
+        _sqlite_conn = None
+
+
+def _cache_db_key(from_id, to_id):
+    return f'{from_id}|{to_id}|{_feed_version}|{_CACHE_ALGO_VERSION}'
+
+
+def _db_put(key, payload_json, size):
+    """Write-through one pair (autocommit — durable across restarts)."""
+    conn = _sqlite_conn
+    if conn is None:
+        return
     try:
-        with open(_cache_file_path(), encoding='utf-8') as f:
-            data = json.load(f)
+        with _SQLITE_LOCK:
+            conn.execute('INSERT OR REPLACE INTO routes(k, v, size) '
+                         'VALUES (?, ?, ?)', (key, payload_json, size))
+            conn.commit()
+    except Exception:
+        pass  # best-effort — the memory cache still serves this process
+
+
+def _db_get(key):
+    conn = _sqlite_conn
+    if conn is None:
+        return None
+    try:
+        with _SQLITE_LOCK:
+            row = conn.execute('SELECT v FROM routes WHERE k = ?',
+                               (key,)).fetchone()
+        if row is None:
+            return None
+        return json.loads(row[0])
+    except Exception:
+        return None
+
+
+def _db_count():
+    conn = _sqlite_conn
+    if conn is None:
+        return 0
+    try:
+        with _SQLITE_LOCK:
+            return conn.execute('SELECT COUNT(*) FROM routes').fetchone()[0]
     except Exception:
         return 0
-    with _route_cache_lock:
-        skipped = 0
-        for key, triple in data.items():
-            from_id, to_id, mode = key.split('|')
-            ck = (from_id, to_id, mode)
-            # JSON deserialises tuples as lists — restore the dual tuple
-            # structure used in memory: ((result, error), ...) x3.
-            triple = tuple(tuple(pair) for pair in triple)
-            # Skip poisoned entries: all three results are errors (None).
-            # These were cached during transient failures (memory, timeout)
-            # and would block correct recomputation.
-            if all(pair[0] is None for pair in triple):
-                skipped += 1
-                continue
-            size = _estimate_bytes(triple)
-            if size > _ROUTE_CACHE_MAX_BYTES:
-                continue
-            _route_cache[ck] = (triple, size)
-            _route_cache_bytes += size
-        while _route_cache_bytes > _ROUTE_CACHE_MAX_BYTES and _route_cache:
-            oldest = next(iter(_route_cache))
-            _route_cache_bytes -= _route_cache[oldest][1]
-            del _route_cache[oldest]
-    _cleanup_stale_cache_files()
-    return len(data)
 
 
 def _cleanup_stale_cache_files():
-    """Remove route-cache files from older feed versions / algo versions."""
+    """Remove route-cache files from older feed / algo versions."""
     try:
-        current = os.path.basename(_cache_file_path())
+        current = os.path.basename(_cache_db_path())
         for name in os.listdir(_CACHE_DIR):
-            if name.startswith('route_cache_') and name.endswith('.json') \
-                    and name != current:
+            if (name.startswith('route_cache_')
+                    and (name.endswith('.json') or name.endswith('.sqlite'))
+                    and name != current):
                 os.remove(os.path.join(_CACHE_DIR, name))
     except OSError:
         pass  # best-effort — stale files are harmless
+
 
 def find_route_between_groups(from_group_id, to_group_id, mode='both'):
     """Find the routes between two stop groups.
@@ -1822,25 +1815,23 @@ def find_route_between_groups(from_group_id, to_group_id, mode='both'):
     provide upper bounds that speed up the exact fare searches; it is not a
     user-facing mode.
 
-    The *mode* parameter selects what is returned:
+    Returns a pair ``(convenient_pair, cheap_pair)``; each is a
+    ``(result_dict, error_string)`` pair.
 
-    * ``'short'`` / ``'convenient'`` / ``'cheap'`` — only that result
-    * ``'both'`` (default) — a 3-tuple ``(short, convenient, cheap)``
-
-    Each result is itself a ``(result_dict, error_string)`` pair.
-
-    Results are cached per (from_group_id, to_group_id, mode, feed_version);
-    triples with transient (timeout) failures are not cached.
+    Results are cached per (from_group_id, to_group_id, feed_version) —
+    in memory (hot set) and in the sqlite disk tier (everything, surviving
+    restarts and evictions). Transient (timeout) failures are not cached.
     """
-    cache_key = (from_group_id, to_group_id, mode, _feed_version)
-    with _route_cache_lock:
-        cached = _route_cache.get(cache_key)
-        if cached is not None:
-            return _slice_route_cache(cached[0], mode)
-        inflight = _route_inflight.get((from_group_id, to_group_id))
+    cache_key = (from_group_id, to_group_id, 'both', _feed_version)
 
-    # Another request is computing this exact pair — wait for its result
-    # (keeps 10 concurrent identical queries down to a single A* run).
+    pair, _from_db = _read_cached_pair(cache_key, mode,
+                                       from_group_id, to_group_id)
+    if pair is not None:
+        return pair
+
+    # Another request computing this exact pair — wait for its result
+    # (keeps 10 concurrent identical queries down to a single search run).
+    inflight = _route_inflight.get((from_group_id, to_group_id))
     if inflight is not None:
         # Generous deadline: the producer's finally block always notifies,
         # so waiting is safe; the cap only guards against a lost producer.
@@ -1851,10 +1842,10 @@ def find_route_between_groups(from_group_id, to_group_id, mode='both'):
                 if remaining <= 0:
                     break
                 inflight['cond'].wait(remaining)
-        with _route_cache_lock:
-            cached = _route_cache.get(cache_key)
-        if cached is not None:
-            return _slice_route_cache(cached[0], mode)
+        pair, _from_db = _read_cached_pair(cache_key, mode,
+                                           from_group_id, to_group_id)
+        if pair is not None:
+            return pair
         # Producer lost without storing a result — fall through and compute
 
     # Register as the in-flight search for this pair (dedup for concurrent
@@ -1864,8 +1855,7 @@ def find_route_between_groups(from_group_id, to_group_id, mode='both'):
     with _route_cache_lock:
         _route_inflight[pair_key] = inflight
     try:
-        return _compute_route_internal(cache_key, from_group_id, to_group_id,
-                                       mode)
+        return _compute_route_internal(cache_key, from_group_id, to_group_id)
     finally:
         with _route_cache_lock:
             inflight['done'] = True
@@ -1878,7 +1868,7 @@ def find_route_between_groups(from_group_id, to_group_id, mode='both'):
 # Group-to-group computation (dual-mode, exact)
 # ============================================================
 
-def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
+def _compute_route_internal(cache_key, from_group_id, to_group_id):
     """Compute the dual-mode result for a group pair (no cache/dedup).
 
     Every user-facing mode is an EXACT result of its own proven-optimal
@@ -1897,14 +1887,14 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
 
     if not from_group:
         err = ((None, "Przystanek początkowy nie został znaleziony"),
-               (None, "Przystanek początkowy nie został znaleziony"),
                (None, "Przystanek początkowy nie został znaleziony"))
-        return _cache_route(cache_key, err, mode)
+        _cache_store(cache_key, err)
+        return err
     if not to_group:
         err = ((None, "Przystanek końcowy nie został znaleziony"),
-               (None, "Przystanek końcowy nie został znaleziony"),
                (None, "Przystanek końcowy nie został znaleziony"))
-        return _cache_route(cache_key, err, mode)
+        _cache_store(cache_key, err)
+        return err
 
     # Same group — zero-distance trip
     if from_group_id == to_group_id:
@@ -1930,7 +1920,7 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
             'segments': [],
             'transfers': [],
         }, None)
-        return _cache_route(cache_key, (result, result, result), mode)
+        return (result, result)
 
     from_platforms = from_group['platforms'][:_MAX_PLATFORMS_TO_TRY]
     to_platforms = to_group['platforms'][:_MAX_PLATFORMS_TO_TRY]
@@ -1964,7 +1954,7 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
     # If we were cancelled mid-short-search, skip remaining phases.
     if _check_cancelled():
         err = last_error or "Anulowano wyszukiwanie"
-        return ((None, err), (None, err), (None, err))
+        return ((None, err), (None, err))
 
     # --- convenient (EXACT: fare + penalty per boarding). The short route's
     # scalar cost is a valid complete-route cost — seeding the upper bound
@@ -2001,70 +1991,130 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id, mode):
                    or "Nie znaleziono trasy między tymi przystankami")
         # Do NOT cache all-error results — a transient error (memory,
         # timeout) would poison the cache until eviction.
-        return ((None, err_msg), (None, err_msg), (None, err_msg))
+        return ((None, err_msg), (None, err_msg))
 
-    # Build the triple-mode return (short stays internal: bound provider and
-    # cache format compatibility).
-    short_pair = (best_short, None) if best_short else (None, last_error)
+    # Build the dual-mode return. The internal short route is not part of
+    # the result — only the two user-facing modes are served.
     convenient_pair = ((best_convenient, None) if best_convenient
                        else (None, convenient_error or last_error))
     cheap_pair = ((best_cheap, None) if best_cheap
                   else (None, cheap_error or last_error))
 
-    triple = (short_pair, convenient_pair, cheap_pair)
+    pair = (convenient_pair, cheap_pair)
 
-    # Never cache triples whose user-facing search failed transiently
+    # Never cache results whose user-facing search failed transiently
     # (timeout / cancel / memory) — a retry must recompute instead of being
     # served the stored error for the cache's lifetime.
     if (_has_transient_error(convenient_pair)
             or _has_transient_error(cheap_pair)):
-        return _slice_route_cache(triple, mode)
+        return pair
 
-    return _cache_route(cache_key, triple, mode)
+    # Write-through to the sqlite disk tier + keep in the memory hot set.
+    # The stored payload is slimmed (no internal short route, no derivable
+    # stop_positions) — hydrate_slice rebuilds it on read.
+    payload = _pair_payload(pair)
+    _db_put(_cache_db_key(from_group_id, to_group_id),
+            json.dumps(payload), _estimate_bytes(payload))
+    _cache_store(cache_key, pair)
+    return pair
 
 
-def _cache_route(cache_key, triple_result, mode):
-    """Store a triple-mode result in the route cache, then return
-    the slice appropriate for *mode*.
+def _hydrate_result(result):
+    """Rebuild the per-segment fields the cache strips to save memory
+    (stop_positions = exact per-stop coordinates, derivable from
+    stops_by_id). Returns a FRESH dict — the cached original is shared
+    with every concurrent reader and must never be mutated."""
+    if result is None:
+        return None
+    positions = {}
+    res = dict(result)
+    segs = []
+    for seg in result.get('segments', []):
+        seg = dict(seg)
+        stops = []
+        pos = {}
+        for sid in seg.get('stops', ()):
+            stops.append(sid)
+            info = positions.get(sid)
+            if info is None:
+                info = stops_by_id.get(sid, {})
+                info = [info.get('lat', 0), info.get('lon', 0)]
+                positions[sid] = info
+            pos[sid] = info
+        seg['stops'] = stops
+        seg['stop_positions'] = pos
+        segs.append(seg)
+    res['segments'] = segs
+    return res
 
-    Memory guard: the cache is bounded BOTH by entry count and by total
-    estimated bytes — a full route result (segments, shapes, positions)
-    can reach ~100 KB, so a count-only cap could exhaust host memory.
-    Cached values are immutable by contract — never mutate a returned
-    result, it is shared with every concurrent reader of this entry.
-    """
+
+def _hydrate_slice(pair, mode):
+    """Hydrate the pair slice for *mode* (fresh copies, cache untouched)."""
+    if mode == 'convenient':
+        one = pair[0]
+    elif mode == 'cheap':
+        one = pair[1]
+    else:
+        return ((_hydrate_result(pair[0][0]), pair[0][1]),
+                (_hydrate_result(pair[1][0]), pair[1][1]))
+    return _hydrate_result(one[0]), one[1]
+
+
+def _pair_payload(pair):
+    """Slim the pair for caching: the internal short route is not stored
+    (the API never serves it) and stop_positions are dropped (rehydrated
+    from stops_by_id on read). Cuts entry size by ~45%."""
+    def slim(pair_one):
+        result, err = pair_one
+        if result is None:
+            return [None, err]
+        res = dict(result)
+        res['segments'] = [
+            {k: v for k, v in seg.items() if k != 'stop_positions'}
+            for seg in result.get('segments', [])]
+        return [res, err]
+    return [slim(pair[0]), slim(pair[1])]
+
+
+def _cache_from_payload(payload):
+    """Rebuild the pair from its stored payload (JSON round-trip safe)."""
+    return (payload[0], payload[1])
+
+
+def _cache_store(cache_key, pair):
+    """Insert into the in-memory hot set with byte-budget eviction. The
+    sqlite copy (written through at compute time) is unaffected by eviction
+    — evicted entries can always be read back."""
     global _route_cache_bytes, _route_cache_computed
-    size = _estimate_bytes(triple_result)
+    size = _estimate_bytes(pair)
     if size > _ROUTE_CACHE_MAX_BYTES:
-        return _slice_route_cache(triple_result, mode)
-
+        return
     with _route_cache_lock:
         if cache_key in _route_cache:
             _route_cache_bytes -= _route_cache[cache_key][1]
         else:
-            _route_cache_computed += 1  # brand-new pair computed this run
-        _route_cache[cache_key] = (triple_result, size)
+            _route_cache_computed += 1  # brand-new pair this run
+        _route_cache[cache_key] = (pair, size)
         _route_cache_bytes += size
-        # evict oldest entries until under the byte budget
         while _route_cache_bytes > _ROUTE_CACHE_MAX_BYTES and _route_cache:
             oldest = next(iter(_route_cache))  # insertion-ordered dict
             _route_cache_bytes -= _route_cache[oldest][1]
             del _route_cache[oldest]
 
-    return _slice_route_cache(triple_result, mode)
 
-
-def _slice_route_cache(triple_result, mode):
-    """Return the appropriate slice of a stored triple result."""
-    if mode == 'convenient':
-        return triple_result[1]
-    elif mode == 'short':
-        return triple_result[0]
-    elif mode == 'cheap':
-        return triple_result[2]
-    else:
-        # mode == 'both'
-        return triple_result
+def _read_cached_pair(cache_key, mode, from_id, to_id):
+    """Memory hot set -> sqlite disk -> None. Returns (pair, from_db);
+    both hit paths return HYDRATED fresh copies (cache stays immutable)."""
+    with _route_cache_lock:
+        cached = _route_cache.get(cache_key)
+    if cached is not None:
+        return _hydrate_slice(cached[0], mode), False
+    payload = _db_get(_cache_db_key(from_id, to_id))
+    if payload is None:
+        return None, False
+    pair = _cache_from_payload(payload)
+    _cache_store(cache_key, pair)
+    return _hydrate_slice(pair, mode), True
 
 
 # Search failures a retry could overcome. Definitive results ("no route
@@ -2109,13 +2159,13 @@ def route_cache_info():
 
 
 def route_cache_origin_info():
-    """Return (disk_loaded, computed_this_run) for the route cache.
+    """Return (db_routes, computed_this_run) for the route cache.
 
-    disk_loaded — entries restored from the disk cache at startup,
+    db_routes — pairs available in the sqlite disk tier (survive restarts),
     computed_this_run — new pairs computed from real requests this run
-    (cumulative; eviction may have removed some since).
+    (cumulative; eviction may have removed some from memory since).
     """
-    return _route_cache_disk_loaded, _route_cache_computed
+    return max(_route_cache_db_entries, _db_count()), _route_cache_computed
 
 
 # ============================================================
@@ -2126,13 +2176,25 @@ def get_cached_route_result(from_group_id, to_group_id, mode):
     """Return the cached (result, error) pair for a pair+mode, or (None, None).
 
     READ-ONLY by contract: OG image generation must never trigger a search —
-    it may only reuse a route the user has already had computed (and that is
-    therefore live in the route cache). Anything else yields no cost preview.
+    it may only reuse a route the user has already had computed (memory hot
+    set or sqlite disk tier). Anything else yields no cost preview.
     """
+    cache_key = (from_group_id, to_group_id, 'both', _feed_version)
     with _route_cache_lock:
-        for key in ((from_group_id, to_group_id, 'both', _feed_version),
-                    (from_group_id, to_group_id, mode, _feed_version)):
-            cached = _route_cache.get(key)
-            if cached is not None:
-                return _slice_route_cache(cached[0], mode)
-    return None, None
+        cached = _route_cache.get(cache_key)
+    if cached is not None:
+        pair = cached[0]
+    else:
+        payload = _db_get(_cache_db_key(from_group_id, to_group_id))
+        if payload is None:
+            return None, None
+        pair = _cache_from_payload(payload)
+    if mode == 'convenient':
+        one = pair[0]
+    elif mode == 'cheap':
+        one = pair[1]
+    else:
+        one = pair[0]
+    return _hydrate_result(one[0]), one[1]
+
+

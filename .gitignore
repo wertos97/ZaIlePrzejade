@@ -39,4 +39,4 @@ server.env
 venv/
 
 # Runtime route cache (regenerated on server start)
-processed/route_cache_*.json
+processed/route_cache_*

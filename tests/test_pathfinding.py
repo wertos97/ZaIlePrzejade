@@ -9,6 +9,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from server.pathfinding import haversine_km
 
 
+def _walk_reachable(adj, start, goal):
+    """True when goal is reachable from start via transfer (walk) edges."""
+    seen = {start}
+    queue = [start]
+    while queue:
+        s = queue.pop()
+        for e in adj.get(s, []):
+            if e['route_id'] != 'transfer':
+                continue
+            t = e['to']
+            if t == goal:
+                return True
+            if t not in seen:
+                seen.add(t)
+                queue.append(t)
+    return False
+
+
 class TestHaversineKm(unittest.TestCase):
     """Test haversine distance calculation."""
 
@@ -78,13 +96,13 @@ class TestPathfindingIntegration(unittest.TestCase):
         self.assertIsInstance(result, tuple)
         self.assertEqual(len(result), 2)
 
-    def test_find_route_between_groups_returns_triple(self):
-        """Should return (short_pair, convenient_pair, cheap_pair)."""
+    def test_find_route_between_groups_returns_pair(self):
+        """Should return (convenient_pair, cheap_pair) — the internal short
+        route is not part of the result."""
         result = self.pf.find_route_between_groups(self.test_from, self.test_to, mode='both')
         self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 3)
-        short_pair, convenient_pair, cheap_pair = result
-        self.assertIsInstance(short_pair, tuple)
+        self.assertEqual(len(result), 2)
+        convenient_pair, cheap_pair = result
         self.assertIsInstance(convenient_pair, tuple)
         self.assertIsInstance(cheap_pair, tuple)
 
@@ -94,26 +112,11 @@ class TestPathfindingIntegration(unittest.TestCase):
         self.assertIsInstance(result, tuple)
         self.assertEqual(len(result), 2)
 
-    def test_find_route_cheap_mode(self):
-        """mode='cheap' should return a single (result, error) pair."""
+    def test_find_route_cheap_mode_slice(self):
+        """mode='cheap' returns a single (result, error) pair."""
         result = self.pf.find_route_between_groups(self.test_from, self.test_to, mode='cheap')
         self.assertIsInstance(result, tuple)
         self.assertEqual(len(result), 2)
-
-    def test_cheap_is_no_more_expensive_than_short(self):
-        """Exactness invariant: when the cheap search completes, its fare can
-        never exceed the fare of the shortest route."""
-        triple = self.pf.find_route_between_groups(self.test_from, self.test_to, mode='both')
-        short_pair, _, cheap_pair = triple
-        short_result, _ = short_pair
-        cheap_result, cheap_err = cheap_pair
-        self.assertIsNotNone(short_result)
-        if cheap_result is None:
-            # Exact search timed out — legitimate; the error must be transient.
-            self.assertTrue(self.pf._is_transient_error(cheap_err), cheap_err)
-            return
-        self.assertLessEqual(cheap_result['cost_regular'],
-                             short_result['cost_regular'])
 
     def test_cheap_is_no_more_expensive_than_convenient(self):
         """Exactness invariant (reported pair Skrajna→Elektrociepłownia):
@@ -121,8 +124,8 @@ class TestPathfindingIntegration(unittest.TestCase):
         A timed-out cheap mode is null + transient error, never approximated."""
         # Real reported pair: Skrajna (group_341) → Elektrociepłownia
         # (group_1503) — long trip where the exact searches are slowest.
-        pair = ('group_341', 'group_1503')
-        if pair[0] not in self.stops_grouped or pair[1] not in self.stops_grouped:
+        pair_ids = ('group_341', 'group_1503')
+        if pair_ids[0] not in self.stops_grouped or pair_ids[1] not in self.stops_grouped:
             self.skipTest('reported pair not present in this dataset')
 
         def raw_fare(r):
@@ -131,9 +134,8 @@ class TestPathfindingIntegration(unittest.TestCase):
             return sum(s.get('cost_regular', 0.0)
                        for s in r.get('segments', []))
 
-        triple = self.pf.find_route_between_groups(*pair, mode='both')
-        short_pair, conv_pair, cheap_pair = triple
-        short_result, _ = short_pair
+        pair = self.pf.find_route_between_groups(*pair_ids, mode='both')
+        conv_pair, cheap_pair = pair
         conv_result, _ = conv_pair
         cheap_result, cheap_err = cheap_pair
         if cheap_result is None:
@@ -145,10 +147,23 @@ class TestPathfindingIntegration(unittest.TestCase):
                 self.assertLessEqual(
                     raw_fare(cheap_result), raw_fare(conv_result),
                     'cheap route costs more than the convenient route')
-            if short_result is not None:
-                self.assertLessEqual(
-                    raw_fare(cheap_result), raw_fare(short_result),
-                    'cheap route costs more than the short route')
+
+    def test_cheap_is_no_more_expensive_than_convenient_real_pair(self):
+        """(kept) exactness invariant on the reported hard pair: when both
+        exact searches complete, cheap fare <= convenient fare."""
+        pair_ids = ('group_341', 'group_1503')
+        if pair_ids[0] not in self.stops_grouped:
+            self.skipTest('reported pair not present in this dataset')
+        triple = self.pf.find_route_between_groups(*pair_ids, mode='both')
+        conv_pair, cheap_pair = triple
+        cheap_result, cheap_err = cheap_pair
+        conv_result, _ = conv_pair
+        if cheap_result is None:
+            self.assertTrue(self.pf._is_transient_error(cheap_err), cheap_err)
+            return
+        if conv_result is not None:
+            self.assertLessEqual(cheap_result['cost_regular'],
+                                 conv_result['cost_regular'])
 
     def test_find_route_completes_within_30s_budget(self):
         """The whole dual-mode search must fit the 30s product promise
@@ -165,9 +180,9 @@ class TestPathfindingIntegration(unittest.TestCase):
 
     def test_same_group_returns_zero_distance(self):
         """Route from a group to itself should have zero distance."""
-        short_pair, _, _ = self.pf.find_route_between_groups(
+        conv_pair, _ = self.pf.find_route_between_groups(
             self.test_from, self.test_from, mode='both')
-        result, error = short_pair
+        result, error = conv_pair
         self.assertIsNotNone(result)
         self.assertEqual(result['total_distance'], 0)
         self.assertEqual(result['cost_regular'], 0.0)
@@ -175,9 +190,9 @@ class TestPathfindingIntegration(unittest.TestCase):
     def test_route_path_has_unique_groups(self):
         """Regression: path must contain exactly ONE entry per stop group
         (no duplicate dots for the same stop), positioned at a real peron."""
-        short_pair, _, _ = self.pf.find_route_between_groups(
+        conv_pair, _ = self.pf.find_route_between_groups(
             self.test_from, self.test_to, mode='both')
-        result, error = short_pair
+        result, error = conv_pair
         self.assertIsNotNone(result, error)
         path = result['path']
         self.assertGreater(len(path), 1)
@@ -195,9 +210,9 @@ class TestPathfindingIntegration(unittest.TestCase):
     def test_segment_carries_stop_positions(self):
         """Every segment exposes exact peron coords for ALL its stops, so the
         map can draw geometry even though path is deduplicated per group."""
-        short_pair, _, _ = self.pf.find_route_between_groups(
+        conv_pair, _ = self.pf.find_route_between_groups(
             self.test_from, self.test_to, mode='both')
-        result, error = short_pair
+        result, error = conv_pair
         self.assertIsNotNone(result, error)
         for seg in result['segments']:
             self.assertIn('stop_positions', seg)
@@ -209,9 +224,9 @@ class TestPathfindingIntegration(unittest.TestCase):
         """Regression: segment distance must equal the sum of the real GTFS
         edge distances (shape_dist_traveled) along the path — NOT the
         straight-line distance between platform coordinates."""
-        short_pair, _, _ = self.pf.find_route_between_groups(
+        conv_pair, _ = self.pf.find_route_between_groups(
             self.test_from, self.test_to, mode='both')
-        result, error = short_pair
+        result, error = conv_pair
         self.assertIsNotNone(result, error)
         adj = self.pf.adjacency
         total_from_edges = 0.0
@@ -220,18 +235,26 @@ class TestPathfindingIntegration(unittest.TestCase):
             stops = seg['stops']
             for j in range(len(stops) - 1):
                 a, b = stops[j], stops[j + 1]
-                # find the forward edge a->b used on this route
+                # find the forward edge a->b used on this route; a segment
+                # may span a walking transfer (same line re-boarded after a
+                # walk — the walk-merge ticket semantics), so accept the
+                # transfer edge as the hop too
                 dist = None
                 for e in adj.get(a, []):
-                    if e['to'] == b and e['route_id'] == seg['route_id']:
-                        dist = e['distance']
+                    if e['to'] == b and e['route_id'] in (seg['route_id'], 'transfer'):
+                        # walk hops cost 0 ticket distance (walk-merge)
+                        dist = 0.0 if e['route_id'] == 'transfer' else e['distance']
                         break
                 if dist is None:
                     # reverse edge (bidirectional adjacency) — same distance
                     for e in adj.get(b, []):
-                        if e['to'] == a and e['route_id'] == seg['route_id']:
-                            dist = e['distance']
+                        if e['to'] == a and e['route_id'] in (seg['route_id'], 'transfer'):
+                            dist = 0.0 if e['route_id'] == 'transfer' else e['distance']
                             break
+                if dist is None:
+                    # multi-hop walk bridge between platforms — 0 km ticket distance
+                    if _walk_reachable(adj, a, b):
+                        dist = 0.0
                 self.assertIsNotNone(dist, f'edge {a}->{b} not found')
                 seg_edges += dist
             # accumulated real distance (round to 4 like the server)
@@ -245,24 +268,18 @@ class TestPathfindingIntegration(unittest.TestCase):
         """Invalid group ID should return an error."""
         result = self.pf.find_route_between_groups('group_999999', self.test_to, mode='both')
         self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 3)
-        short_pair, convenient_pair, cheap_pair = result
-        self.assertIsNone(short_pair[0])  # result is None
-        self.assertIsNotNone(short_pair[1])  # error is set
-        self.assertIsNone(convenient_pair[0])
+        self.assertEqual(len(result), 2)
+        convenient_pair, cheap_pair = result
+        self.assertIsNone(convenient_pair[0])  # result is None
+        self.assertIsNotNone(convenient_pair[1])  # error is set
         self.assertIsNone(cheap_pair[0])
 
 
-class TestRouteCacheFlushNoDeadlock(unittest.TestCase):
-    """Regression: the cache flusher must never save while holding
-    _route_cache_lock.
-
-    _save_route_cache() acquires the non-reentrant _route_cache_lock itself.
-    The old _flush_loop called it while already holding the lock, which
-    self-deadlocked the flusher thread while HOLDING the lock — wedging the
-    pathfinding worker (it blocks on the lock forever) so that every route
-    search timed out ~2 minutes after the first uncached search.
-    """
+class TestRouteCacheSqlite(unittest.TestCase):
+    """The route cache persists EVERY computed pair to sqlite (write-through)
+    and the in-memory dict is only the hot set: evicted entries must still
+    be readable from the database, and stored payloads are slimmed (no
+    internal short route, no derivable stop_positions)."""
 
     @classmethod
     def setUpClass(cls):
@@ -277,79 +294,72 @@ class TestRouteCacheFlushNoDeadlock(unittest.TestCase):
         cls.test_from = group_ids[0]
         cls.test_to = group_ids[min(5, len(group_ids) - 1)]
 
-    def test_flush_cycle_does_not_deadlock(self):
-        """The flusher's decision+save cycle must complete while route
-        searches may run — never self-deadlock on _route_cache_lock.
-
-        Before the fix, the flush loop called _save_route_cache() while
-        holding _route_cache_lock; the non-reentrant Lock deadlocked the
-        flusher thread holding the lock, so every route search timed out
-        ~2 minutes after the first uncached computation.
-        """
-        import threading
-
+    def test_pair_roundtrip_through_db(self):
+        """compute -> clear the memory hot set -> read again: the pair must
+        come back from the sqlite tier with identical fares and hydrated
+        stop_positions."""
         pf = self.pf
-        # Seed a cache entry so the flusher decides to save (sig != last).
-        cache_key = (self.test_from, self.test_to, 'flush-test', pf._feed_version)
+        pair = pf.find_route_between_groups(self.test_from, self.test_to,
+                                            mode='both')
+        conv, cheap = pair
+        self.assertIsNotNone(conv[0])
+        base_costs = (conv[0]['cost_regular'], cheap[0]['cost_regular'])
+
+        # drop the memory hot set — the next read must hit sqlite
         with pf._route_cache_lock:
-            pf._route_cache[cache_key] = ((None, 'x'),) * 3, 100
+            pf._route_cache.clear()
+        pair2 = pf.find_route_between_groups(self.test_from, self.test_to,
+                                             mode='both')
+        conv2, cheap2 = pair2
+        self.assertIsNotNone(conv2[0])
+        self.assertEqual(conv2[0]['cost_regular'], base_costs[0])
+        self.assertEqual(cheap2[0]['cost_regular'], base_costs[1])
+        # hydration rebuilt the stripped per-segment coordinates
+        for route in (conv2[0], cheap2[0]):
+            for seg in route['segments']:
+                self.assertIn('stop_positions', seg)
+                self.assertEqual(len(seg['stop_positions']),
+                                 len(seg['stops']))
 
-        # Run flush cycles while concurrent "searches" hammer the lock.
-        stop = threading.Event()
+    def test_cached_payload_is_slimmed(self):
+        """The stored pair must NOT contain the internal short route nor
+        derivable stop_positions — that is what keeps entries small."""
+        pf = self.pf
+        pf.find_route_between_groups(self.test_from, self.test_to, mode='both')
+        key = (self.test_from, self.test_to, 'both', pf._feed_version)
+        with pf._route_cache_lock:
+            pair = pf._route_cache[key][0]
+        self.assertEqual(len(pair), 2)  # (convenient, cheap) — no short
+        for one in pair:
+            if one[0] is not None:
+                for seg in one[0]['segments']:
+                    self.assertNotIn('stop_positions', seg)
 
-        def reader():
-            while not stop.is_set():
-                with pf._route_cache_lock:
-                    pass
-
-        readers = [threading.Thread(target=reader, daemon=True) for _ in range(2)]
-        for r in readers:
-            r.start()
-        try:
-            last_sig, last_count = None, 0
-            for _ in range(3):
-                def cycle(s=last_sig, c=last_count):
-                    return pf._flush_route_cache_once(s, c)
-
-                t = threading.Thread(target=cycle, daemon=True)
-                t.start()
-                t.join(timeout=10)
-                self.assertFalse(t.is_alive(),
-                                 'flush cycle deadlocked on _route_cache_lock')
-                last_sig, last_count = cycle()
-        finally:
-            stop.set()
-            for r in readers:
-                r.join(timeout=5)
-
-    def test_flush_releases_cache_lock_for_pathfinding(self):
-        """After a flush, _route_cache_lock must be free so find_route_…
-        never blocks on the background flusher."""
+    def test_concurrent_db_writes(self):
+        """Parallel route computations write through to sqlite without
+        corrupting it (WAL + a write lock)."""
         import threading
 
         pf = self.pf
-        pf._flush_route_cache_once(None, 0)
-        self.assertTrue(pf._route_cache_lock.acquire(timeout=5),
-                        '_route_cache_lock held after flush cycle')
-        pf._route_cache_lock.release()
+        ids = list(pf.stops_grouped.keys())[:12]
+        errs = []
 
-    def test_concurrent_saves_do_not_corrupt_file(self):
-        """Two threads saving at once (flusher + atexit) must not corrupt the
-        cache file — writes are serialised by _save_route_cache_lock."""
-        import json
-        import threading
+        def run(i):
+            try:
+                pf.find_route_between_groups(ids[i], ids[(i + 3) % 12],
+                                             mode='both')
+            except Exception as e:  # pragma: no cover
+                errs.append(e)
 
-        pf = self.pf
-        threads = [threading.Thread(target=pf._save_route_cache)
-                   for _ in range(4)]
+        threads = [threading.Thread(target=run, args=(i,)) for i in range(8)]
         for t in threads:
             t.start()
         for t in threads:
-            t.join(timeout=15)
-            self.assertFalse(t.is_alive(), 'concurrent _save_route_cache() hung')
-        # The written file must still be valid JSON.
-        with open(pf._cache_file_path(), encoding='utf-8') as f:
-            json.load(f)
+            t.join(timeout=120)
+            self.assertFalse(t.is_alive(), 'search deadlocked')
+        self.assertEqual(errs, [])
+        # the db must still be readable and contain the pairs
+        self.assertGreaterEqual(pf._db_count(), 8)
 
 
 class TestExactSearchExactness(unittest.TestCase):

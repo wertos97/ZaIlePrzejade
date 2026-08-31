@@ -777,10 +777,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             timeout=30.0
         )
 
-        if isinstance(result, tuple) and len(result) == 3:
-            short_pair, convenient_pair, cheap_pair = result
-        elif isinstance(result, tuple) and len(result) == 2 \
-                and result[0] == 'busy':
+        is_busy = (isinstance(result, tuple) and len(result) == 2
+                   and result[0] == 'busy' and result[1] is None)
+        is_pair = (isinstance(result, tuple) and len(result) == 2
+                   and isinstance(result[0], tuple))
+        if is_busy:
             # Queue shed: tell the client to retry soon (the frontend
             # retries 503s automatically, and the message lands in the
             # frontend's warning-toast branch).
@@ -791,6 +792,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                           'spróbuj ponownie za chwilę.'},
                 status=503, retry_after=8)
             return
+        if is_pair:
+            convenient_pair, cheap_pair = result
         else:
             _route_timeouts += 1
             error_msg = result[1] if isinstance(result, tuple) and len(result) >= 2 else "Timeout lub błąd wyszukiwania"

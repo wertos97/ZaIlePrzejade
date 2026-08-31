@@ -57,8 +57,8 @@ class TestHandlerEndpoints(unittest.TestCase):
         cls.to_id = group_ids[1]
         # Find a pair guaranteed to have a route: walk until one is found
         for gid in group_ids[2:]:
-            short_pair, _, _ = find_route_between_groups(cls.from_id, gid, mode='both')
-            if short_pair[0] is not None and short_pair[0]['path']:
+            conv_pair, _ = find_route_between_groups(cls.from_id, gid, mode='both')
+            if conv_pair[0] is not None and conv_pair[0]['path']:
                 cls.to_id = gid
                 break
 
@@ -178,7 +178,13 @@ class TestHandlerEndpoints(unittest.TestCase):
         release = threading.Event()
         blockers = [handler_mod._pathfinding_executor.submit(
             release.wait, 5) for _ in range(4)]
-        _time.sleep(0.3)  # let the executor distribute them
+        # wait until the executor queue actually reaches the shed threshold
+        shed_deadline = _time.monotonic() + 5
+        while _time.monotonic() < shed_deadline:
+            if handler_mod._pathfinding_executor._work_queue.qsize() \
+                    >= handler_mod.PATHFINDING_QUEUE_SHED:
+                break
+            _time.sleep(0.05)
         try:
             t0 = _time.monotonic()
             try:
@@ -194,13 +200,10 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertIn('przeciążony', result['error'])
         finally:
             release.set()
-            # let the executor drain so later tests start from a clean pool
-            drain_deadline = _time.monotonic() + 6
-            while _time.monotonic() < drain_deadline:
-                if handler_mod._pathfinding_executor._work_queue.qsize() == 0:
-                    _time.sleep(0.3)
-                    break
-                _time.sleep(0.1)
+            # wait for every blocker to actually finish — later tests must
+            # start from a completely idle executor
+            for b in blockers:
+                b.result(timeout=6)
 
     def test_find_route_invalid_group(self):
         try:
