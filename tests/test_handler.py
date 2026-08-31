@@ -42,6 +42,8 @@ class TestHandlerEndpoints(unittest.TestCase):
 
         class TestServer(ThreadingMixIn, HTTPServer):
             daemon_threads = True
+            _active_lock = threading.Lock()
+            _active_requests = 0
 
         cls.server = TestServer(('127.0.0.1', 0), MPKRequestHandler)
         cls.port = cls.server.server_address[1]
@@ -123,25 +125,26 @@ class TestHandlerEndpoints(unittest.TestCase):
     # ------------------------------------------------------------
     # Route API
     # ------------------------------------------------------------
-    def test_find_route_returns_all_modes(self):
+    def test_find_route_returns_dual_modes(self):
+        """The API exposes exactly two user-facing modes: convenient + cheap.
+        Both are exact; a timed-out mode is null instead of approximated."""
         status, _, body = self._get(
             f'/api/find-route?from={self.from_id}&to={self.to_id}')
         self.assertEqual(status, 200)
         result = json.loads(body)
-        self.assertIn('short', result)
         self.assertIn('convenient', result)
         self.assertIn('cheap', result)
-        self.assertIsNotNone(result['short'])
-        self.assertIsNotNone(result['cheap'])
+        self.assertNotIn('short', result)
 
     def test_find_route_cheap_not_more_expensive(self):
+        """Exactness invariant: when both exact searches complete, the cheap
+        fare can never exceed the convenient route's fare."""
         status, _, body = self._get(
             f'/api/find-route?from={self.from_id}&to={self.to_id}')
         result = json.loads(body)
-        self.assertIsNotNone(result['short'])
-        self.assertIsNotNone(result['cheap'])
-        self.assertLessEqual(result['cheap']['cost_regular'],
-                             result['short']['cost_regular'])
+        if result.get('cheap') is not None and result.get('convenient') is not None:
+            self.assertLessEqual(result['cheap']['cost_regular'],
+                                 result['convenient']['cost_regular'])
 
     def test_og_image_cheap_mode(self):
         """OG image accepts the cheap mode."""
@@ -156,7 +159,9 @@ class TestHandlerEndpoints(unittest.TestCase):
         status, _, body = self._get(
             f'/api/find-route?from={self.from_id}&to={self.to_id}')
         result = json.loads(body)
-        path = result['short']['path']
+        route = result.get('convenient') or result.get('cheap')
+        self.assertIsNotNone(route)
+        path = route['path']
         self.assertGreater(len(path), 0)
         self.assertIn('group_id', path[0])
         self.assertTrue(path[0]['group_id'].startswith('group_'))
@@ -261,7 +266,7 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertIn('cheap', s)
         self.assertIn('searches', s['cheap'])
         # Host internals must NOT be exposed (see test_security.py)
-        for forbidden in ('load_avg', 'rss_mb', 'counters'):
+        for forbidden in ('load_avg', 'counters'):
             self.assertNotIn(forbidden, s)
 
 

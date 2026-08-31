@@ -77,7 +77,7 @@ const state = {
     searchTimeout: null,
     routeMode: 'cheap',
     hasRoute: false,
-    routeCache: {}, // key: "fromId_toId", value: { short, convenient, cheap }
+    routeCache: {}, // key: "fromId_toId", value: { convenient, cheap }
     currentRouteKey: null,
     shouldFitBounds: true,
 };
@@ -126,7 +126,7 @@ function restoreFromURL() {
             state.toStop = toGroup;
             document.getElementById('from-search').value = fromGroup.name;
             document.getElementById('to-search').value = toGroup.name;
-            if (mode === 'convenient' || mode === 'cheap' || mode === 'short') {
+            if (mode === 'convenient' || mode === 'cheap') {
                 setRouteMode(mode);
             } else {
                 setRouteMode('cheap');
@@ -336,7 +336,7 @@ function serverPanelSections() {
                           color: pct > 0 ? '#e74c3c' : '#27ae60',
                       };
                   },
-                  tooltip: 'Zapytania które przekroczyły limit czasu serwera (25s). '
+                  tooltip: 'Zapytania które przekroczyły limit czasu serwera (30s). '
                       + 'Wysoki odsetek = serwer nie wyrabia.' },
                 { label: 'Obliczone',
                   get: st => ({
@@ -388,8 +388,9 @@ function serverPanelSections() {
                           color: statColor(pct, 0.25, 0.6),
                       };
                   },
-                  tooltip: 'Wyszukiwania najtańszej trasy które przekroczyły limit czasu. '
-                      + 'Wysoki odsetek = serwer nie wyrabia.' },
+                  tooltip: 'Dokładne wyszukiwania Pareto (tania + wygodna) które '
+                      + 'przekroczyły swój budżet czasu. Przy timeoutzie tryb '
+                      + 'zwraca brak wyniku — bez wyników przybliżonych.' },
             ],
         },
     ];

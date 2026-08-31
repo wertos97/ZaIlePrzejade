@@ -110,9 +110,8 @@ async function findRoute() {
             return;
         }
 
-        // Cache all three modes from the response
+        // Cache both modes from the response
         state.routeCache[routeKey] = {
-            short: result.short,
             convenient: result.convenient,
             cheap: result.cheap,
         };
@@ -120,28 +119,20 @@ async function findRoute() {
         // This is a new route - fit bounds on next draw
         state.shouldFitBounds = true;
 
-        // Update equality indicator (cheap vs convenient)
+        // Update equality indicator
         updateEqualityIndicators(result.cheap, result.convenient);
 
-        // Selected mode may be unavailable for this pair — fall back to the
-        // other one instead of crashing on `result[state.routeMode]`.
-        if (!result[state.routeMode]) {
-            const altModes = state.routeMode === 'cheap'
-                ? ['convenient', 'short']
-                : state.routeMode === 'convenient'
-                    ? ['cheap', 'short']
-                    : ['cheap', 'convenient'];
-            const altMode = altModes.find(m => result[m]);
-            if (altMode) {
-                showToast('Ta trasa nie jest dostępna w tym trybie — pokazano drugi.', 4000);
-                setRouteMode(altMode);
-            } else {
-                showToast('Nie znaleziono trasy między tymi przystankami.', 5000);
-            }
+        // Exact-only product, no fallbacks: if the requested mode's search
+        // exceeded its time budget, tell the user and stop — the other mode
+        // (if any) is one click away, but we never silently swap it in.
+        const route = result[state.routeMode];
+        if (!route) {
+            showToast('Przekroczono czas wyszukiwania trasy (30 s). '
+                + 'Spróbuj ponownie za chwilę.', 6000, 'warning');
             return;
         }
 
-        displayRoute(result[state.routeMode]);
+        displayRoute(route);
         updateURL();
     } catch (error) {
         console.error('Route finding error:', error);

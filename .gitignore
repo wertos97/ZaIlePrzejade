@@ -26,6 +26,9 @@ Thumbs.db
 start.sh
 stop.sh
 
+# Local project notes (local use only - not shared)
+PROJECT_INFO.md
+
 # Local server configuration (contains server-specific details - NEVER commit)
 server.env
 

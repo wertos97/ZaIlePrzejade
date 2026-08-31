@@ -129,6 +129,15 @@ def run_pathfinding_with_timeout(func, *args, timeout=25.0):
         return None, f"Błąd wyszukiwania: {e}"
 
 
+def _user_facing_error(error_msg):
+    """Translate internal search errors into user-facing messages."""
+    if not error_msg:
+        return error_msg
+    if error_msg.startswith(('Timeout:', 'Anulowano')):
+        return 'Przekroczono czas wyszukiwania trasy. Spróbuj ponownie za chwilę.'
+    return error_msg
+
+
 # ============================================================
 # Constants
 # ============================================================
@@ -745,40 +754,42 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.serve_json({'error': 'Przystanek końcowy nie został znaleziony'}, status=400)
             return
 
-        # Always compute all modes in one call, with timeout protection
         global _route_requests, _route_timeouts
         _route_requests += 1
+
+        # Synchronous: compute convenient + cheap, both EXACT, in one call.
+        # On 1-core VPS a single worker avoids GIL contention entirely.
+        # Outer 30s cap = the product's hard search-time promise; phase
+        # budgets inside sum below it so it only fires as a safety net.
         result = run_pathfinding_with_timeout(
             pathfinding.find_route_between_groups,
-            from_stop, to_stop, 'both',
-            timeout=25.0
+            from_stop, to_stop,
+            timeout=30.0
         )
 
-        # run_pathfinding_with_timeout returns the triple on success,
-        # or (None, error_message) on timeout/exception
         if isinstance(result, tuple) and len(result) == 3:
             short_pair, convenient_pair, cheap_pair = result
         else:
-            # Timeout or error
             _route_timeouts += 1
-            error_msg = result[1] if isinstance(result, tuple) and len(result) == 2 else "Nie znaleziono trasy między tymi przystankami"
-            self.serve_json({'error': error_msg})
+            error_msg = result[1] if isinstance(result, tuple) and len(result) >= 2 else "Timeout lub błąd wyszukiwania"
+            self.serve_json({'error': _user_facing_error(error_msg)})
             return
 
-        short_result, short_error = short_pair
         convenient_result, convenient_error = convenient_pair
         cheap_result, cheap_error = cheap_pair
 
-        if (short_result is None and convenient_result is None
-                and cheap_result is None):
-            self.serve_json({'error': short_error or convenient_error or cheap_error
-                             or "Nie znaleziono trasy między tymi przystankami"})
-        else:
-            self.serve_json({
-                'short': short_result,
-                'convenient': convenient_result,
-                'cheap': cheap_result,
-            })
+        if convenient_result is None and cheap_result is None:
+            self.serve_json({'error': _user_facing_error(
+                convenient_error or cheap_error
+                or "Nie znaleziono trasy między tymi przystankami")})
+            return
+
+        # Two user-facing modes only. A mode whose exact search timed out is
+        # null — the frontend shows a timeout toast for the requested mode.
+        self.serve_json({
+            'convenient': convenient_result,
+            'cheap': cheap_result,
+        })
 
     def _handle_cost(self, query):
         distance_str = query.get('distance', ['0'])[0]
@@ -1005,14 +1016,15 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 from_name = from_group['name']
             if to_group:
                 to_name = to_group['name']
-            # For a single mode find_route_between_groups returns
-            # (result, error) directly — not a pair of pairs.
-            # Use timeout wrapper for protection
-            result, _ = run_pathfinding_with_timeout(
-                pathfinding.find_route_between_groups,
-                from_stop_id, to_stop_id, mode,
-                timeout=15.0
-            )
+            # READ-ONLY: the OG preview mirrors the route the user is
+            # currently viewing, so it only reuses the already-computed
+            # result from the route cache — it must never trigger a search
+            # (a crawler hitting this URL could otherwise burn CPU for 30s).
+            # Uncomputed pairs simply get a preview without the cost line.
+            if mode not in ('cheap', 'convenient'):
+                mode = 'cheap'
+            result, _err = pathfinding.get_cached_route_result(
+                from_stop_id, to_stop_id, mode)
             if result:
                 cost_text = f"{result['cost_regular']:.2f} / {result['cost_reduced']:.2f} zł"
 

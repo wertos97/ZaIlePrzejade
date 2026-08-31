@@ -9,7 +9,7 @@ import os
 # Server Configuration
 # ============================================================
 DEFAULT_PORT = int(os.environ.get('PORT', 8080))
-MAX_CONCURRENT_REQUESTS = 20
+MAX_CONCURRENT_REQUESTS = 10  # ≤ PATHFINDING_EXECUTOR_WORKERS * 3
 REQUEST_QUEUE_SIZE = 64
 
 # ============================================================
@@ -28,11 +28,16 @@ RATE_LIMIT_STALE_CUTOFF_MULTIPLIER = 3  # entries older than window * this are s
 # ============================================================
 # A* safety limits
 ASTAR_MAX_ITERATIONS = 200000
-ASTAR_TIMEOUT_SECONDS = 15
+# Short (distance) A* budget: it is an internal upper-bound provider for the
+# exact fare searches, not a user-facing mode. Phase budgets sum well below
+# the 30s outer request timeout (8 + 8 + 10 = 26s + result-build overhead).
+ASTAR_TIMEOUT_SECONDS = 8
 
-# Cheap (fare-based) search limits
-CHEAP_SEARCH_MAX_SECONDS = 8.0
-CHEAP_SEARCH_CONCURRENCY = 3  # max concurrent fare searches (GIL gate)
+# Exact Pareto fare-search budgets (per phase, wall clock). On timeout the
+# phase returns an ERROR — exact-only product, no approximate fallbacks.
+CHEAP_SEARCH_MAX_SECONDS = 10.0
+CONVENIENT_SEARCH_MAX_SECONDS = 8.0
+CHEAP_SEARCH_CONCURRENCY = 2  # 1-core VPS: ≤ PATHFINDING_EXECUTOR_WORKERS
 CHEAP_HEURISTIC_CACHE_MAX = 14000  # LRU cache: key space ~13,680
 
 # Memory protection: RSS threshold (MB) — A* bails out to avoid OOM on
@@ -40,7 +45,7 @@ CHEAP_HEURISTIC_CACHE_MAX = 14000  # LRU cache: key space ~13,680
 # because peak never decreases and would kill every search after first spike.
 MEMORY_LIMIT_MB = int(os.environ.get('MEMORY_LIMIT_MB', 190))
 
-# "Convenient" route: scalar cost = fare + this penalty per boarding.
+# "Convenient" route: exact objective = fare + this penalty per boarding.
 # Each transfer is "worth" this much extra zł — tunes the balance between
 # ticket price and number of rides (higher = fewer transfers, pricier).
 CONVENIENT_BOARDING_PENALTY_ZL = 2.0
@@ -48,7 +53,7 @@ CONVENIENT_BOARDING_PENALTY_ZL = 2.0
 # Executor threads running pathfinding. More than the cheap-search gate so
 # that distance-based searches are never queued behind fare searches that
 # are waiting for the gate.
-PATHFINDING_EXECUTOR_WORKERS = 8
+PATHFINDING_EXECUTOR_WORKERS = 1  # 1-core VPS: single worker = no GIL contention
 
 # Cache configuration (byte budgets can be tuned via environment variables)
 FIND_CACHE_MAX_BYTES = int(os.environ.get('FIND_CACHE_MAX_BYTES', 20 * 1024 * 1024))
@@ -139,4 +144,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.3.3"
+APP_VERSION = "1.4.0"
