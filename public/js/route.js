@@ -496,11 +496,26 @@ function highlightRouteWalk(idx) {
 function flyToSegment(idx) {
     const entry = (state.routeSegLayers || [])[idx];
     if (!entry || !entry.points || !entry.points.length || !state.map) return;
-    const bounds = L.latLngBounds(entry.points);
+
+    // Mobile: tap na krok zwija rozpakowany panel wyników, żeby segment był
+    // widoczny na mapie, i rezerwuje dolny padding pod zwinięty panel.
+    const isMobile = window.innerWidth <= 768;
+    if (isMobile) {
+        const panel = document.getElementById('mobile-result');
+        if (panel && panel.classList.contains('expanded')) {
+            panel.classList.remove('expanded');
+            setTimeout(function() { state.map.invalidateSize(); }, 450);
+        }
+    }
+    const padTL = isMobile ? [20, 90] : [60, 80];
+    const padBR = isMobile ? [20, Math.round(window.innerHeight * 0.45)] : [60, 60];
+    const options = { paddingTopLeft: padTL, paddingBottomRight: padBR };
+
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        state.map.fitBounds(bounds, { paddingTopLeft: [60, 80], paddingBottomRight: [60, 60] });
+        state.map.fitBounds(L.latLngBounds(entry.points), options);
     } else {
-        state.map.flyToBounds(bounds, { paddingTopLeft: [60, 80], paddingBottomRight: [60, 60], duration: 0.7 });
+        state.map.flyToBounds(L.latLngBounds(entry.points),
+                              Object.assign({ duration: 0.7 }, options));
     }
 }
 

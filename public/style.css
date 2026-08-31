@@ -1006,9 +1006,9 @@ body {
         top: 0;
         left: 0;
         right: 0;
-        height: 72px;
-        min-height: 72px;
-        padding: 8px 10px 6px;
+        height: calc(72px + env(safe-area-inset-top));
+        min-height: calc(72px + env(safe-area-inset-top));
+        padding: calc(8px + env(safe-area-inset-top)) 10px 6px;
         flex-direction: column;
         gap: 4px;
         justify-content: center;
@@ -1051,7 +1051,7 @@ body {
 
     #map {
         position: absolute;
-        top: 72px;
+        top: calc(72px + env(safe-area-inset-top));
         left: 0;
         right: 0;
         bottom: 0;
@@ -1068,7 +1068,7 @@ body {
         max-height: 40vh;
         border-radius: 16px 16px 0 0;
         box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
-        padding: 0 14px 14px;
+        padding: 0 14px calc(14px + env(safe-area-inset-bottom));
         z-index: 950;
         overflow-y: auto;
         transition: top 0.4s ease, max-height 0.4s ease;
@@ -1115,7 +1115,7 @@ body {
     }
 
     .sidebar.expanded {
-        top: 72px;
+        top: calc(72px + env(safe-area-inset-top));
         max-height: 2000px;
     }
 
@@ -1210,7 +1210,7 @@ body {
         border-radius: 16px 16px 0 0;
         box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.2);
         z-index: 970;
-        padding: 0 14px 14px;
+        padding: 0 14px calc(14px + env(safe-area-inset-bottom));
         overflow-y: auto;
         animation: slideUp 0.3s ease-out;
         transition: top 0.4s ease, max-height 0.4s ease;
@@ -1218,7 +1218,7 @@ body {
     }
 
     .mobile-result.expanded {
-        top: 72px;
+        top: calc(72px + env(safe-area-inset-top));
         max-height: 2000px;
     }
 
@@ -1308,6 +1308,11 @@ body {
 
     .mobile-result .route-step .step-header .step-distance {
         font-size: 0.75em;
+    }
+
+    .segment-label-box {
+        font-size: 0.62em;
+        padding: 2px 6px;
     }
 
     .btn-share-mobile {
@@ -1411,7 +1416,7 @@ body {
     .loading-overlay {
         display: none;
         position: fixed;
-        top: 72px;
+        top: calc(72px + env(safe-area-inset-top));
         left: 0;
         right: 0;
         bottom: 0;
@@ -1702,6 +1707,11 @@ body {
     padding-top: 4px;
 }
 
+
+/* ==== Mobile polish ==== */
+button {
+    -webkit-tap-highlight-color: transparent;
+}
 
 /* ==== Route visualization: draw-in, transfers, panel <-> map interplay ==== */
 
