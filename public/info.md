@@ -4,7 +4,7 @@
 
 Zgodnie z oficjalnym komunikatem ([źródło](https://www.facebook.com/photo/?fbid=1445327380951786&set=a.612767970874402)):
 
-Od przyszłego roku bilety komunikacji miejskiej w Krakowie będziemy liczyć na odległość.
+Od 2027 roku bilety komunikacji miejskiej w Krakowie będziemy liczyć na odległość.
 
 ## Jak to będzie działać?
 
@@ -31,6 +31,13 @@ Aplikacja pokazuje też **szacunkowy czas przejazdu** (z czasem przesiadki pięc
 ## Limit dzienny
 
 Jest też plus — dzienny limit wydatków **20 zł** normalny / **10 zł** ulgowy. Po osiągnięciu tej kwoty kolejne przejazdy tego dnia są **gratis**, tak jakbyś miał bilet dzienny. Przy przesiadkach szybciej dobijasz do limitu.
+
+## Dwa warianty trasy
+
+Aplikacja pokazuje **dwie trasy** i obie mają **gwarancję najniższej możliwej ceny** w tym modelu (algorytm sprawdza wszystkie sensowne kombinacje przejazdów):
+
+- 💰 **Tania trasa** — najtańsze łączne bilety,
+- 🛋️ **Wygodna trasa** — mniej przesiadek (każde wsiadanie „kosztuje" w cenniku algorytmu 2 zł, więc algorytm balansuje cenę i wygodę).
 
 ---
 

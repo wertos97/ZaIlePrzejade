@@ -2,9 +2,9 @@
 
 **Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027**
 
-Aplikacja została stworzona w celu obliczania kosztów podróży komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości, który ma wejść w życie w 2027 roku.
+Aplikacja została stworzona w celu obliczania kosztów podróży komunikacji miejskiej w Krakowie w oparciu o nowy system biletów oparty na odległości, który ma wejść w życie w 2027 roku.
 
-Dane linii i przystanków pochodzą z ogólnodostępnych rozkładów GTFS publikowanych przez ZTP Kraków (dostęp 18.08.2026).
+Dane linii i przystanków pochodzą z ogólnodostępnych rozkładów GTFS publikowanych przez ZTP Kraków (aplikacja korzysta z aktualnego pobrania danych — po publikacji nowego rozkładu dane są odświeżane).
 
 ---
 

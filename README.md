@@ -14,65 +14,40 @@
   <a href="https://zaileprzeja.de"><strong>🌐 zaileprzeja.de</strong></a>
 </p>
 
-Kalkulator cen biletów KMK Kraków w systemie taryfy 2027 (płatność za
-dystans). Użytkownik wybiera dwie grupy przystanków i dostaje **dwie trasy
-o dowodziono optymalnej cenie**:
+Kalkulator cen biletów komunikacji miejskiej w Krakowie w taryfie 2027 (opartej na przejechanym dystansie). Aplikacja pokazuje połączenia pomiędzy dwoma wybranymi przystankami w **dwóch wariantach**:
 
-- **Tania trasa** — minimalna taryfa (każdy przejazd to osobny bilet liczony
-  od zera, więc najtańsza trasa nie musi być najkrótsza),
-- **Wygodna trasa** — minimum `taryfa + 2,00 zł za wsiadanie` (mało
-  przesiadek bez ignorowania drogich objazdów).
+- **Trasa tania** — najtańszy wariant. Każdy przejazd to osobny bilet liczony
+  od zera, więc najtańsza trasa nie zawsze jest najkrótsza,
+- **Trasa wygodna** — najmniej przesiadek przy rozsądnej cenie.
 
-Brak wyników przybliżonych: algorytm dowodzi optymalności albo jawnie
-zgłasza przekroczenie limitu czasu.
+## OG Image dla sociali
 
-## Podgląd
+Aplikacja automatycznie generuje obrazki OG w sposób dynamiczny dla danej trasy.
 
 | Typowa cena | Cena na limicie dziennym |
 |---|---|
 | ![Typowa](previews/og-preview-typical.png) | ![Max](previews/og-preview-max.png) |
 
-Karty OG generowane przez `/api/og-image` — ta sama skala czcionki ceny
-i przypięta prawa krawędź niezależnie od długości kwoty.
+## Wyszukiwanie tras
 
-## Jak działa wyszukiwanie tras
+Podstawą jest graf zbudowany z danych GTFS (`process_gtfs.py` →
+`processed/`): przystanki z pozycjami, przejazdy linii z realnymi
+dystansami (`shape_dist_traveled`) i przejścia piesze między przystankami (peronami).
 
-Całość opiera się na grafie linii zbudowanym z danych GTFS
-(`process_gtfs.py` → `processed/`): przystanki z pozycjami, krawędzie
-linii z realnymi dystansami (`shape_dist_traveled`), przejścia piesze
-między peronami.
+1. **Cała jazda liczona naraz** — Dijkstra przechodzi po krawędziach jednej linii i wyznacza koszt jazdy daną linią do wszystkich przystanków jednocześnie.
+2. **Składanie tras z przejazdów** — trasa to kilka takich jazd połączonych przesiadkami. Aplikacja składa: jazdy ze startu, jazdy do celu i jazdy pośrednie. Te złożenia pokrywają **wszystkie trasy do 4 przejazdów**, a tańsze opcje odcinają droższe, więc typowa para liczy się w ułamkach sekundy.
+3. **Gwarancja najlepszej ceny** — 5. przejazd zawsze kosztuje co najmniej taryfę bazową, a łączna cena nie może przekroczyć dziennego limitu. Dlatego najlepsza trasa do 4 przejazdów jest **matematycznie najlepszą możliwą trasą** — i właśnie ją pokazujemy.
+4. **Awaryjne A\*** — dla bardzo trudnych par: dokładne wyszukiwanie Pareto z limitami czasu (8 s / 8 s / 10 s przy limicie żądania 30 s). Gdy limit przekroczony — błąd dla trybu, nigdy wynik „na oko".
 
-1. **Sweep po linii** — Dijkstra po krawędziach jednej linii (plus darmowe
-   przejścia między peronami tego samego klastra) wyznacza za jednym razem
-   całą jazdę daną linią do wszystkich przystanków. **Bilet obejmuje
-   przejazdy i przesiadkowe spacerki** — spacer nie zamyka biletu, jeśli
-   wracamy na tę samą linię.
-2. **Enumeracja przejazdów** — trasa to kompozycja całych przejazdów:
-   jazdy 1 od startu (F1), jazdy 2 z miejsc przesiadek (F2) oraz jazdy
-   wstecz od celu (B1/B2). Złożenia pokrywają **wszystkie trasy do 4
-   przejazdów** i są odcinane progiem kosztu, więc typowa para liczy się
-   w ułamkach sekundy.
-3. **Certyfikacja** — 5. wsiadanie kosztuje co najmniej taryfę bazową
-   (+ karę), a cena jest capowana limitem dziennym: najlepsza trasa
-   ≤4-przejazdowa jest więc **dowodowo globalnym optimum**.
-4. **A\* z pogłębianiem** — awaryjnie dla par niepokrytych enumeracją:
-   Pareto A\* na `(koszt, kilometraż, wsiadania)` z limitami czasu
-   (8 s / 8 s / 10 s przy limicie żądania 30 s). Timeout = brak wyniku
-   dla trybu, nigdy wynik przybliżony.
-
-Dwa tryby różnią się wyłącznie funkcją celu: **tania** minimalizuje samą
-taryfę, **wygodna** taryfę powiększoną o karę za każde wsiadanie.
+Dwa tryby różnią się tylko tym, co liczą: **tania** minimalizuje samą
+taryfę, **wygodna** taryfę powiększoną o 2,00 zł za każde wsiadanie.
 
 ## Cache
 
-Wyniki trafiają do **dwóch warstw** i żyją, dopóki nie zmienią się dane
-GTFS (wersja feedu i algorytmu są w nazwie pliku bazy):
+Wyniki zapisują się w **dwóch miejscach** i żyją, dopóki nie zmienią się dane GTFS (wersja danych i algorytmu jest w nazwie pliku bazy):
 
-- **sqlite** (`processed/route_cache_<feed>_<algo>.sqlite`, WAL) —
-  zapis przez write-through przy każdym wyliczeniu; przetrwa restart
-  i wymiatanie z pamięci,
-- **RAM** (25 MB) — gorący zestaw; po chybieniu wynik wraca z sqlite
-  w 1–4 ms.
+- **dysk (sqlite)** — `processed/route_cache_<feed>_<algo>.sqlite`; każda nowa trasa od razu zapisuje się na dysk, więc **przetrwa restart serwera** i czyszczenie pamięci,
+- **pamięć RAM** (25 MB) — najczęściej używane trasy; gdy trasy nie ma w pamięci, wraca z dysku w 1–4 ms.
 
 ## Model cen (2027)
 
@@ -87,7 +62,7 @@ Konfiguracja: [`pricing.json`](pricing.json).
 
 ## Uruchomienie
 
-Wymagania: Python 3.8+, zero zależności.
+Wymagania: Python 3.8+, zero dodatkowych pakietów.
 
 ```bash
 git clone https://github.com/wertos97/ZaIlePrzejade.git
@@ -95,7 +70,7 @@ cd ZaIlePrzejade
 python server.py                # http://localhost:8080
 ```
 
-Dane GTFS przetwarza `process_gtfs.py` (surowe zipy w `data/` →
+Dane GTFS przetwarza `process_gtfs.py` (surowe pliki zip w `data/` →
 `processed/*.json`).
 
 ## API
@@ -114,10 +89,4 @@ Dane GTFS przetwarza `process_gtfs.py` (surowe zipy w `data/` →
 python -m unittest discover -s tests     # 75 testów
 ```
 
-W tym `TestExactSearchExactness` — weryfikacja enumeracji wobec
-brute-force oracle'a na grafie syntetycznym.
-
-## Więcej
-
-Szczegóły operacyjne (cache, wydajność, deploy, historia zmian):
-[`PROJECT_INFO.md`](PROJECT_INFO.md).
+W tym `TestExactSearchExactness` — na małym grafie testowym algorytm jest porównywany z metodą, która sprawdza wszystkie możliwe trasy. Wyniki muszą się zgadzać.
