@@ -156,4 +156,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.4.6"
+APP_VERSION = "1.4.7"
