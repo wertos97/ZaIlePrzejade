@@ -114,6 +114,19 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertTrue(body.lstrip().startswith(b'<svg'))
         self.assertIn(b'zloty', body.lower().replace(b'z\xc5\x82', b'zloty'))
 
+    def test_og_image_is_valid_xml(self):
+        """Regression: the inlined logo uses an Inkscape namespaced export
+        (<svg:svg ...> with <svg:rect> children). The old root-strip left an
+        unbound svg: prefix and a leaked </svg:svg> inside the OG image, so
+        the whole document was unparseable — <img> rejected it and the share
+        dialog showed 'Podgląd niedostępny' instead of the preview."""
+        import xml.etree.ElementTree as ET
+        status, headers, body = self._get(
+            f'/api/og-image?from={self.from_id}&to={self.to_id}&mode=cheap')
+        self.assertEqual(status, 200)
+        ET.fromstring(body)  # raises on invalid XML
+        self.assertNotIn(b'svg:', body)
+
     def test_og_image_with_invalid_stops(self):
         """Invalid stop ids degrade gracefully (no crash, no route info)."""
         status, headers, body = self._get(

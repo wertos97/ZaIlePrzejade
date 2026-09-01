@@ -63,6 +63,23 @@ def generate_nonce() -> str:
     return secrets.token_urlsafe(CSP_NONCE_BYTES)
 
 
+def _extract_svg_inner(svg_content: str) -> str:
+    """Strip the ROOT <svg> element from an SVG document, keeping its
+    children for inlining into another SVG.
+
+    Handles namespaced exports (e.g. Inkscape writes <svg:svg
+    xmlns:svg="..."> with <svg:rect> children): both root-tag forms are
+    removed and the `svg:` prefix is dropped, so the inlined fragment is
+    valid inside the OG image's default SVG namespace (an unbound `svg:`
+    prefix makes the whole document unparseable for <img>).
+    """
+    inner = re.sub(r'<svg(?::svg)?\b[^>]*>', '', svg_content, count=1)
+    inner = re.sub(r'</svg:svg>\s*', '', inner)
+    inner = re.sub(r'</svg>\s*', '', inner, count=1)
+    inner = inner.replace('<svg:', '<').replace('</svg:', '</')
+    return inner
+
+
 def sanitize_svg(content: str) -> str:
     """Sanitize SVG content for safe embedding.
 
@@ -1103,8 +1120,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             f'  <text x="80" y="548" font-family="Arial, Helvetica, sans-serif" font-size="120" font-weight="bold" fill="#ffffff">{cost_text_esc}</text>\n'
             f'  <g transform="translate(930,400) scale(2.5)">\n'
         )
-        logo_inner = re.sub(r'<svg[^>]*>', '', data.logo_svg_content, count=1)
-        logo_inner = re.sub(r'</svg>', '', logo_inner)
+        logo_inner = _extract_svg_inner(data.logo_svg_content)
         logo_inner = sanitize_svg(logo_inner)
         svg += f'  {logo_inner.strip()}\n'
         svg += '  </g>\n'
