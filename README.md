@@ -1,44 +1,80 @@
 <p align="center">
-  <img src="public/logo.svg" alt="Za Ile Przejadę?" width="120" />
+  <img src="public/logo.svg" alt="Za Ile Przejadę?" width="110" />
 </p>
 
 <h1 align="center">🚌🚊 Za Ile Przejadę?</h1>
 
 <p align="center">
-  <strong>Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027</strong><br/>
-  Oblicz koszt podróży komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.
+  <a href="https://img.shields.io/badge/wersja-1.4.5-2A5BD5"><img src="https://img.shields.io/badge/wersja-1.4.5-2A5BD5" alt="wersja" /></a>
+  <a href="https://zaileprzeja.de"><img src="https://img.shields.io/website?url=https%3A%2F%2Fzaileprzeja.de&up_message=online&down_message=offline&label=status" alt="status" /></a>
+  <a href="https://github.com/wertos97/ZaIlePrzejade/commits/main"><img src="https://img.shields.io/github/last-commit/wertos97/ZaIlePrzejade/main" alt="ostatni commit" /></a>
 </p>
 
 <p align="center">
   <a href="https://zaileprzeja.de"><strong>🌐 zaileprzeja.de</strong></a>
 </p>
 
----
+Kalkulator cen biletów KMK Kraków w systemie taryfy 2027 (płatność za
+dystans). Użytkownik wybiera dwie grupy przystanków i dostaje **dwie trasy
+o dowodziono optymalnej cenie**:
 
-## ✨ Funkcjonalności
+- **Tania trasa** — minimalna taryfa (każdy przejazd to osobny bilet liczony
+  od zera, więc najtańsza trasa nie musi być najkrótsza),
+- **Wygodna trasa** — minimum `taryfa + 2,00 zł za wsiadanie` (mało
+  przesiadek bez ignorowania drogich objazdów).
 
-- 🔍 **Wyszukiwanie przystanków** po nazwie (z autouzupełnianiem)
-- 🗺️ **Wybór przystanków na mapie** (Leaflet)
-- 💰 **Obliczanie dystansu i kosztu przejazdu** wg nowego systemu biletów
-- 🛤️ **Dwa tryby nawigacji**:
-  - **Tania trasa** — najtańszy przejazd (każdy segment to osobny bilet, więc najtańsze nie zawsze = najkrótsze)
-  - **Wygodna trasa** — najmniej przesiadek
-- 📍 **Wyświetlanie trasy na mapie** z ceną i dystansem nad każdym przejazdem
-- 📱 **Responsywny interfejs** (mobile + desktop)
-- 🔗 **Udostępnianie tras** przez URL (np. `?from=group_342&to=group_587&mode=short`)
-- 🖼️ **Dynamiczne OG image** dla social media (Facebook, Twitter, Telegram, WhatsApp...)
+Brak wyników przybliżonych: algorytm dowodzi optymalności albo jawnie
+zgłasza przekroczenie limitu czasu.
 
-## 🖼️ Przykładowe OG image
+## Podgląd
 
-| Statyczny | Dynamiczny (API) |
-|-----------|------------------|
-| ![OG image](previews/og-image.svg) | ![OG image API](previews/og-image-api.svg) |
+| Typowa cena | Cena na limicie dziennym |
+|---|---|
+| ![Typowa](previews/og-preview-typical.png) | ![Max](previews/og-preview-max.png) |
 
-> Podglądy generowane przez `preview-logo.sh`. Dynamiczny OG image jest generowany na żywo przez `/api/og-image` z nazwami przystanków i ceną.
+Karty OG generowane przez `/api/og-image` — ta sama skala czcionki ceny
+i przypięta prawa krawędź niezależnie od długości kwoty.
 
-## 💰 Model cen (2027)
+## Jak działa wyszukiwanie tras
 
-Nowy system biletów komunikacji miejskiej w Krakowie oparty jest na **odległości**. Każdy przejazd (segment między przesiadkami) to **osobny bilet**, wyceniany od zera.
+Całość opiera się na grafie linii zbudowanym z danych GTFS
+(`process_gtfs.py` → `processed/`): przystanki z pozycjami, krawędzie
+linii z realnymi dystansami (`shape_dist_traveled`), przejścia piesze
+między peronami.
+
+1. **Sweep po linii** — Dijkstra po krawędziach jednej linii (plus darmowe
+   przejścia między peronami tego samego klastra) wyznacza za jednym razem
+   całą jazdę daną linią do wszystkich przystanków. **Bilet obejmuje
+   przejazdy i przesiadkowe spacerki** — spacer nie zamyka biletu, jeśli
+   wracamy na tę samą linię.
+2. **Enumeracja przejazdów** — trasa to kompozycja całych przejazdów:
+   jazdy 1 od startu (F1), jazdy 2 z miejsc przesiadek (F2) oraz jazdy
+   wstecz od celu (B1/B2). Złożenia pokrywają **wszystkie trasy do 4
+   przejazdów** i są odcinane progiem kosztu, więc typowa para liczy się
+   w ułamkach sekundy.
+3. **Certyfikacja** — 5. wsiadanie kosztuje co najmniej taryfę bazową
+   (+ karę), a cena jest capowana limitem dziennym: najlepsza trasa
+   ≤4-przejazdowa jest więc **dowodowo globalnym optimum**.
+4. **A\* z pogłębianiem** — awaryjnie dla par niepokrytych enumeracją:
+   Pareto A\* na `(koszt, kilometraż, wsiadania)` z limitami czasu
+   (8 s / 8 s / 10 s przy limicie żądania 30 s). Timeout = brak wyniku
+   dla trybu, nigdy wynik przybliżony.
+
+Dwa tryby różnią się wyłącznie funkcją celu: **tania** minimalizuje samą
+taryfę, **wygodna** taryfę powiększoną o karę za każde wsiadanie.
+
+## Cache
+
+Wyniki trafiają do **dwóch warstw** i żyją, dopóki nie zmienią się dane
+GTFS (wersja feedu i algorytmu są w nazwie pliku bazy):
+
+- **sqlite** (`processed/route_cache_<feed>_<algo>.sqlite`, WAL) —
+  zapis przez write-through przy każdym wyliczeniu; przetrwa restart
+  i wymiatanie z pamięci,
+- **RAM** (25 MB) — gorący zestaw; po chybieniu wynik wraca z sqlite
+  w 1–4 ms.
+
+## Model cen (2027)
 
 | Parametr | Wartość |
 |----------|---------|
@@ -47,209 +83,41 @@ Nowy system biletów komunikacji miejskiej w Krakowie oparty jest na **odległo�
 | Maksymalna cena pojedynczego biletu | 9,00 zł / 4,50 zł |
 | **Limit dzienny** | **20,00 zł / 10,00 zł** |
 
-> Po osiągnięciu limitu dziennego kolejne przejazdy tego dnia są **bezpłatne**.
+Konfiguracja: [`pricing.json`](pricing.json).
 
-Konfiguracja cen znajduje się w [`pricing.json`](pricing.json) i jest ładowana przy starcie serwera.
+## Uruchomienie
 
-## 🏗️ Architektura
-
-```
-┌─────────────────────────────────────────────────────┐
-│                Klient (przeglądarka)                │
-│            HTML/CSS/JS + Leaflet.js (mapy)          │
-└──────────────────────┬──────────────────────────────┘
-                       │ HTTP/JSON
-┌──────────────────────▼──────────────────────────────┐
-│             Serwer (Python, stdlib only)            │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
-│  │  A* path    │  │  Rate limit │  │  Cache      │  │
-│  │  finding    │  │  (per IP)   │  │  (bounded)  │  │
-│  └─────────────┘  └─────────────┘  └─────────────┘  │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
-│  │  Pricing    │  │  OG image   │  │  Gzip       │  │
-│  │  engine     │  │  generator  │  │  compression│  │
-│  └─────────────┘  └─────────────┘  └─────────────┘  │
-└──────────────────────┬──────────────────────────────┘
-                       │
-        ┌──────────────▼──────────────┐
-        │  processed/ (GTFS → JSON)   │
-        │  stops, routes, adjacency,  │
-        │  shapes, transfers          │
-        └─────────────────────────────┘
-```
-
-### Technologie
-
-- **Backend**: Python 3 (tylko biblioteka standardowa — zero zależności)
-- **Frontend**: HTML/CSS/JavaScript (vanilla)
-- **Mapy**: Leaflet.js (hostowany lokalnie)
-- **Dane**: GTFS publikowane przez ZTP Kraków → przetworzone do JSON (`process_gtfs.py`)
-
-### Optymalizacje
-
-- 🧵 **Threading** z limitem równoczesnych żądań (ochrona przed przeciążeniem)
-- 💾 **Cache tras** (ograniczony rozmiarem) — powtarzające się zapytania są natychmiastowe
-- 💽 **Persystencja cache** — trasy przetrwają restart serwera (zapis na dysk + odtwarzanie przy starcie)
-- 🗜️ **Gzip compression** dla odpowiedzi JSON > 1KB
-- ⚡ **Pre-komputowane odpowiedzi** dla `/api/stops` i `/api/routes`
-- 🚀 **1 żądanie na trasę** (tryb wybierany leniwie, nie 2 naraz)
-
-## 🚀 Uruchomienie lokalne
-
-Wymagania: **Python 3.8+** (bez dodatkowych pakietów).
+Wymagania: Python 3.8+, zero zależności.
 
 ```bash
-# 1. Sklonuj repozytorium
 git clone https://github.com/wertos97/ZaIlePrzejade.git
 cd ZaIlePrzejade
-
-# 2. (Opcjonalnie) Przetwórz dane GTFS
-#    Umieść pliki GTFS w data/ i uruchom:
-#    python process_gtfs.py
-
-# 3. Uruchom serwer
-python server.py
+python server.py                # http://localhost:8080
 ```
 
-Serwer uruchomi się na `http://localhost:8080` (port można zmienić przez zmienną `PORT`).
+Dane GTFS przetwarza `process_gtfs.py` (surowe zipy w `data/` →
+`processed/*.json`).
 
-```bash
-PORT=3000 python server.py
-```
-
-## 📡 API
+## API
 
 | Endpoint | Opis |
 |----------|------|
-| `GET /api/stops` | Wszystkie przystanki (zgrupowane) |
-| `GET /api/stops/search?q=<query>` | Wyszukiwanie przystanków |
-| `GET /api/stop-platforms?id=<group_id>` | Platformy przystanku |
-| `GET /api/find-route?from=<id>&to=<id>&mode=<short\|convenient>` | Znajdź trasę |
-| `GET /api/cost?distance=<km>` | Oblicz koszt dla dystansu |
-| `GET /api/pricing` | Parametry cennika (z `pricing.json`) |
-| `GET /api/shapes?route_id=<id>` | Kształt linii |
-| `GET /api/routes` | Wszystkie linie |
-| `GET /api/stop?id=<id>` | Informacje o przystanku |
-| `GET /api/og-image?from=<id>&to=<id>&mode=<short\|convenient>` | Dynamiczny OG image (SVG) |
-| `GET /api/health` | Health check |
-| `GET /api/version` | Wersja aplikacji |
+| `GET /api/find-route?from=<id>&to=<id>` | `{convenient, cheap}` — obie trasy |
+| `GET /api/stops` / `api/stops/search?q=` | Przystanki / wyszukiwanie |
+| `GET /api/cost?distance=<km>` | Koszt dla dystansu |
+| `GET /api/og-image?from=<id>&to=<id>&mode=` | Karta OG (SVG) |
+| `GET /api/health` · `api/status` · `api/version` | Kondycja serwera |
 
-### Przykład
+## Testy
 
 ```bash
-curl "http://localhost:8080/api/find-route?from=group_1&to=group_50&mode=short"
+python -m unittest discover -s tests     # 75 testów
 ```
 
-```json
-{
-  "total_distance": 10.62,
-  "cost_regular": 19.5,
-  "cost_reduced": 9.75,
-  "max_daily_cost_regular": 20.0,
-  "max_daily_cost_reduced": 10.0,
-  "path": [...],
-  "segments": [...],
-  "transfers": [...]
-}
-```
+W tym `TestExactSearchExactness` — weryfikacja enumeracji wobec
+brute-force oracle'a na grafie syntetycznym.
 
-## 🔄 Auto-aktualizacje i self-recovery
+## Więcej
 
-Repozytorium zawiera skrypty do utrzymania serwera w ruchu **bez ręcznej interwencji**:
-
-| Skrypt | Rola |
-|--------|------|
-| **`autoupdate.sh`** | Sprawdza czy na GitHubie są nowe commity, weryfikuje spójność danych i zdrowie serwera. W razie potrzeby aktualizuje kod i restartuje serwer. |
-| **`restart.sh`** | Zatrzymuje i uruchamia serwer ponownie. |
-| **`common.sh`** | Współdzielone funkcje (PATH dla cron, logowanie, health check, restart). |
-
-### Jak to działa
-
-1. **Cron** cyklicznie uruchamia `autoupdate.sh`
-2. Skrypt **pobiera zmiany** z GitHub (`git fetch` + `git reset --hard`)
-3. **Weryfikuje spójność** danych (`processed/`) i zdrowie serwera (`/api/health`)
-4. Jeśli coś jest nie tak — **aktualizuje kod i restartuje serwer**
-5. W razie awarii — **pętla ratunkowa** (2 próby pobrania kodu i restartu)
-
-### Konfiguracja
-
-Skrypty czytają konfigurację z pliku `server.env` (ignorowanego przez git):
-
-```bash
-cp server.env.example server.env
-```
-
-Dostępne zmienne (wszystkie opcjonalne):
-
-| Zmienna | Domyślnie | Opis |
-|---------|-----------|------|
-| `PORT` | `8080` | Port serwera |
-| `HEALTH_URL` | `http://127.0.0.1:$PORT/api/health` | URL do sprawdzania zdrowia |
-| `GIT_BRANCH` | bieżąca | Gałąź git do śledzenia |
-| `RUN_IN_BACKGROUND` | `true` | Czy uruchamiać serwer w tle |
-| `TRUST_PROXY_HEADERS` | `false` | Ufać nagłówkom `X-Real-IP`/`X-Forwarded-For`; włącz **tylko** za reverse proxy, które nadpisuje te nagłówki |
-| `PUBLIC_BASE_URL` | `https://zaileprzeja.de` | Kanoniczny publiczny adres (meta OG, OG images) |
-| `FIND_CACHE_MAX_BYTES` | `20971520` | Limit rozmiaru cache wyszukiwań (bajty) |
-| `ROUTE_CACHE_MAX_BYTES` | `25165824` | Limit rozmiaru cache tras (bajty) |
-| `LOG_LEVEL` | `INFO` | Poziom logowania (`LOG_FILE` — opcjonalna ścieżka pliku) |
-
-> **⚠️ Uwaga:** `server.env` zawiera szczegóły Twojego serwera i **nigdy nie powinien trafić do repo** — jest w `.gitignore`.
-
-### Bezpieczeństwo aktualizacji
-
-Skrypty **nie nadpisują** własnych plików ani konfiguracji serwera podczas aktualizacji z GitHub. Chronione pliki to: `autoupdate.sh`, `restart.sh`, `common.sh`, `server.env`, `server.env.example`, `start.sh`, `stop.sh`, `generate-assets.sh`, `preview-logo.sh`, logi, `venv/` i `data/`.
-
-## 🛡️ Bezpieczeństwo
-
-- **Rate limiting** per IP (osobne limity dla statycznych i kosztownych żądań)
-- **Limit równoczesnych żądań** (20) — ochrona przed przeciążeniem
-- **Blokada niebezpiecznych ścieżek** (`.env`, `.git`, `wp-admin`, `phpmyadmin` itd.)
-- **Nagłówki bezpieczeństwa** (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`)
-- **Escape HTML** — ochrona przed XSS
-- **Walidacja wejścia** (długość, format, NaN/Infinity)
-- **Wykrywanie botów** — serwowanie dedykowanych OG meta dla crawlerów
-
-## 🎨 Logo i asset'y
-
-Logo aplikacji znajduje się w `public/logo.svg` i jest **jedynym źródłem prawdy**. Aby zmiana logo propagowała się do faviconu i statycznego obrazu OG, uruchom:
-
-```bash
-bash generate-assets.sh
-```
-
-Skrypt regeneruje:
-- `public/favicon.svg` — favicon z logo osadzonym inline
-- `public/og-image.svg` — statyczny obraz OG z logo osadzonym inline
-
-Dynamiczny obraz OG (`/api/og-image`) czyta `logo.svg` w czasie działania serwera, więc aktualizuje się automatycznie bez uruchamiania skryptu.
-
-Aby wygenerować podglądy wszystkich assetów (w tym dynamicznego OG), uruchom:
-
-```bash
-bash preview-logo.sh
-```
-
-Wynik trafia do katalogu `previews/`.
-
-## 📁 Struktura projektu
-
-```
-├── server.py              # Punkt wejścia (uruchamia serwer)
-├── server/                # Pakiet: data, cost, handler, pathfinding (stdlib only)
-├── process_gtfs.py        # Przetwarzanie GTFS → JSON
-├── pricing.json           # Konfiguracja cen
-├── autoupdate.sh          # Auto-aktualizacja i self-recovery
-├── restart.sh             # Restart serwera
-├── common.sh              # Współdzielone funkcje skryptów
-├── generate-assets.sh     # Generowanie favicon/og-image z logo
-├── preview-logo.sh        # Generowanie podglądów assetów
-├── server.env.example     # Szablon konfiguracji serwera
-├── public/                # Frontend (HTML/CSS/JS, logo, favicon)
-│   └── js/route.js        # Logika tras i mapy
-├── processed/             # Przetworzone dane (JSON)
-├── data/                  # Surowe dane GTFS
-└── previews/              # Podglądy assetów
-```
-## 🧪 Testy
-
-Opis testów (sposób uruchamiania i pokrycie) znajduje się w [`tests/README.md`](tests/README.md).
+Szczegóły operacyjne (cache, wydajność, deploy, historia zmian):
+[`PROJECT_INFO.md`](PROJECT_INFO.md).

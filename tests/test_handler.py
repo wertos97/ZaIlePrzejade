@@ -62,6 +62,12 @@ class TestHandlerEndpoints(unittest.TestCase):
                 cls.to_id = gid
                 break
 
+    def setUp(self):
+        # świeży token-bucket rate limitera na każdy test — inaczej seria
+        # żądań "expensive" w obrębie klasy wpada w limit 12/30s
+        from server import handler as handler_mod
+        handler_mod._rate_limits.clear()
+
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown()
@@ -126,6 +132,45 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertEqual(status, 200)
         ET.fromstring(body)  # raises on invalid XML
         self.assertNotIn(b'svg:', body)
+
+    def test_og_image_price_font_scales_down(self):
+        """A capped fare ("20.00 / 20.00 zł") must render with a smaller
+        price font so the text keeps a safe gap before the logo on the
+        right; a typical fare keeps the full 120 px."""
+        def price_text(query, warm=False):
+            if warm:
+                # para musi być najpierw wyliczona — OG czyta tylko cache
+                status, _, _ = self._get(
+                    '/api/find-route?' + query.split('mode=')[0])
+                self.assertEqual(status, 200)
+            status, _, body = self._get('/api/og-image?' + query)
+            self.assertEqual(status, 200)
+            m = re.search(rb'<text x="80" y="548"[^>]*', body)
+            self.assertIsNotNone(m, 'price text not found')
+            font = int(re.search(rb'font-size="(\d+)"', m.group(0)).group(1))
+            pinned = b'textLength="760"' in m.group(0)
+            return font, pinned
+
+        # krótka kwota ("9.00 / 4.50 zł"): pełna czcionka, bez ściskania
+        f_short, pin_short = price_text(
+            'from=group_51&to=group_1518&mode=cheap', warm=True)
+        self.assertEqual(f_short, 120)
+        self.assertFalse(pin_short)
+
+        # dłuższa kwota ("16.00 / 8.00 zł") — czcionka w dół i prawy brzeg
+        # przypięty na x=840 (~100 px przed logo)
+        f_typ, pin_typ = price_text(
+            f'from={self.from_id}&to={self.to_id}&mode=cheap', warm=True)
+        self.assertGreaterEqual(f_typ, 96)
+        self.assertLess(f_typ, 120)
+        self.assertTrue(pin_typ)
+
+        # kwota przy capie ("15.00 / 7.50 zł") — nigdy dłuższa niż typowa
+        f_cap, pin_cap = price_text(
+            'from=group_1264&to=group_429&mode=cheap', warm=True)
+        self.assertLessEqual(f_cap, f_typ)
+        self.assertGreaterEqual(f_cap, 96)
+        self.assertTrue(pin_cap)
 
     def test_og_image_with_invalid_stops(self):
         """Invalid stop ids degrade gracefully (no crash, no route info)."""
