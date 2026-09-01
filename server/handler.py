@@ -676,6 +676,17 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             elif path == '/api/version':
                 self.serve_json({'version': APP_VERSION})
 
+            elif path == '/api/badge/version':
+                # shields.io endpoint badge: zawsze wersja URUCHOMIONEGO
+                # serwera, bez ręcznych podbijać w README
+                self.serve_json({
+                    'schemaVersion': 1,
+                    'label': 'wersja',
+                    'message': APP_VERSION,
+                    'color': '2A5BD5',
+                    'cacheSeconds': 900,
+                })
+
             elif path == '/api/data-info':
                 meta = data.feed_metadata
                 self.serve_json({

@@ -224,6 +224,18 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertIn('group_id', path[0])
         self.assertTrue(path[0]['group_id'].startswith('group_'))
 
+    def test_badge_version_shields_contract(self):
+        """Endpoint badge dla shields.io: poprawny kontrakt JSON i wersja
+        zgodna z APP_VERSION (badge w README czyta go dynamicznie)."""
+        from server.config import APP_VERSION as _AV
+        status, _, body = self._get('/api/badge/version')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result['schemaVersion'], 1)
+        self.assertEqual(result['label'], 'wersja')
+        self.assertEqual(result['message'], _AV)
+        self.assertIn('color', result)
+
     def test_find_route_busy_shed_503(self):
         """Peak shedding: when the search queue is full, find-route answers
         503 + Retry-After immediately instead of sitting 30s for a timeout.

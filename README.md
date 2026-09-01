@@ -5,7 +5,7 @@
 <h1 align="center">🚌🚊 Za Ile Przejadę?</h1>
 
 <p align="center">
-  <a href="https://img.shields.io/badge/wersja-1.4.5-2A5BD5"><img src="https://img.shields.io/badge/wersja-1.4.5-2A5BD5" alt="wersja" /></a>
+  <a href="https://img.shields.io/endpoint?url=https%3A%2F%2Fzaileprzeja.de%2Fapi%2Fbadge%2Fversion"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fzaileprzeja.de%2Fapi%2Fbadge%2Fversion" alt="wersja" /></a>
   <a href="https://zaileprzeja.de"><img src="https://img.shields.io/website?url=https%3A%2F%2Fzaileprzeja.de&up_message=online&down_message=offline&label=status" alt="status" /></a>
   <a href="https://github.com/wertos97/ZaIlePrzejade/commits/main"><img src="https://img.shields.io/github/last-commit/wertos97/ZaIlePrzejade/main" alt="ostatni commit" /></a>
 </p>
