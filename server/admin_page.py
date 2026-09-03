@@ -58,6 +58,10 @@ PANEL_PAGE = """<!DOCTYPE html>
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
   .mut { color: #99a; font-size: .8rem; }
+  .scrollbox { max-height: 260px; overflow-y: auto; }
+  details { margin: 4px 0; }
+  summary { cursor: pointer; color: #2A5BD5; font-size: .85rem;
+            padding: 4px 0; user-select: none; }
   #logout { background: none; border: 1px solid #ccd; color: #567;
             border-radius: 8px; padding: 6px 12px; cursor: pointer;
             font-size: .8rem; }
@@ -253,12 +257,15 @@ function render(s){
   ].map(k=>'<div class="card"><div class="v '+k.c+'">'+k.v+'</div><div class="l">'+esc(k.l)+'</div></div>').join('');
 
   document.getElementById('t-restart').innerHTML = s.restarts.length
-    ? '<table><tr><th>kiedy</th><th>wersja</th></tr>' + s.restarts.map(r=>
-        '<tr><td>'+fmtTs(r.ts)+'</td><td>'+(esc(r.version)||'—')+'</td></tr>').join('')+'</table>'
+    ? '<div class="scrollbox"><table><tr><th>kiedy</th><th>wersja</th></tr>'
+      + s.restarts.map(r=>
+        '<tr><td>'+fmtTs(r.ts)+'</td><td>'+(esc(r.version)||'—')+'</td></tr>').join('')+'</table></div>'
     : '<span class="mut">brak zdarzeń w tym zakresie</span>';
   document.getElementById('t-updates').innerHTML = s.updates.length
-    ? '<table><tr><th>kiedy</th><th>co</th></tr>' + s.updates.map(u=>
-        '<tr><td>'+esc(u.ts)+'</td><td>'+esc(u.what)+'</td></tr>').join('')+'</table>'
+    ? '<details><summary>Wdrożenia: ' + s.updates.length
+      + ' — kliknij, aby rozwinąć</summary><div class="scrollbox">'
+      + '<table><tr><th>kiedy</th><th>co</th></tr>' + s.updates.map(u=>
+        '<tr><td>'+esc(u.ts)+'</td><td>'+esc(u.what)+'</td></tr>').join('')+'</table></div></details>'
     : '<span class="mut">brak wdrożeń w tym zakresie</span>';
 }
 
