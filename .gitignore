@@ -40,3 +40,7 @@ venv/
 
 # Runtime route cache (regenerated on server start)
 processed/route_cache_*
+
+# Panel admina: dane i hasło — tylko na VPS, nigdy w repo
+processed/stats.sqlite*
+processed/admin_config.json

@@ -124,6 +124,10 @@ def main():
     from server.handler import _start_rate_limit_cleanup
     _start_rate_limit_cleanup()
 
+    # Trwały zapis restartu do statystyk panelu (VPS-only)
+    from server import admin_stats
+    admin_stats.record_restart(APP_VERSION)
+
     signal.signal(signal.SIGTERM, _request_shutdown)
 
     logger.info('Server ready', extra={

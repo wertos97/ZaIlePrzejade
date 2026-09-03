@@ -53,7 +53,13 @@ from .config import (
 from . import data
 from . import cost
 from . import pathfinding
+from . import admin_stats
+from .admin_page import PANEL_PAGE
 from .logging_config import get_logger
+
+# Statystyki VPS (processed/stats.sqlite) — best-effort, przy błędzie moduł
+# degraduje się do no-op. Bez pliku hasła cały panel /panel odpowiada 404.
+admin_stats.init(data.PROCESSED_DIR)
 
 _GROUP_ID_PATTERN = re.compile(_GROUP_ID_PATTERN_SRC)
 
@@ -339,6 +345,10 @@ _server_start_time = time.time()
 _route_requests = 0
 _route_timeouts = 0
 _route_busy = 0
+# panel admina: licznik nieudanych logowań per IP (prosty lockout)
+_login_failures = {}
+_LOGIN_WINDOW = 600
+_LOGIN_MAX = 10
 
 _cached_stops_json = None
 _cached_routes_json = None
@@ -413,6 +423,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.do_GET()
 
     def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path in ('/api/admin/login', '/api/admin/logout'):
+            self.handle_api(parsed.path, {})
+            return
         self.send_error_page(405)
 
     def do_PUT(self):
@@ -452,6 +466,36 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         if path in BLOCKED_PATHS or any(path.startswith(p) for p in BLOCKED_PREFIXES):
             self.send_error_page(404)
             return
+
+        # Panel admina: istnieje tylko gdy na tej maszynie ustawiono hasło
+        if path == '/panel':
+            if not admin_stats.enabled():
+                self.send_error_page(404)
+                return
+            # Panel to zamknięty dokument (inline <style>/<script>, zero
+            # treści użytkowników) — per-response CSP: skrypt pod nonce,
+            # style inline dozwolone tylko dla TEJ strony.
+            nonce = generate_nonce()
+            body = PANEL_PAGE.replace('__CSP_NONCE__', nonce).encode('utf-8')
+            self._csp_policy = (
+                "default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; connect-src 'self'; "
+                "frame-ancestors 'none'; base-uri 'none'; "
+                "form-action 'self'"
+            )
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Robots-Tag', 'noindex, nofollow')
+            self.end_headers()
+            self._send_body(body)
+            return
+
+        if path == '/':
+            admin_stats.record_visit(_get_client_ip(self))
 
         # Serve favicon.svg
         if path == '/favicon.svg':
@@ -609,15 +653,135 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     # ------------------------------------------------------------
+    # Admin panel (VPS-only, password-gated)
+    # ------------------------------------------------------------
+    def _admin_session_token(self):
+        """Extract admin_session cookie value, or None."""
+        cookies = self.headers.get('Cookie', '')
+        for part in cookies.split(';'):
+            if '=' in part:
+                k, v = part.split('=', 1)
+                if k.strip() == 'admin_session':
+                    return v.strip()
+        return None
+
+    def _admin_401(self):
+        body = '{"error":"unauthorized"}'.encode()
+        self.send_response(401)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self._send_body(body)
+
+    def _handle_admin_api(self, path, query):
+        if path == '/api/admin/session':
+            if admin_stats.session_ok(self._admin_session_token()):
+                self.serve_json({'ok': True})
+            else:
+                self.send_error_page(401)
+            return
+
+        if path == '/api/admin/login':
+            # POST with JSON body {"password": "..."}
+            try:
+                length = int(self.headers.get('Content-Length', '0') or 0)
+                payload = json.loads(
+                    self.rfile.read(min(length, 4096)) or b'{}')
+            except Exception:
+                payload = {}
+            password = str(payload.get('password', ''))
+            client_ip = _get_client_ip(self)
+
+            # simple per-IP lockout against password guessing
+            now = time.monotonic()
+            start, count = _login_failures.get(client_ip, (0, 0))
+            if now - start < _LOGIN_WINDOW and count >= _LOGIN_MAX:
+                self.send_error_page(429)
+                return
+            if not admin_stats.verify_password(password):
+                # constant-ish cost + delay against brute force
+                time.sleep(0.6)
+                if now - start >= _LOGIN_WINDOW:
+                    _login_failures[client_ip] = (now, 1)
+                else:
+                    _login_failures[client_ip] = (start, count + 1)
+                self.send_error_page(401)
+                return
+
+            _login_failures.pop(client_ip, None)
+            token = admin_stats.create_session()
+            host = (self.headers.get('Host') or '').split(':')[0]
+            cookie = (f'admin_session={token}; Path=/; HttpOnly; '
+                      f'SameSite=Strict; Max-Age={admin_stats.SESSION_TTL}')
+            if not (host.startswith('localhost') or host.startswith('127.')):
+                cookie += '; Secure'
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Set-Cookie', cookie)
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            return
+
+        # poniżej: wymagana sesja
+        if not admin_stats.session_ok(self._admin_session_token()):
+            self.send_error_page(401)
+            return
+
+        if path == '/api/admin/stats':
+            # opcjonalny zakres dat (YYYY-MM-DD, Europe/Warsaw); bez niego
+            # — ostatnie 30 dni. Dane w bazie nie wygasają, więc zakres
+            # może sięgać dowolnie głęboko w historię.
+            f_str = (query.get('from', [''])[0] or '')[:10]
+            t_str = (query.get('to', [''])[0] or '')[:10]
+            try:
+                from_ts, to_ts = admin_stats.parse_warsaw_range(f_str, t_str)
+                f_str, t_str = min(f_str, t_str), max(f_str, t_str)
+            except ValueError:
+                # domyślnie: ostatnie 30 dni (etykieta + zakres dla tabel)
+                from datetime import datetime as _dt, timedelta as _td
+                from .admin_stats import WARSAW as _W
+                t_str = _dt.now(_W).strftime('%Y-%m-%d')
+                f_str = (_dt.now(_W) - _td(days=29)).strftime('%Y-%m-%d')
+                from_ts = to_ts = None
+            daily, unique_total = admin_stats.daily_series(
+                from_ts=from_ts, to_ts=to_ts)
+            self.serve_json({
+                'daily': daily,
+                'unique_total': len(unique_total),
+                'range': {'from': f_str, 'to': t_str},
+                'restarts': admin_stats.restarts(from_ts=from_ts,
+                                                 to_ts=to_ts),
+                'updates': admin_stats.read_updates(from_str=f_str,
+                                                    to_str=t_str),
+            })
+            return
+
+        if path == '/api/admin/logout':
+            admin_stats.drop_session(self._admin_session_token())
+            self.serve_json({'ok': True})
+            return
+
+        self.send_error_page(404)
+
+    # ------------------------------------------------------------
     # API routing
     # ------------------------------------------------------------
     def handle_api(self, path, query):
         """Handle API requests."""
         try:
+            # --- Panel admina (VPS-only; bez pliku hasła: 404) ---
+            if path.startswith('/api/admin/'):
+                if not admin_stats.enabled():
+                    self.send_error_page(404)
+                    return
+                self._handle_admin_api(path, query)
+                return
             # Only truly expensive endpoints (route search, OG image) are
             # rate-limited. Cheap pre-computed/lookup endpoints must never
             # 429 a page load — a burst on a shared IP would blank the map.
-            expensive = path in ('/api/find-route', '/api/og-image')
+            expensive = path in ('/api/find-route', '/api/og-image',
+                                 '/api/admin/login')
             if expensive:
                 client_ip = _get_client_ip(self)
                 if not _rate_limit_ok(client_ip, expensive=True):
@@ -830,6 +994,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                    and result[0] == 'busy' and result[1] is None)
         is_pair = (isinstance(result, tuple) and len(result) == 2
                    and isinstance(result[0], tuple))
+        try:
+            if is_busy:
+                admin_stats.record_request('busy', _get_client_ip(self))
+            elif not is_pair:
+                admin_stats.record_request('timeout', _get_client_ip(self))
+        except Exception:
+            pass
         if is_busy:
             # Queue shed: tell the client to retry soon (the frontend
             # retries 503s automatically, and the message lands in the
@@ -853,10 +1024,19 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         cheap_result, cheap_error = cheap_pair
 
         if convenient_result is None and cheap_result is None:
+            try:
+                admin_stats.record_request('timeout', _get_client_ip(self))
+            except Exception:
+                pass
             self.serve_json({'error': _user_facing_error(
                 convenient_error or cheap_error
                 or "Nie znaleziono trasy między tymi przystankami")})
             return
+
+        try:
+            admin_stats.record_request('ok', _get_client_ip(self))
+        except Exception:
+            pass
 
         # Two user-facing modes only. A mode whose exact search timed out is
         # null — the frontend shows a timeout toast for the requested mode.
@@ -981,6 +1161,15 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     # ------------------------------------------------------------
     def _security_headers(self):
         """Add security headers to a response."""
+        # Per-response CSP override (used by /panel: its page is a sealed,
+        # self-contained document with inline <style> + nonce'd <script>).
+        override = getattr(self, '_csp_policy', None)
+        if override:
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('X-Frame-Options', 'DENY')
+            self.send_header('Referrer-Policy', 'no-referrer')
+            self.send_header('Content-Security-Policy', override)
+            return
         # Reuse a nonce generated earlier during request handling (HTML
         # injection) so header and body always agree.
         nonce = getattr(self, '_csp_nonce', None) or generate_nonce()
