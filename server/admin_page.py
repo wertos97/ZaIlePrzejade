@@ -262,10 +262,9 @@ function render(s){
         '<tr><td>'+fmtTs(r.ts)+'</td><td>'+(esc(r.version)||'—')+'</td></tr>').join('')+'</table></div>'
     : '<span class="mut">brak zdarzeń w tym zakresie</span>';
   document.getElementById('t-updates').innerHTML = s.updates.length
-    ? '<details><summary>Wdrożenia: ' + s.updates.length
-      + ' — kliknij, aby rozwinąć</summary><div class="scrollbox">'
-      + '<table><tr><th>kiedy</th><th>co</th></tr>' + s.updates.map(u=>
-        '<tr><td>'+esc(u.ts)+'</td><td>'+esc(u.what)+'</td></tr>').join('')+'</table></div></details>'
+    ? '<div class="scrollbox"><table><tr><th>kiedy</th><th>co</th></tr>'
+      + s.updates.map(u=>'<tr><td>'+esc(u.ts)+'</td><td>'+esc(u.what)+'</td></tr>').join('')
+      + '</table></div>'
     : '<span class="mut">brak wdrożeń w tym zakresie</span>';
 }
 
