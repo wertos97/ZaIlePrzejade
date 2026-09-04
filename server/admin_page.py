@@ -257,9 +257,13 @@ function render(s){
   ].map(k=>'<div class="card"><div class="v '+k.c+'">'+k.v+'</div><div class="l">'+esc(k.l)+'</div></div>').join('');
 
   document.getElementById('t-restart').innerHTML = s.restarts.length
-    ? '<div class="scrollbox"><table><tr><th>kiedy</th><th>wersja</th></tr>'
-      + s.restarts.map(r=>
-        '<tr><td>'+fmtTs(r.ts)+'</td><td>'+(esc(r.version)||'—')+'</td></tr>').join('')+'</table></div>'
+    ? '<div class="scrollbox"><table><tr><th>kiedy</th><th>wersja</th><th>powód</th></tr>'
+      + s.restarts.map(r=>{
+          const reason = r.reason || '';
+          const short = reason.length > 70 ? reason.slice(0,70)+'…' : reason;
+          return '<tr><td>'+fmtTs(r.ts)+'</td><td>'+(esc(r.version)||'—')+'</td>'
+               + '<td title="'+esc(reason)+'">'+(short?esc(short):'—')+'</td></tr>';
+        }).join('')+'</table></div>'
     : '<span class="mut">brak zdarzeń w tym zakresie</span>';
   document.getElementById('t-updates').innerHTML = s.updates.length
     ? '<div class="scrollbox"><table><tr><th>kiedy</th><th>co</th></tr>'

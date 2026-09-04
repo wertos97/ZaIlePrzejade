@@ -172,8 +172,8 @@ def record_visit(ip):
     record_event('visit', ip=ip)
 
 
-def record_restart(version):
-    record_event('restart', outcome=version)
+def record_restart(version, reason=None):
+    record_event('restart', outcome=version, detail=reason)
 
 
 # ------------------------------------------------------------
@@ -235,11 +235,13 @@ def parse_warsaw_range(from_str, to_str):
 
 
 def restarts(from_ts=None, to_ts=None, limit=1000):
-    """Server restarts from the events table (zakres opcjonalny)."""
+    """Server restarts from the events table (zakres opcjonalny).
+    reason — powód restartu (autoupdate) albo 'ręczny start'."""
     if _conn is None:
         return []
     try:
-        q = "SELECT ts, outcome FROM events WHERE kind='restart'"
+        q = ("SELECT ts, outcome, extra FROM events "
+             "WHERE kind='restart'")
         args = []
         if from_ts is not None:
             q += ' AND ts >= ?'
@@ -250,9 +252,46 @@ def restarts(from_ts=None, to_ts=None, limit=1000):
         q += ' ORDER BY ts DESC'
         with _lock:
             rows = _conn.execute(q, args).fetchall()
-        return [{'ts': ts, 'version': v or ''} for ts, v in rows]
+        return [{'ts': ts, 'version': v or '', 'reason': r or ''}
+                for ts, v, r in rows]
     except Exception:
         return []
+
+
+def read_last_reason(boot_ts, max_age=600, log_path=None):
+    """Ostatni powód restartu z autoupdate.log sprzed bootu serwera.
+
+    autoupdate.loguje '📌 Powód: ...' przed każdym restartem, który wykonuje
+    (nowe commity / błąd spójności / serwer nie odpowiada). Jeśli ostatni
+    taki wpis jest świeższy niż `max_age` sekund przed startem procesu,
+    to jest to powód TEGO restartu; brak świeżego wpisu = restart ręczny.
+    Zwraca string albo None."""
+    try:
+        p = log_path or os.path.join(
+            os.path.dirname(os.path.dirname(_DB_PATH)), 'autoupdate.log')
+        marker = 'Powód:'
+        best, best_ts = None, None
+        with open(p, encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                i = line.find(marker)
+                if i == -1:
+                    continue
+                ts_str = line[1:20]
+                try:
+                    ts = datetime.strptime(
+                        ts_str, '%Y-%m-%d %H:%M:%S').timestamp()
+                except Exception:
+                    continue
+                if ts <= boot_ts and (best_ts is None or ts > best_ts):
+                    best_ts = ts
+                    best = line[i + len(marker):].strip()
+        if best is None or best_ts is None:
+            return None
+        if boot_ts - best_ts > max_age:
+            return None  # zbyt stary powód — restart nie z autoupdate
+        return best[:200]
+    except Exception:
+        return None
 
 
 def read_updates(from_str=None, to_str=None, limit=2000):

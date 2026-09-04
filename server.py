@@ -7,6 +7,7 @@ Entry point — loads modules and starts the threaded server.
 import os
 import signal
 import threading
+import time
 
 from server.config import (
     APP_VERSION,
@@ -25,7 +26,9 @@ from server.data import (  # noqa: E402 — needs logging configured first
     PUBLIC_DIR,
 )
 from server.pathfinding import (
-    init_pathfinding, find_cache_info, route_cache_info,
+    init_pathfinding,
+    find_cache_info,
+    route_cache_info,
 )
 from server.handler import MPKRequestHandler, _build_stops_json, _build_routes_json
 
@@ -55,7 +58,6 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
                                     b'Content-Type: application/json; charset=utf-8\r\n'
                                     b'Content-Length: ' + str(len(body)).encode() + b'\r\n'
                                     b'Connection: close\r\n'
-                                    b'Retry-After: 2\r\n'
                                     b'X-Content-Type-Options: nosniff\r\n'
                                     b'X-Frame-Options: DENY\r\n'
                                     b'Referrer-Policy: no-referrer\r\n'
@@ -124,9 +126,11 @@ def main():
     from server.handler import _start_rate_limit_cleanup
     _start_rate_limit_cleanup()
 
-    # Trwały zapis restartu do statystyk panelu (VPS-only)
+    # Trwały zapis restartu do statystyk panelu (VPS-only) — z powodem:
+    # ostatni 'Powód' z autoupdate.log (update / naprawa) albo restart ręczny
     from server import admin_stats
-    admin_stats.record_restart(APP_VERSION)
+    reason = admin_stats.read_last_reason(time.time())
+    admin_stats.record_restart(APP_VERSION, reason=reason or 'ręczny start')
 
     signal.signal(signal.SIGTERM, _request_shutdown)
 
