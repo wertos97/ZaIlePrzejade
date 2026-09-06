@@ -15,6 +15,7 @@ import threading
 import time
 import traceback
 import urllib.parse
+import urllib.request
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from http.server import SimpleHTTPRequestHandler
@@ -48,6 +49,11 @@ from .config import (
     SEARCH_PREFIX_MAX_LENGTH,
     STATIC_CACHE_MAX_AGE_UNVERSIONED,
     STATIC_CACHE_MAX_AGE_VERSIONED,
+    STATS_RETENTION_DAYS,
+    TILE_CACHE_MAX_AGE,
+    TILE_CACHE_MAX_BYTES,
+    TILE_UPSTREAM_TEMPLATE,
+    TILE_UPSTREAM_TIMEOUT_SECONDS,
     TRUST_PROXY_HEADERS,
 )
 from . import data
@@ -59,7 +65,8 @@ from .logging_config import get_logger
 
 # Statystyki VPS (processed/stats.sqlite) — best-effort, przy błędzie moduł
 # degraduje się do no-op. Bez pliku hasła cały panel /panel odpowiada 404.
-admin_stats.init(data.PROCESSED_DIR)
+# Retencja z config.py: zdarzenia starsze niż okno są usuwane (prywatność).
+admin_stats.init(data.PROCESSED_DIR, retention_days=STATS_RETENTION_DAYS)
 
 _GROUP_ID_PATTERN = re.compile(_GROUP_ID_PATTERN_SRC)
 
@@ -334,6 +341,86 @@ def _rate_limit_ok(ip, expensive=False):
         timestamps.append(now)
 
         return True
+
+
+# ============================================================
+# Map tile proxy (privacy)
+# ============================================================
+# Leaflet tiles are served from our own origin (/api/tiles/...) so the
+# visitor's browser never contacts the tile provider directly — the
+# provider never sees the visitor's IP, User-Agent or viewed map area.
+# Tiles are cached on disk (processed/tiles/) under a byte budget.
+_TILE_RE = re.compile(r'^/api/tiles/(\d{1,2})/(\d{1,7})/(\d{1,7})(@2x)?\.png$')
+
+
+def _tile_cache_path(z, x, y, retina):
+    return os.path.join(
+        data.PROCESSED_DIR, 'tiles', str(z), str(x), f'{y}{retina}.png')
+
+
+def _evict_old_tiles(max_bytes):
+    """Best-effort LRU eviction of the on-disk tile cache (oldest first)."""
+    try:
+        root = os.path.join(data.PROCESSED_DIR, 'tiles')
+        entries = []
+        total = 0
+        for dirpath, _dirnames, filenames in os.walk(root):
+            for name in filenames:
+                if not name.endswith('.png'):
+                    continue
+                p = os.path.join(dirpath, name)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                entries.append((st.st_mtime, st.st_size, p))
+                total += st.st_size
+        if total <= max_bytes:
+            return
+        for _mtime, size, p in sorted(entries):
+            try:
+                os.remove(p)
+            except OSError:
+                continue
+            total -= size
+            if total <= max_bytes:
+                break
+    except OSError:
+        pass
+
+
+def _fetch_upstream_tile(z, x, y, retina, cache_path):
+    """Fetch one tile from the upstream provider, cache it, return bytes."""
+    upstream = TILE_UPSTREAM_TEMPLATE.format(z=z, x=x, y=y, r=retina)
+    try:
+        req = urllib.request.Request(upstream, headers={
+            'User-Agent':
+                f'ZaIlePrzejade-tile-proxy/{APP_VERSION} (https://zaileprzeja.de)',
+        })
+        with urllib.request.urlopen(
+                req, timeout=TILE_UPSTREAM_TIMEOUT_SECONDS) as resp:
+            if resp.status != 200:
+                raise OSError(f'upstream HTTP {resp.status}')
+            if 'image' not in (resp.headers.get('Content-Type') or ''):
+                raise OSError('upstream response is not an image')
+            body = resp.read(1048577)
+        if (len(body) > 1048576 or len(body) < 100
+                or body[:8] != b'\x89PNG\r\n\x1a\n'):
+            raise OSError('upstream returned an invalid tile')
+    except Exception:
+        get_logger('mpk.http').warning(
+            'Tile upstream fetch failed: %s/%s/%s', z, x, y)
+        return None
+    try:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        tmp = f'{cache_path}.{os.getpid()}.{threading.get_ident()}.tmp'
+        with open(tmp, 'wb') as f:
+            f.write(body)
+        os.replace(tmp, cache_path)
+    except OSError:
+        get_logger('mpk.http').warning('Tile cache write failed', exc_info=True)
+    _evict_old_tiles(TILE_CACHE_MAX_BYTES)
+    return body
 
 
 # ============================================================
@@ -730,8 +817,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
         if path == '/api/admin/stats':
             # opcjonalny zakres dat (YYYY-MM-DD, Europe/Warsaw); bez niego
-            # — ostatnie 30 dni. Dane w bazie nie wygasają, więc zakres
-            # może sięgać dowolnie głęboko w historię.
+            # — ostatnie 30 dni. Historia sięga wstecz co najwyżej do okna
+            # retencji (domyślnie 90 dni, potem zdarzenia są usuwane).
             f_str = (query.get('from', [''])[0] or '')[:10]
             t_str = (query.get('to', [''])[0] or '')[:10]
             try:
@@ -744,11 +831,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 t_str = _dt.now(_W).strftime('%Y-%m-%d')
                 f_str = (_dt.now(_W) - _td(days=29)).strftime('%Y-%m-%d')
                 from_ts = to_ts = None
-            daily, unique_total = admin_stats.daily_series(
+            daily, unique_total, stats_meta = admin_stats.daily_series(
                 from_ts=from_ts, to_ts=to_ts)
             self.serve_json({
                 'daily': daily,
                 'unique_total': len(unique_total),
+                'unique_exact': stats_meta['unique_exact'],
+                'unique_since': stats_meta['unique_since'],
                 'range': {'from': f_str, 'to': t_str},
                 'restarts': admin_stats.restarts(from_ts=from_ts,
                                                  to_ts=to_ts),
@@ -863,6 +952,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
             elif path == '/api/routes':
                 self.serve_json_cached(path)
+
+            elif path.startswith('/api/tiles/'):
+                self._handle_tiles(path)
 
             elif path == '/api/stop':
                 self._handle_stop_info(query)
@@ -1068,6 +1160,50 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         shape = data.route_shapes.get(route_id, [])
         self.serve_json({'route_id': route_id, 'shape': shape})
 
+    def _handle_tiles(self, path):
+        """Serve a proxied map tile (disk cache, upstream fallback)."""
+        m = _TILE_RE.match(path)
+        if not m:
+            self.serve_json({'error': 'Invalid tile coordinates'}, status=400)
+            return
+        z, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        retina = m.group(4) or ''
+        if z > 19 or x >= (1 << z) or y >= (1 << z):
+            self.serve_json({'error': 'Invalid tile coordinates'}, status=400)
+            return
+        # Cheap endpoint in the generous (non-expensive) per-IP bucket: one
+        # map view fetches dozens of tiles, so this must never 429 a page
+        # load the way the expensive search endpoints may.
+        if not _rate_limit_ok(_get_client_ip(self)):
+            self.send_response(429)
+            self.send_header('Retry-After', '3')
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            body = '{"error":"Zbyt wiele zapytan. Sprobuj ponownie za chwile."}'.encode()
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self._send_body(body)
+            return
+        cache_path = _tile_cache_path(z, x, y, retina)
+        body = None
+        try:
+            with open(cache_path, 'rb') as f:
+                body = f.read(1 << 21)
+        except OSError:
+            body = None
+        if body is None:
+            body = _fetch_upstream_tile(z, x, y, retina, cache_path)
+            if body is None:
+                self.send_error_page(502)
+                return
+        self.send_response(200)
+        self.send_header('Content-Type', 'image/png')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header(
+            'Cache-Control', f'public, max-age={TILE_CACHE_MAX_AGE}')
+        self.end_headers()
+        self._send_body(body)
+
     def _handle_status(self):
         """Application-level status: version, uptime, cache usage.
 
@@ -1183,7 +1319,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             "default-src 'self'; "
             f"script-src 'self' 'nonce-{nonce}'; "
             "style-src 'self'; "
-            "img-src 'self' data: https:; "
+            # No https: here on purpose — even map tiles are served from
+            # our own origin (/api/tiles), so the browser needs no
+            # third-party image source at all.
+            "img-src 'self' data:; "
             "connect-src 'self'; "
             "font-src 'self'; "
             "frame-ancestors 'none'; "

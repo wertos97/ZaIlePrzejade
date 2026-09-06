@@ -162,11 +162,11 @@ function initMap() {
         maxBoundsViscosity: 0.8,
     }).setView([50.0647, 19.9450], 13);
 
-    // Use a cleaner tile style - CartoDB Positron (light, no POI clutter)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_26qm_1_98430037de145fbe58b64b9b', {
+    // Kafelki serwuje nasz własny serwer (/api/tiles) — przeglądarka nie
+    // łączy się bezpośrednio z CARTO ani innym zewnętrznym dostawcą.
+    L.tileLayer('/api/tiles/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, &copy; <a href="https://carto.com/">CARTO</a>',
         maxZoom: 19,
-        subdomains: 'abcd',
     }).addTo(state.map);
 
     state.routeLayer = L.layerGroup().addTo(state.map);
@@ -213,9 +213,7 @@ function initMap() {
         })
         .catch(() => { dataInfoEl.remove(); /* ignore - attribution is optional */ });
 
-    // App version badge (bottom-left, above data version). Public users see only
-    // the application version — load/health stats are intentionally NOT shown
-    // to the public. Full server stats open via right-click on "Autor".
+    // App version badge (bottom-left, above data version).
     const statusEl = document.createElement('div');
     statusEl.className = 'leaflet-control leaflet-control-attribution server-status';
     statusEl.style.cssText = 'position: absolute; left: 0px; bottom: 18px; z-index: 1000; background: rgba(255,255,255,0.8); padding: 0 6px; font-size: 10.5px; color: #555; border-radius: 3px;';
@@ -253,9 +251,8 @@ function initMap() {
 }
 
 // ------------------------------------------------------------
-// Admin server-stats panel — opened via right-click on "Autor".
-// Rendered in the map's top-right corner; hidden from public.
-// Refreshes live every few seconds while open.
+// Floating map overlay: live figures from /api/status, rendered in
+// the map's top-right corner. Refreshes every few seconds while open.
 // ------------------------------------------------------------
 const SERVER_PANEL_REFRESH_MS = 4000;
 let serverPanelTimer = null;
@@ -274,7 +271,7 @@ function toggleServerPanel() {
     fetch('/api/status')
         .then(r => r.json())
         .then(s => { if (s) renderServerStatsPanel(s); })
-        .catch(() => { /* keep closed on transient errors; right-click retries */ });
+        .catch(() => { /* keep closed on transient errors */ });
 }
 
 // Colour a value by thresholds: < ok green, < warm amber, else red.
@@ -580,12 +577,16 @@ function setupEventListeners() {
         showModal('Uwaga', 'warning.md');
     });
 
+    document.getElementById('btn-privacy').addEventListener('click', function() {
+        showModal('Prywatność', 'privacy.md');
+    });
+
     document.getElementById('btn-author').addEventListener('click', function() {
         showModal('Od autora', 'author.md');
     });
 
-    // Right-click on "Autor" opens the admin-only server-stats panel
-    // (top-right of the map). Left-click keeps the normal modal.
+    // An extra shortcut lives on "Autor".
+    // Left-click keeps the normal modal.
     document.getElementById('btn-author').addEventListener('contextmenu', function(e) {
         e.preventDefault();
         toggleServerPanel();

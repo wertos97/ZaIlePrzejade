@@ -2,39 +2,36 @@
 
 Żeby lepiej zrozumieć o co chodzi i dlaczego taki kalkulator powstał:
 
-Zgodnie z oficjalnym komunikatem ([źródło](https://www.facebook.com/photo/?fbid=1445327380951786&set=a.612767970874402)):
+Od stycznia 2027 r. Kraków planuje uruchomić dodatkową, **opcjonalną taryfę odległościową**, działającą **obok** obecnych biletów czasowych, jednorazowych i okresowych. Pasażer sam wybierze, z którego rozliczenia skorzysta.
 
-Od 2027 roku bilety komunikacji miejskiej w Krakowie będziemy liczyć na odległość.
+Rada Miasta Krakowa przyjęła uchwałę w sprawie taryfy w grudniu 2025 r., a w lipcu 2026 r. ZTP ogłosił przetarg na system do jej obsługi. Planowany start to styczeń 2027 r. ([źródło: oficjalny komunikat ZTP z 23.07.2026](https://ztp.krakow.pl/wszystkie-aktualnosci/kmk/ogloszenie-przetargu-na-wprowadzenie-odleglosciowej-taryfy-biletowej.html)).
 
-## Jak to będzie działać?
+## Co potwierdziło miasto
 
-Według mojej interpretacji:
-
-👉 **Płacisz za to, ile kilometrów faktycznie przejedziesz.** Nie za czas, nie za liczbę przystanków — tylko za dystans.
+👉 **Płacisz za to, ile kilometrów faktycznie przejedziesz.** Opłata zależy od dystansu pokonanego przez pasażera, a nie od czasu podróży, korków czy liczby przystanków.
 
 ## Nowy cennik
 
 - ➡️ Do 3,5 km: **4 zł** normalny / **2 zł** ulgowy
 - ➡️ Powyżej 3,5 km: każde rozpoczęte 500 m to **+0,50 zł** / **+0,25 zł**
 - ➡️ Maksymalnie zapłacisz **9 zł** / **4,50 zł** za jeden przejazd
+- ➡️ Limit 24-godzinny: **20 zł** / **10 zł** — według obecnych założeń miasta po jego osiągnięciu kolejne przejazdy przez 24 godziny od rozpoczęcia pierwszej podróży nie będą dodatkowo płatne
 
-## Jak liczymy przesiadki?
+## Przesiadki: co zakłada kalkulator
 
-Każdy **przejazd** (od wejścia do pojazdu do przesiadki) to **osobny bilet** liczony od zera. Czyli jeśli jedziesz z przesiadką, płacisz za każdy przejazd osobno — nie sumujemy dystansu całej trasy.
+**Przesiadki: sposób naliczania nie został jeszcze ostatecznie opisany przez miasto.** ZTP podaje, że pasażer zarejestruje w aplikacji mKraków wejście i wyjście z pojazdu, a podróże z przesiadkami system ma uwzględnić w kolejnym etapie. Szczegółowych zasad rozliczania przesiadek jeszcze nie opublikowano.
 
-Przykład: jedziesz 2 km tramwajem (4 zł), przesiadasz się i jedziesz 1 km autobusem (4 zł). Razem: **8 zł**, a nie 4 zł za całą trasę.
+**Kalkulator obecnie zakłada osobne naliczanie każdego przejazdu pojazdem** — każdy przejazd (od wejścia do pojazdu do przesiadki) to osobny bilet liczony od zera.
+
+Przykład (założenie kalkulatora, nie oficjalna zasada): jedziesz 2 km tramwajem (4 zł), przesiadasz się i jedziesz 1 km autobusem (4 zł). Razem: **8 zł**, a nie 4 zł za całą trasę.
 
 ## Czas przejazdu
 
 Aplikacja pokazuje też **szacunkowy czas przejazdu** (z czasem przesiadki pięciu minut). Czas liczony jest na podstawie oficjalnych rozkładów jazdy (GTFS) — to suma czasów przejazdu między przystankami na wybranej trasie.
 
-## Limit dzienny
-
-Jest też plus — dzienny limit wydatków **20 zł** normalny / **10 zł** ulgowy. Po osiągnięciu tej kwoty kolejne przejazdy tego dnia są **gratis**, tak jakbyś miał bilet dzienny. Przy przesiadkach szybciej dobijasz do limitu.
-
 ## Dwa warianty trasy
 
-Aplikacja pokazuje **dwie trasy** i obie mają **gwarancję najniższej możliwej ceny** w tym modelu (algorytm sprawdza wszystkie sensowne kombinacje przejazdów):
+Aplikacja pokazuje **dwie trasy** i obie mają **gwarancję najniższej możliwej ceny** w modelu przyjętym przez kalkulator (przy powyższym założeniu o przesiadkach — algorytm sprawdza wszystkie sensowne kombinacje przejazdów):
 
 - 💰 **Tania trasa** — najtańsze łączne bilety,
 - 🛋️ **Wygodna trasa** — mniej przesiadek (każde wsiadanie „kosztuje" w cenniku algorytmu 2 zł, więc algorytm balansuje cenę i wygodę).

@@ -168,5 +168,124 @@ class TestStatusPayload(unittest.TestCase):
         self.assertIn('uptime_seconds', payload)
 
 
+class TestTileProxy(unittest.TestCase):
+    """Map tiles are proxied from our own origin (privacy): coordinate
+    validation must reject garbage without ever touching upstream."""
+
+    def test_invalid_tile_paths_400(self):
+        for path in ('/api/tiles/abc/1/2.png',
+                      '/api/tiles/20/1/1.png',   # z > 19
+                      '/api/tiles/2/99/1.png',   # x out of range
+                      '/api/tiles/0/1/0.png',    # z=0 admits only 0/0
+                      '/api/tiles/10/1/1.jpg'):
+            status, _ = _request(path)
+            self.assertEqual(status, 400, f'{path} returned {status}')
+
+    def test_cached_tile_served_without_upstream(self):
+        from server.handler import _tile_cache_path
+        cache_path = _tile_cache_path(10, 550, 343, '')
+        fake_png = (b'\x89PNG\r\n\x1a\n' + b'\x00' * 200)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, 'wb') as f:
+            f.write(fake_png)
+        try:
+            status, body = _request('/api/tiles/10/550/343.png')
+            self.assertEqual(status, 200)
+            self.assertEqual(body, fake_png)
+        finally:
+            if os.path.isfile(cache_path):
+                os.remove(cache_path)
+
+    def test_retina_tile_path_accepted(self):
+        from server.handler import _TILE_RE
+        m = _TILE_RE.match('/api/tiles/13/4412/2808@2x.png')
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(4), '@2x')
+
+
+class TestStatsRetention(unittest.TestCase):
+    """Raw events expire, but per-day aggregates keep the full history."""
+
+    OLD_TS = __import__('time').time() - 200 * 86400  # predates the app
+
+    def _old_day(self):
+        from server import admin_stats
+        return admin_stats._day_key(self.OLD_TS, admin_stats.WARSAW)
+
+    def _cleanup(self):
+        from server import admin_stats
+        with admin_stats._lock:
+            admin_stats._conn.execute(
+                "DELETE FROM events WHERE kind IN ('request', 'visit') "
+                "AND (iph LIKE 'test-%' OR outcome IN ('test-old', 'test-fresh'))")
+            admin_stats._conn.execute(
+                "DELETE FROM daily_rollup WHERE day=?", (self._old_day(),))
+            admin_stats._conn.commit()
+
+    def test_old_events_pruned_fresh_kept(self):
+        import time
+        from server import admin_stats
+        if admin_stats._conn is None:
+            self.skipTest('stats DB unavailable')
+        with admin_stats._lock:
+            admin_stats._conn.execute(
+                "INSERT INTO events(ts, kind, outcome, iph) "
+                "VALUES (?, 'request', 'test-old', 'test-old-hash')",
+                (self.OLD_TS,))
+            admin_stats._conn.execute(
+                "INSERT INTO events(ts, kind, outcome, iph) "
+                "VALUES (?, 'request', 'test-fresh', 'test-fresh-hash')",
+                (time.time(),))
+            admin_stats._conn.commit()
+        admin_stats._last_prune = 0.0  # force the daily prune to run now
+        try:
+            admin_stats.prune_old_events()
+            with admin_stats._lock:
+                rows = admin_stats._conn.execute(
+                    "SELECT outcome FROM events "
+                    "WHERE outcome IN ('test-old', 'test-fresh')").fetchall()
+            outcomes = sorted(r[0] for r in rows)
+            self.assertEqual(outcomes, ['test-fresh'])
+        finally:
+            self._cleanup()
+
+    def test_rollup_preserves_full_history(self):
+        import time
+        from server import admin_stats
+        if admin_stats._conn is None:
+            self.skipTest('stats DB unavailable')
+        old_day = self._old_day()
+        with admin_stats._lock:
+            for iph in ('test-h1', 'test-h2', 'test-h1'):
+                admin_stats._conn.execute(
+                    "INSERT INTO events(ts, kind, outcome, iph) "
+                    "VALUES (?, 'request', 'ok', ?)", (self.OLD_TS, iph))
+            admin_stats._conn.commit()
+        admin_stats._last_prune = 0.0
+        try:
+            admin_stats.prune_old_events()
+            with admin_stats._lock:
+                raw = admin_stats._conn.execute(
+                    "SELECT COUNT(*) FROM events WHERE iph LIKE 'test-h%'"
+                ).fetchone()[0]
+                roll = admin_stats._conn.execute(
+                    "SELECT requests, ok, visitors FROM daily_rollup "
+                    "WHERE day=?", (old_day,)).fetchone()
+            self.assertEqual(raw, 0, 'old raw events must be pruned')
+            self.assertIsNotNone(roll, 'old day must survive in rollup')
+            self.assertEqual(tuple(roll), (3, 3, 2))
+            # Merged series spans the whole period, no double counting.
+            from_ts = self.OLD_TS - 86400
+            daily, unique_total, meta = admin_stats.daily_series(
+                from_ts=from_ts, to_ts=time.time())
+            self.assertIn(old_day, daily)
+            self.assertEqual(daily[old_day]['requests'], 3)
+            self.assertEqual(daily[old_day]['visitors'], 2)
+            self.assertFalse(meta['unique_exact'])
+            self.assertIsNotNone(meta['unique_since'])
+        finally:
+            self._cleanup()
+
+
 if __name__ == '__main__':
     unittest.main()

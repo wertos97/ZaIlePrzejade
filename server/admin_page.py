@@ -248,10 +248,16 @@ function render(s){
   const total = (k)=>days.reduce((x,d)=>x+(s.daily[d][k]||0),0);
   const rng = (s.range && s.range.from) ? s.range.from + ' → ' + s.range.to
                                         : 'ostatnie 30 dni';
+  // unique_total liczy rozróżnialne hashe z zachowanych surowych zdarzeń —
+  // dla zakresów sięgających przed okno retencji (agregaty dobowe bez
+  // identyfikatorów) pokazujemy, od kiedy liczenie jest dokładne.
+  const usersLabel = 'użytkownicy · ' + rng
+    + ((s.unique_exact === false && s.unique_since)
+        ? ' (dokł. od ' + s.unique_since.split('-').reverse().join('.') + ')' : '');
 
   document.getElementById('kpis').innerHTML = [
     {l:'wyszukiwania · ' + rng, v:total('requests'), c:''},
-    {l:'użytkownicy · ' + rng, v:(s.unique_total||0), c:''},
+    {l:usersLabel, v:(s.unique_total||0), c:''},
     {l:'timeouty', v:total('timeout'), c:total('timeout')?'red':''},
     {l:'odrzucone', v:total('busy'), c:total('busy')?'orange':''}
   ].map(k=>'<div class="card"><div class="v '+k.c+'">'+k.v+'</div><div class="l">'+esc(k.l)+'</div></div>').join('');

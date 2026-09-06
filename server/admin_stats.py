@@ -13,6 +13,14 @@ Events recorded (append-only sqlite, tiny writes):
 IP addresses are never stored raw — only sha256(salt + ip) with a
 per-installation random salt, so unique-visitor counts work but the
 original addresses cannot be recovered from the database.
+
+Two-tier history (see prune_old_events / rollup_complete_days):
+  raw events (with IP hashes) older than STATS_RETENTION_DAYS (default
+  90) are automatically deleted — but BEFORE deletion each complete day
+  is aggregated into daily_rollup (per-day requests/visitors, no
+  identifiers), which is kept forever. The admin panel therefore shows
+  searches/day and unique visitors/day for the whole recording period,
+  while per-visitor identifiers always expire.
 """
 
 import hashlib
@@ -31,6 +39,13 @@ WARSAW = ZoneInfo('Europe/Warsaw')
 _DB_PATH = None
 _conn = None
 _lock = threading.Lock()
+
+# Retention: raw request/visit events (the ones carrying IP hashes)
+# older than this are deleted (see prune_old_events). Overridden by
+# init(); mirrors config.STATS_RETENTION_DAYS. Per-day aggregates in
+# daily_rollup are kept forever (no identifiers, panel history intact).
+_retention_days = 90
+_last_prune = 0.0
 
 # Sessions (in-memory; a restart logs everyone out — acceptable here)
 SESSION_TTL = 7 * 24 * 3600
@@ -111,11 +126,14 @@ def drop_session(token):
 # Setup / events
 # ------------------------------------------------------------
 
-def init(db_dir):
+def init(db_dir, retention_days=90):
     """Create/open the stats database. Safe to call on every boot; the
     whole module degrades to no-op on any sqlite error (stats are
-    best-effort, never block serving)."""
-    global _DB_PATH, _conn
+    best-effort, never block serving). Old raw events beyond
+    `retention_days` are aggregated into daily_rollup and deleted right
+    away (privacy: identifiers expire, per-day history stays forever)."""
+    global _DB_PATH, _conn, _retention_days
+    _retention_days = retention_days
     try:
         os.makedirs(db_dir, exist_ok=True)
         _DB_PATH = os.path.join(db_dir, 'stats.sqlite')
@@ -127,6 +145,13 @@ def init(db_dir):
                      'outcome TEXT, iph TEXT, extra TEXT)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_events_ts '
                      'ON events(ts)')
+        conn.execute('CREATE TABLE IF NOT EXISTS daily_rollup ('
+                     'day TEXT PRIMARY KEY, '
+                     'requests INTEGER NOT NULL DEFAULT 0, '
+                     'ok INTEGER NOT NULL DEFAULT 0, '
+                     'timeout INTEGER NOT NULL DEFAULT 0, '
+                     'busy INTEGER NOT NULL DEFAULT 0, '
+                     'visitors INTEGER NOT NULL DEFAULT 0)')
         conn.execute('CREATE TABLE IF NOT EXISTS meta '
                      "(k TEXT PRIMARY KEY, v TEXT NOT NULL)")
         row = conn.execute("SELECT v FROM meta WHERE k='salt'").fetchone()
@@ -137,6 +162,87 @@ def init(db_dir):
         _conn = conn
     except Exception:
         _conn = None
+    prune_old_events()
+
+
+def _today_start(tz=WARSAW):
+    """Epoch of today's midnight in `tz` (days before it are complete)."""
+    now = datetime.now(tz)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+
+def rollup_complete_days():
+    """Aggregate complete (past) days from raw events into daily_rollup.
+
+    Only days with raw events present are (re)written — days whose raw
+    events were already pruned keep their stored aggregates. Past days
+    never gain new raw events (timestamps are always "now"), so a stored
+    aggregate for a complete day is final. Returns the number of days
+    written (0 on no-op/error)."""
+    if _conn is None:
+        return 0
+    try:
+        start = _today_start()
+        with _lock:
+            rows = _conn.execute(
+                'SELECT ts, kind, outcome, iph FROM events '
+                'WHERE ts < ?', (start,)).fetchall()
+        per_day = {}
+        for ts, kind, outcome, iph in rows:
+            day = _day_key(ts, WARSAW)
+            d = per_day.setdefault(day, {
+                'requests': 0, 'ok': 0, 'timeout': 0,
+                'busy': 0, 'visitors': set()})
+            if kind == 'request':
+                d['requests'] += 1
+                if outcome in ('timeout', 'busy', 'ok'):
+                    d[outcome] += 1
+            if iph:
+                d['visitors'].add(iph)
+        if not per_day:
+            return 0
+        with _lock:
+            for day, d in per_day.items():
+                _conn.execute(
+                    'INSERT OR REPLACE INTO daily_rollup'
+                    '(day, requests, ok, timeout, busy, visitors) '
+                    'VALUES (?, ?, ?, ?, ?, ?)',
+                    (day, d['requests'], d['ok'], d['timeout'],
+                     d['busy'], len(d['visitors'])))
+            _conn.commit()
+        return len(per_day)
+    except Exception:
+        return 0
+
+
+def prune_old_events():
+    """Aggregate-then-delete old raw events (best-effort).
+
+    Called on boot and at most once a day afterwards (from record_event).
+    Complete days are first rolled up into daily_rollup (kept forever),
+    then raw request/visit events (the ones carrying IP hashes) older
+    than the retention window are deleted. Restart events carry no
+    identifiers and are kept. Returns the number of deleted rows
+    (0 on no-op/error)."""
+    global _last_prune
+    if _conn is None:
+        return 0
+    now = time.time()
+    if now - _last_prune < 86400 and _last_prune != 0.0:
+        return 0
+    try:
+        rollup_complete_days()
+        cutoff = now - _retention_days * 86400
+        with _lock:
+            cur = _conn.execute(
+                "DELETE FROM events WHERE ts < ? "
+                "AND kind IN ('request', 'visit')", (cutoff,))
+            _conn.commit()
+            deleted = cur.rowcount or 0
+        _last_prune = now
+        return deleted
+    except Exception:
+        return 0
 
 
 def _ip_hash(ip):
@@ -153,6 +259,7 @@ def record_event(kind, outcome=None, ip=None, detail=None):
     if _conn is None:
         return
     try:
+        prune_old_events()
         iph = _ip_hash(ip) if ip else None
         with _lock:
             _conn.execute(
@@ -188,25 +295,56 @@ def daily_series(days=None, tz=ZoneInfo('Europe/Warsaw'),
                  from_ts=None, to_ts=None):
     """Per-day buckets (Europe/Warsaw): requests (ok/timeout/busy) and
     unique visitors (distinct IP hashes). Zakres: from_ts/to_ts (epoch);
-    bez nich — ostatnie `days` dni (domyślnie 30). Dane nie są nigdy
-    usuwane, więc zakres może sięgać dowolnie głęboko w historię."""
+    bez nich — ostatnie `days` dni (domyślnie 30).
+
+    Two-tier history: complete past days come from daily_rollup (kept
+    forever, no identifiers), today and not-yet-rolled days from raw
+    events — so the series spans the whole recording period. A day
+    present in the rollup is never double-counted from raw events.
+
+    Returns (days, unique_total, meta), where unique_total holds the
+    distinct IP hashes found in RETAINED raw events only, and meta is
+    {'unique_exact': bool, 'unique_since': 'YYYY-MM-DD' | None}:
+    unique_exact is False when the range reaches before the oldest
+    retained raw event (pruned identifiers cannot be distinguished
+    retroactively) — the panel then labels the KPI accordingly.
+    """
     out = {}
     unique_total = set()
+    meta = {'unique_exact': True, 'unique_since': None}
     if _conn is None:
-        return out, unique_total
+        return out, unique_total, meta
     if from_ts is None or to_ts is None:
         days = days or 30
         to_ts = time.time()
         from_ts = to_ts - days * 86400
+    from_day = _day_key(from_ts, tz)
+    to_day = _day_key(to_ts, tz)
     try:
         with _lock:
-            rows = _conn.execute(
+            rollup_rows = _conn.execute(
+                'SELECT day, requests, ok, timeout, busy, visitors '
+                'FROM daily_rollup WHERE day >= ? AND day <= ?',
+                (from_day, to_day)).fetchall()
+            raw_rows = _conn.execute(
                 'SELECT ts, kind, outcome, iph FROM events '
                 'WHERE ts >= ? AND ts <= ?', (from_ts, to_ts)).fetchall()
+            oldest = _conn.execute(
+                "SELECT MIN(ts) FROM events "
+                "WHERE kind IN ('request', 'visit')").fetchone()
     except Exception:
-        return out, unique_total
-    for ts, kind, outcome, iph in rows:
+        return out, unique_total, meta
+    rolled = set()
+    for day, req, ok, timeout, busy, visitors in rollup_rows:
+        out[day] = {'requests': req, 'ok': ok, 'timeout': timeout,
+                    'busy': busy, 'visitors': visitors}
+        rolled.add(day)
+    for ts, kind, outcome, iph in raw_rows:
+        if iph:
+            unique_total.add(iph)
         day = _day_key(ts, tz)
+        if day in rolled:
+            continue  # covered by the rollup — no double counting
         d = out.setdefault(day, {'requests': 0, 'ok': 0, 'timeout': 0,
                                  'busy': 0, 'visitors': set()})
         if kind == 'request':
@@ -215,10 +353,18 @@ def daily_series(days=None, tz=ZoneInfo('Europe/Warsaw'),
                 d[outcome] += 1
         if iph:
             d['visitors'].add(iph)
-            unique_total.add(iph)
     for d in out.values():
-        d['visitors'] = len(d['visitors'])
-    return dict(sorted(out.items())), unique_total
+        if isinstance(d['visitors'], set):
+            d['visitors'] = len(d['visitors'])
+    oldest_ts = oldest[0] if oldest else None
+    if oldest_ts is not None:
+        meta['unique_since'] = _day_key(oldest_ts, tz)
+        meta['unique_exact'] = from_ts >= oldest_ts
+    else:
+        # No raw request/visit events retained: distinct counts are exact
+        # only when there is no rolled-up history in range either.
+        meta['unique_exact'] = not rolled
+    return dict(sorted(out.items())), unique_total, meta
 
 
 def parse_warsaw_range(from_str, to_str):

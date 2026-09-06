@@ -12,7 +12,7 @@ Dane linii i przystanków pochodzą z ogólnodostępnych rozkładów GTFS publik
 
 👤 **Autor:** wertos97
 
-🗺️ Mapę ogarnia [Leaflet](https://leafletjs.com/) i [OpenStreetMap](https://www.openstreetmap.org/).
+🗺️ Mapę ogarnia [Leaflet](https://leafletjs.com/) i dane [OpenStreetMap](https://www.openstreetmap.org/) (kafelki CARTO serwowane przez nasz serwer — Twoja przeglądarka nie łączy się z zewnętrznymi dostawcami map; szczegóły w „Prywatność").
 
 W przypadku pytań lub uwag, zapraszam do kontaktu przez GitHub. Wszelkie issues i PRy mile widziane!
 

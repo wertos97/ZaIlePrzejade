@@ -14,17 +14,17 @@
   <a href="https://zaileprzeja.de"><strong>🌐 zaileprzeja.de</strong></a>
 </p>
 
-Kalkulator cen biletów komunikacji miejskiej w Krakowie w taryfie 2027 (opartej na przejechanym dystansie). Aplikacja pokazuje połączenia pomiędzy dwoma wybranymi przystankami w **dwóch wariantach**:
+Kalkulator cen biletów komunikacji miejskiej w Krakowie w taryfie 2027 (opartej na przejechanym dystansie). Taryfa ma być opcjonalna — działać obok obecnych biletów czasowych, jednorazowych i okresowych. Aplikacja pokazuje połączenia pomiędzy dwoma wybranymi przystankami w **dwóch wariantach**:
 
-- **Trasa tania** — najtańszy wariant. Każdy przejazd to osobny bilet liczony
-  od zera, więc najtańsza trasa nie zawsze jest najkrótsza,
+- **Trasa tania** — najtańszy wariant. Kalkulator zakłada, że każdy przejazd to osobny bilet liczony
+  od zera (miasto nie opisało jeszcze zasad rozliczania przesiadek), więc najtańsza trasa nie zawsze jest najkrótsza,
 - **Trasa wygodna** — najmniej przesiadek przy rozsądnej cenie.
 
 ## OG Image dla sociali
 
 Aplikacja automatycznie generuje obrazki OG w sposób dynamiczny dla danej trasy.
 
-| Typowa cena | Cena na limicie dziennym |
+| Typowa cena | Cena na limicie 24-godzinnym |
 |---|---|
 | ![Typowa](previews/og-preview-typical.png) | ![Max](previews/og-preview-max.png) |
 
@@ -36,7 +36,7 @@ dystansami (`shape_dist_traveled`) i przejścia piesze między przystankami (per
 
 1. **Cała jazda liczona naraz** — Dijkstra przechodzi po krawędziach jednej linii i wyznacza koszt jazdy daną linią do wszystkich przystanków jednocześnie.
 2. **Składanie tras z przejazdów** — trasa to kilka takich jazd połączonych przesiadkami. Aplikacja składa: jazdy ze startu, jazdy do celu i jazdy pośrednie. Te złożenia pokrywają **wszystkie trasy do 4 przejazdów**, a tańsze opcje odcinają droższe, więc typowa para liczy się w ułamkach sekundy.
-3. **Gwarancja najlepszej ceny** — 5. przejazd zawsze kosztuje co najmniej taryfę bazową, a łączna cena nie może przekroczyć dziennego limitu. Dlatego najlepsza trasa do 4 przejazdów jest **matematycznie najlepszą możliwą trasą** — i właśnie ją pokazujemy.
+3. **Gwarancja najlepszej ceny** — 5. przejazd zawsze kosztuje co najmniej taryfę bazową, a łączna cena nie może przekroczyć limitu 24-godzinnego. Dlatego najlepsza trasa do 4 przejazdów jest **matematycznie najlepszą możliwą trasą** — i właśnie ją pokazujemy.
 4. **Awaryjne A\*** — dla bardzo trudnych par: dokładne wyszukiwanie Pareto z limitami czasu (8 s / 8 s / 10 s przy limicie żądania 30 s). Gdy limit przekroczony — błąd dla trybu, nigdy wynik „na oko".
 
 Dwa tryby różnią się tylko tym, co liczą: **tania** minimalizuje samą
@@ -56,9 +56,15 @@ Wyniki zapisują się w **dwóch miejscach** i żyją, dopóki nie zmienią się
 | Bilet bazowy (do 3,5 km) | 4,00 zł / 2,00 zł (ulgowy) |
 | Każde kolejne 0,5 km | +0,50 zł / +0,25 zł |
 | Maksymalna cena pojedynczego biletu | 9,00 zł / 4,50 zł |
-| **Limit dzienny** | **20,00 zł / 10,00 zł** |
+| **Limit 24-godzinny** | **20,00 zł / 10,00 zł** |
 
 Konfiguracja: [`pricing.json`](pricing.json).
+
+## Prywatność
+
+Bez kont, bez reklam, bez Google Analytics i bez profili użytkowników. Przeglądarka łączy się wyłącznie z naszym serwerem — nawet kafelki mapy serwujemy sami (proxy, więc CARTO nigdy nie widzi odwiedzających). Pełne szczegóły w aplikacji pod przyciskiem „🔒 Prywatność" (`public/privacy.md`).
+
+Aplikacja oferuje też panel operatora z ogólnymi statystykami działania (widoczny tylko na serwerze z konfiguracją).
 
 ## Uruchomienie
 

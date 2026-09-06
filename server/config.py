@@ -84,6 +84,28 @@ ACC_CAP_KM = 8.5  # beyond this distance, riding is free (daily cap)
 PRICE_LOOKUP_MAX_KM = 20.0
 
 # ============================================================
+# Tile Proxy (privacy)
+# ============================================================
+# Map tiles are served from our own origin (/api/tiles/...) so the
+# visitor's browser never contacts the tile provider directly — no
+# third-party IP / User-Agent / tile-coordinate leak. {r} is '' or '@2x'.
+TILE_UPSTREAM_TEMPLATE = os.environ.get(
+    'TILE_UPSTREAM_TEMPLATE',
+    'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png')
+TILE_CACHE_MAX_BYTES = int(os.environ.get('TILE_CACHE_MAX_BYTES', 50 * 1024 * 1024))
+TILE_UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get('TILE_UPSTREAM_TIMEOUT_SECONDS', 10))
+TILE_CACHE_MAX_AGE = 2592000  # 30 days, public
+
+# ============================================================
+# Admin Stats Retention (privacy)
+# ============================================================
+# Raw request/visit events (the ones carrying salted IP hashes) older
+# than this are automatically deleted — but each complete day is first
+# aggregated into daily_rollup (per-day counts, no identifiers), kept
+# forever so the admin panel shows the whole history.
+STATS_RETENTION_DAYS = int(os.environ.get('STATS_RETENTION_DAYS', 90))
+
+# ============================================================
 # Static File Serving
 # ============================================================
 STATIC_CACHE_MAX_AGE_VERSIONED = 31536000  # 1 year for versioned assets
@@ -156,4 +178,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.4.9"
+APP_VERSION = "1.5.0"
