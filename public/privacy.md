@@ -14,7 +14,3 @@ Krótko: **nie musisz zakładać konta, nie ma tu reklam i nikt nie śledzi, co 
 - 🗺️ **Mapa:** obrazki mapy przesyłamy Ci z naszego serwera, więc firma dostarczająca mapę **nie widzi, że tu jesteś**.
 - 📊 **Liczniki odwiedzin:** zapisujemy, ile osób weszło na stronę i ile tras policzono. Nie zapisujemy Twojego adresu internetowego — tylko jego zaszyfrowany skrót, po którym nie da się dojść, kto to był. Takie zapiski kasują się same **po 90 dniach**.
 - 🛡️ **Ochrona przed przeciążeniem:** żeby jedna osoba nie zapchała strony innym, serwer na chwilę zapamiętuje, skąd przyszło zapytanie — i zaraz o tym zapomina.
-
-## Kontakt
-
-W przypadku pytań — zapraszam przez GitHub ([kod źródłowy](https://github.com/wertos97/ZaIlePrzejade)).

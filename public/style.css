@@ -526,12 +526,31 @@ body {
     padding: 4px 0;
 }
 
+.fare-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 0.78em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #667;
+    padding: 2px 0 6px;
+}
+
+.fare-title-sub {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: #999;
+}
+
 .fare-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 8px;
-    padding: 8px 0;
+    padding: 7px 0;
     font-size: 0.95em;
 }
 
@@ -540,8 +559,9 @@ body {
 }
 
 .fare-label {
-    font-weight: 600;
-    color: #2c3e50;
+    font-size: 0.85em;
+    font-weight: 500;
+    color: #667;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -551,13 +571,6 @@ body {
     font-weight: bold;
     color: #1a5276;
     white-space: nowrap;
-}
-
-.fare-hint {
-    font-size: 0.75em;
-    color: #999;
-    text-align: right;
-    padding: 2px 0 4px;
 }
 
 /* Info icon with hover/focus tooltip explaining the interpretation */
@@ -583,10 +596,9 @@ body {
     position: absolute;
     bottom: 135%;
     left: 50%;
-    transform: translateX(-50%);
+    transform: translateX(-50%) translateY(4px);
     width: 220px;
     max-width: 70vw;
-    display: none;
     background: #1a2a3a;
     color: #fff;
     font-size: 12px;
@@ -598,11 +610,22 @@ body {
     z-index: 2000;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
     pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
 }
 
 .interp-info:hover::after,
 .interp-info:focus::after {
-    display: block;
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .interp-info::after {
+        transition: none;
+    }
 }
 
 .interp-info:focus {

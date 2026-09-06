@@ -397,6 +397,9 @@ def _remove_legacy_tile_cache():
 
 def _evict_old_tiles(max_bytes):
     """Best-effort LRU eviction of the on-disk tile cache (oldest first)."""
+    # Legacy (pre-versioned) layouts are abandoned leftovers — wipe them
+    # always, not only when over budget (nothing ever reads them again).
+    _remove_legacy_tile_cache()
     try:
         root = os.path.join(_tile_cache_root(), TILE_CACHE_VERSION)
         entries = []
@@ -424,7 +427,6 @@ def _evict_old_tiles(max_bytes):
                 break
     except OSError:
         pass
-    _remove_legacy_tile_cache()
 
 
 def _fetch_upstream_tile(z, x, y, retina, cache_path):
