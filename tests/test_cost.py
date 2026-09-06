@@ -124,6 +124,32 @@ class TestCalculateRouteCost(unittest.TestCase):
         self.assertEqual(red, 2.25)
 
 
+class TestSingleTicketCost(unittest.TestCase):
+    """Interpretation B: whole journey as one ticket from total distance."""
+
+    def test_zero_distance(self):
+        self.assertEqual(cost.calculate_single_ticket_cost(0), (0.0, 0.0))
+
+    def test_within_base(self):
+        # 2 km + 1 km with a transfer: A = 4 + 4 = 8, B(3 km) = 4 / 2
+        self.assertEqual(
+            cost.calculate_single_ticket_cost(3.0), (4.0, 2.0))
+
+    def test_beyond_base(self):
+        self.assertEqual(
+            cost.calculate_single_ticket_cost(4.0), (4.5, 2.25))
+
+    def test_capped_at_single_max(self):
+        reg, red = cost.calculate_single_ticket_cost(20.0)
+        self.assertEqual(reg, cost.MAX_COST_REGULAR)
+        self.assertEqual(red, cost.MAX_COST_REDUCED)
+
+    def test_never_exceeds_daily_cap(self):
+        reg, red = cost.calculate_single_ticket_cost(100.0)
+        self.assertLessEqual(reg, cost.MAX_DAILY_COST_REGULAR)
+        self.assertLessEqual(red, cost.MAX_DAILY_COST_REDUCED)
+
+
 class TestInitPricing(unittest.TestCase):
     """init_pricing() must load a custom pricing file and restore defaults."""
 

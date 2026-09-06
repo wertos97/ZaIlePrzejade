@@ -23,7 +23,9 @@ Rada Miasta Krakowa przyjęła uchwałę w sprawie taryfy w grudniu 2025 r., a w
 
 **Kalkulator obecnie zakłada osobne naliczanie każdego przejazdu pojazdem** — każdy przejazd (od wejścia do pojazdu do przesiadki) to osobny bilet liczony od zera.
 
-Przykład (założenie kalkulatora, nie oficjalna zasada): jedziesz 2 km tramwajem (4 zł), przesiadasz się i jedziesz 1 km autobusem (4 zł). Razem: **8 zł**, a nie 4 zł za całą trasę.
+Przykład (Interpretacja A — założenie kalkulatora, nie oficjalna zasada): jedziesz 2 km tramwajem (4 zł), przesiadasz się i jedziesz 1 km autobusem (4 zł). Razem: **8 zł**, a nie 4 zł za całą trasę.
+
+W wynikach pokazujemy też **Interpretację B**: całą podróż jako jeden bilet za łączny dystans (w tym przykładzie 3 km, czyli 4 zł). Szczegóły w „Uwaga".
 
 ## Czas przejazdu
 
@@ -31,7 +33,7 @@ Aplikacja pokazuje też **szacunkowy czas przejazdu** (z czasem przesiadki pięc
 
 ## Dwa warianty trasy
 
-Aplikacja pokazuje **dwie trasy** i obie mają **gwarancję najniższej możliwej ceny** w modelu przyjętym przez kalkulator (przy powyższym założeniu o przesiadkach — algorytm sprawdza wszystkie sensowne kombinacje przejazdów):
+Aplikacja pokazuje **dwie trasy** i obie mają **gwarancję najniższej możliwej ceny** w modelu przyjętym przez kalkulator (Interpretacja A — przy powyższym założeniu o przesiadkach; algorytm sprawdza wszystkie sensowne kombinacje przejazdów):
 
 - 💰 **Tania trasa** — najtańsze łączne bilety,
 - 🛋️ **Wygodna trasa** — mniej przesiadek (każde wsiadanie „kosztuje" w cenniku algorytmu 2 zł, więc algorytm balansuje cenę i wygodę).

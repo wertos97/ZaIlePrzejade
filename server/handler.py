@@ -10,6 +10,7 @@ import math
 import os
 import re
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -50,8 +51,10 @@ from .config import (
     STATIC_CACHE_MAX_AGE_UNVERSIONED,
     STATIC_CACHE_MAX_AGE_VERSIONED,
     STATS_RETENTION_DAYS,
+    TILE_API_KEY,
     TILE_CACHE_MAX_AGE,
     TILE_CACHE_MAX_BYTES,
+    TILE_CACHE_VERSION,
     TILE_UPSTREAM_TEMPLATE,
     TILE_UPSTREAM_TIMEOUT_SECONDS,
     TRUST_PROXY_HEADERS,
@@ -67,6 +70,11 @@ from .logging_config import get_logger
 # degraduje się do no-op. Bez pliku hasła cały panel /panel odpowiada 404.
 # Retencja z config.py: zdarzenia starsze niż okno są usuwane (prywatność).
 admin_stats.init(data.PROCESSED_DIR, retention_days=STATS_RETENTION_DAYS)
+
+if not TILE_API_KEY:
+    get_logger('mpk.server').warning(
+        'TILE_API_KEY is not set — /api/tiles answers 502 until a free '
+        'CARTO key is configured (https://carto.com/basemaps/apikey)')
 
 _GROUP_ID_PATTERN = re.compile(_GROUP_ID_PATTERN_SRC)
 
@@ -346,22 +354,51 @@ def _rate_limit_ok(ip, expensive=False):
 # ============================================================
 # Map tile proxy (privacy)
 # ============================================================
-# Leaflet tiles are served from our own origin (/api/tiles/...) so the
+# Leaflet tiles are served from our own origin (/api/tiles/vN/...) so the
 # visitor's browser never contacts the tile provider directly — the
 # provider never sees the visitor's IP, User-Agent or viewed map area.
-# Tiles are cached on disk (processed/tiles/) under a byte budget.
-_TILE_RE = re.compile(r'^/api/tiles/(\d{1,2})/(\d{1,7})/(\d{1,7})(@2x)?\.png$')
+# Tiles are cached on disk (processed/tiles/vN/) under a byte budget.
+# The version in the URL busts browser caches when cached tiles go bad.
+_TILE_RE = re.compile(
+    r'^/api/tiles/%s/(\d{1,2})/(\d{1,7})/(\d{1,7})(@2x)?\.png$'
+    % re.escape(TILE_CACHE_VERSION))
+
+
+def _tile_cache_root():
+    return os.path.join(data.PROCESSED_DIR, 'tiles')
 
 
 def _tile_cache_path(z, x, y, retina):
     return os.path.join(
-        data.PROCESSED_DIR, 'tiles', str(z), str(x), f'{y}{retina}.png')
+        _tile_cache_root(), TILE_CACHE_VERSION, str(z), str(x),
+        f'{y}{retina}.png')
+
+
+def _remove_legacy_tile_cache():
+    """One-time cleanup of pre-versioned cache layouts (e.g. v1 tiles
+    watermarked "api key required"). Removes every entry under
+    processed/tiles/ except the current version dir."""
+    try:
+        root = _tile_cache_root()
+        for entry in os.listdir(root):
+            if entry == TILE_CACHE_VERSION:
+                continue
+            p = os.path.join(root, entry)
+            try:
+                if os.path.isdir(p):
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    os.remove(p)
+            except OSError:
+                continue
+    except OSError:
+        pass
 
 
 def _evict_old_tiles(max_bytes):
     """Best-effort LRU eviction of the on-disk tile cache (oldest first)."""
     try:
-        root = os.path.join(data.PROCESSED_DIR, 'tiles')
+        root = os.path.join(_tile_cache_root(), TILE_CACHE_VERSION)
         entries = []
         total = 0
         for dirpath, _dirnames, filenames in os.walk(root):
@@ -387,11 +424,19 @@ def _evict_old_tiles(max_bytes):
                 break
     except OSError:
         pass
+    _remove_legacy_tile_cache()
 
 
 def _fetch_upstream_tile(z, x, y, retina, cache_path):
     """Fetch one tile from the upstream provider, cache it, return bytes."""
-    upstream = TILE_UPSTREAM_TEMPLATE.format(z=z, x=x, y=y, r=retina)
+    if not TILE_API_KEY:
+        # No key → upstream would return "api key required" watermark
+        # tiles. Refuse (502) instead of caching garbage.
+        get_logger('mpk.http').error(
+            'Tile proxy has no TILE_API_KEY configured')
+        return None
+    upstream = (TILE_UPSTREAM_TEMPLATE.format(z=z, x=x, y=y, r=retina)
+                + f'?key={TILE_API_KEY}')
     try:
         req = urllib.request.Request(upstream, headers={
             'User-Agent':

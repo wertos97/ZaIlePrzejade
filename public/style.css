@@ -518,13 +518,96 @@ body {
     border-bottom: none;
 }
 
-.result-regular {
-    color: #2c3e50;
-    font-weight: bold;
+/* Interpretation fares (A/B) — separate container in the result panel */
+.result-fares {
+    margin: 4px 0;
+    border-top: 1px solid #eee;
+    border-bottom: 1px solid #eee;
+    padding: 4px 0;
 }
 
-.result-reduced {
-    color: #7f8c8d;
+.fare-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    font-size: 0.95em;
+}
+
+.fare-row + .fare-row {
+    border-top: 1px dashed #eee;
+}
+
+.fare-label {
+    font-weight: 600;
+    color: #2c3e50;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.fare-values {
+    font-weight: bold;
+    color: #1a5276;
+    white-space: nowrap;
+}
+
+.fare-hint {
+    font-size: 0.75em;
+    color: #999;
+    text-align: right;
+    padding: 2px 0 4px;
+}
+
+/* Info icon with hover/focus tooltip explaining the interpretation */
+.interp-info {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    flex: none;
+    border-radius: 50%;
+    background: #e8f4fd;
+    border: 1px solid #c0d8e8;
+    color: #1a5276;
+    font-size: 12px;
+    font-style: normal;
+    cursor: help;
+}
+
+.interp-info::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: 135%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 220px;
+    max-width: 70vw;
+    display: none;
+    background: #1a2a3a;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.45;
+    padding: 10px 12px;
+    border-radius: 8px;
+    white-space: normal;
+    z-index: 2000;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+}
+
+.interp-info:hover::after,
+.interp-info:focus::after {
+    display: block;
+}
+
+.interp-info:focus {
+    outline: 2px solid #2A5BD5;
+    outline-offset: 1px;
 }
 
 /* Result header with share button */

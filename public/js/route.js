@@ -541,10 +541,15 @@ function displayResult(result) {
     if (timeEl) {
         timeEl.textContent = totalTimeText ? `· ${totalTimeText}` : '';
     }
-    document.getElementById('result-regular').textContent =
-        `${result.cost_regular.toFixed(2)} zł`;
-    document.getElementById('result-reduced').textContent =
-        `${result.cost_reduced.toFixed(2)} zł`;
+    // Two fare interpretations for the same route (see warning.md):
+    // A = each ride a separate ticket, B = whole journey as one ticket.
+    const farePair = (reg, red) =>
+        (reg != null && red != null)
+            ? `${reg.toFixed(2)} zł / ${red.toFixed(2)} zł` : '––';
+    const fareA = farePair(result.cost_regular, result.cost_reduced);
+    const fareB = farePair(result.cost_b_regular, result.cost_b_reduced);
+    document.getElementById('result-fare-a').textContent = fareA;
+    document.getElementById('result-fare-b').textContent = fareB;
 
     document.getElementById('mobile-result-distance').textContent =
         `${result.total_distance.toFixed(2)} km`;
@@ -552,10 +557,8 @@ function displayResult(result) {
     if (mobileTimeEl) {
         mobileTimeEl.textContent = totalTimeText ? `· ${totalTimeText}` : '';
     }
-    document.getElementById('mobile-result-regular').textContent =
-        `${result.cost_regular.toFixed(2)} zł`;
-    document.getElementById('mobile-result-reduced').textContent =
-        `${result.cost_reduced.toFixed(2)} zł`;
+    document.getElementById('mobile-result-fare-a').textContent = fareA;
+    document.getElementById('mobile-result-fare-b').textContent = fareB;
 
     const transferCount = result.transfers ? result.transfers.length : 0;
     const transferText = transferCount > 0 ? `${transferCount} przesiadka(e/k)` : 'Bez przesiadek';

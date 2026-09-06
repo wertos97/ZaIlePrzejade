@@ -176,13 +176,20 @@
                         <span>Czas przejazdu:</span>
                         <span id="result-time">--</span>
                     </div>
-                    <div class="result-row result-regular">
-                        <span>Bilet normalny:</span>
-                        <span id="result-regular">--</span>
-                    </div>
-                    <div class="result-row result-reduced">
-                        <span>Bilet ulgowy:</span>
-                        <span id="result-reduced">--</span>
+                    <div class="result-fares">
+                        <div class="fare-row">
+                            <span class="fare-label">Interpretacja A
+                                <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera. Cena to suma wszystkich przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod kątem tej interpretacji.">ⓘ</span>
+                            </span>
+                            <span class="fare-values" id="result-fare-a">--</span>
+                        </div>
+                        <div class="fare-row">
+                            <span class="fare-label">Interpretacja B
+                                <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za łączny dystans trasy. Miasto nie potwierdziło jeszcze, jak będą rozliczane przesiadki.">ⓘ</span>
+                            </span>
+                            <span class="fare-values" id="result-fare-b">--</span>
+                        </div>
+                        <div class="fare-hint">ceny: normalny / ulgowy</div>
                     </div>
                     <div class="result-row">
                         <span>Przesiadek:</span>
@@ -228,13 +235,20 @@
                 <span>Czas przejazdu</span>
                 <span id="mobile-result-time">--</span>
             </div>
-            <div class="result-row result-regular">
-                <span>Normalny</span>
-                <span id="mobile-result-regular">--</span>
-            </div>
-            <div class="result-row result-reduced">
-                <span>Ulgowy</span>
-                <span id="mobile-result-reduced">--</span>
+            <div class="result-fares">
+                <div class="fare-row">
+                    <span class="fare-label">Interpretacja A
+                        <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera. Cena to suma wszystkich przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod kątem tej interpretacji.">ⓘ</span>
+                    </span>
+                    <span class="fare-values" id="mobile-result-fare-a">--</span>
+                </div>
+                <div class="fare-row">
+                    <span class="fare-label">Interpretacja B
+                        <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za łączny dystans trasy. Miasto nie potwierdziło jeszcze, jak będą rozliczane przesiadki.">ⓘ</span>
+                    </span>
+                    <span class="fare-values" id="mobile-result-fare-b">--</span>
+                </div>
+                <div class="fare-hint">ceny: normalny / ulgowy</div>
             </div>
             <div class="result-row">
                 <span>Przesiadki</span>

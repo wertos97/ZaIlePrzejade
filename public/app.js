@@ -164,7 +164,8 @@ function initMap() {
 
     // Kafelki serwuje nasz własny serwer (/api/tiles) — przeglądarka nie
     // łączy się bezpośrednio z CARTO ani innym zewnętrznym dostawcą.
-    L.tileLayer('/api/tiles/{z}/{x}/{y}{r}.png', {
+    // Wersja w URL (v2) musi zgadzać się z TILE_CACHE_VERSION w config.py.
+    L.tileLayer('/api/tiles/v2/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, &copy; <a href="https://carto.com/">CARTO</a>',
         maxZoom: 19,
     }).addTo(state.map);

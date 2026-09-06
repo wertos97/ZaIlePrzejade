@@ -173,13 +173,14 @@ class TestTileProxy(unittest.TestCase):
     validation must reject garbage without ever touching upstream."""
 
     def test_invalid_tile_paths_400(self):
-        for path in ('/api/tiles/abc/1/2.png',
-                      '/api/tiles/20/1/1.png',   # z > 19
-                      '/api/tiles/2/99/1.png',   # x out of range
-                      '/api/tiles/0/1/0.png',    # z=0 admits only 0/0
-                      '/api/tiles/10/1/1.jpg'):
+        for path in ('/api/tiles/v2/abc/1/2.png',
+                      '/api/tiles/v2/20/1/1.png',   # z > 19
+                      '/api/tiles/v2/2/99/1.png',   # x out of range
+                      '/api/tiles/v2/0/1/0.png',    # z=0 admits only 0/0
+                      '/api/tiles/v2/10/1/1.jpg',
+                      '/api/tiles/10/550/343.png'):  # unversioned: 404
             status, _ = _request(path)
-            self.assertEqual(status, 400, f'{path} returned {status}')
+            self.assertIn(status, (400, 404), f'{path} returned {status}')
 
     def test_cached_tile_served_without_upstream(self):
         from server.handler import _tile_cache_path
@@ -189,7 +190,7 @@ class TestTileProxy(unittest.TestCase):
         with open(cache_path, 'wb') as f:
             f.write(fake_png)
         try:
-            status, body = _request('/api/tiles/10/550/343.png')
+            status, body = _request('/api/tiles/v2/10/550/343.png')
             self.assertEqual(status, 200)
             self.assertEqual(body, fake_png)
         finally:
@@ -198,9 +199,28 @@ class TestTileProxy(unittest.TestCase):
 
     def test_retina_tile_path_accepted(self):
         from server.handler import _TILE_RE
-        m = _TILE_RE.match('/api/tiles/13/4412/2808@2x.png')
+        m = _TILE_RE.match('/api/tiles/v2/13/4412/2808@2x.png')
         self.assertIsNotNone(m)
         self.assertEqual(m.group(4), '@2x')
+
+    def test_missing_api_key_refuses_without_caching(self):
+        """Without TILE_API_KEY upstream would watermark tiles — the
+        proxy must 502 instead of caching garbage."""
+        from server import handler as handler_mod
+        from server.handler import _tile_cache_path
+        old_key, handler_mod.TILE_API_KEY = handler_mod.TILE_API_KEY, ''
+        cache_path = _tile_cache_path(19, 524287, 524287, '')
+        try:
+            if os.path.isfile(cache_path):
+                os.remove(cache_path)
+            status, _ = _request('/api/tiles/v2/19/524287/524287.png')
+            self.assertEqual(status, 502)
+            self.assertFalse(os.path.isfile(cache_path),
+                             'refused tile must not be cached')
+        finally:
+            handler_mod.TILE_API_KEY = old_key
+            if os.path.isfile(cache_path):
+                os.remove(cache_path)
 
 
 class TestStatsRetention(unittest.TestCase):

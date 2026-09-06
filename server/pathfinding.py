@@ -45,6 +45,7 @@ from .config import (
 from .cost import (
     calculate_cost,
     calculate_route_cost,
+    calculate_single_ticket_cost,
     MAX_DAILY_COST_REGULAR,
     MAX_DAILY_COST_REDUCED,
 )
@@ -1582,6 +1583,9 @@ def _build_route_result(path_with_edges):
     total_distance = round(total_distance, 4)
 
     cost_regular, cost_reduced = calculate_route_cost(segments)
+    # Interpretation B for the same route: whole journey as one ticket.
+    cost_b_regular, cost_b_reduced = calculate_single_ticket_cost(
+        total_distance)
 
     total_time = sum(seg.get('time', 0) for seg in segments)
     total_time += TRANSFER_TIME_SECONDS * len(transfers)
@@ -1591,6 +1595,8 @@ def _build_route_result(path_with_edges):
         'total_time': total_time,
         'cost_regular': cost_regular,
         'cost_reduced': cost_reduced,
+        'cost_b_regular': cost_b_regular,
+        'cost_b_reduced': cost_b_reduced,
         'max_daily_cost_regular': MAX_DAILY_COST_REGULAR,
         'max_daily_cost_reduced': MAX_DAILY_COST_REDUCED,
         'path': path_stops,
@@ -1700,8 +1706,9 @@ _CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 # (e.g. v4: exact-only search — convenient is the exact fare+penalty
 #  optimum, no greedy/heuristic results, no fallbacks;
 #  v5: cache stores the two user-facing routes only (no internal short),
-#  strips derivable stop_positions, and moves persistence to sqlite).
-_CACHE_ALGO_VERSION = 'v5'
+#  strips derivable stop_positions, and moves persistence to sqlite;
+#  v6: results carry Interpretation B fares (cost_b_regular/reduced)).
+_CACHE_ALGO_VERSION = 'v6'
 
 _sqlite_conn = None
 _SQLITE_LOCK = threading.Lock()
@@ -1899,11 +1906,14 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id):
     # Same group — zero-distance trip
     if from_group_id == to_group_id:
         cost_reg, cost_red = calculate_cost(0)
+        cost_b_reg, cost_b_red = calculate_single_ticket_cost(0)
         result = ({
             'total_distance': 0,
             'total_time': 0,
             'cost_regular': cost_reg,
             'cost_reduced': cost_red,
+            'cost_b_regular': cost_b_reg,
+            'cost_b_reduced': cost_b_red,
             'max_daily_cost_regular': MAX_DAILY_COST_REGULAR,
             'max_daily_cost_reduced': MAX_DAILY_COST_REDUCED,
             'path': [{

@@ -86,15 +86,25 @@ PRICE_LOOKUP_MAX_KM = 20.0
 # ============================================================
 # Tile Proxy (privacy)
 # ============================================================
-# Map tiles are served from our own origin (/api/tiles/...) so the
+# Map tiles are served from our own origin (/api/tiles/vN/...) so the
 # visitor's browser never contacts the tile provider directly — no
 # third-party IP / User-Agent / tile-coordinate leak. {r} is '' or '@2x'.
+#
+# CARTO raster basemaps require an API key (free, request at
+# https://carto.com/basemaps/apikey). The key lives ONLY here (env) —
+# it must never appear in frontend code. Without it the proxy answers
+# 502 instead of caching watermarked "api key required" tiles.
 TILE_UPSTREAM_TEMPLATE = os.environ.get(
     'TILE_UPSTREAM_TEMPLATE',
     'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png')
+TILE_API_KEY = os.environ.get('TILE_API_KEY', '')
+# Bump to abandon the on-disk cache AND browser caches (URL change busts
+# the long-lived Cache-Control). Needed when cached tiles go bad
+# (e.g. upstream watermark) or the tile style changes.
+TILE_CACHE_VERSION = 'v2'
 TILE_CACHE_MAX_BYTES = int(os.environ.get('TILE_CACHE_MAX_BYTES', 50 * 1024 * 1024))
 TILE_UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get('TILE_UPSTREAM_TIMEOUT_SECONDS', 10))
-TILE_CACHE_MAX_AGE = 2592000  # 30 days, public
+TILE_CACHE_MAX_AGE = 604800  # 7 days, public
 
 # ============================================================
 # Admin Stats Retention (privacy)
@@ -178,4 +188,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
