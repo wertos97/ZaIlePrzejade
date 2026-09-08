@@ -27,7 +27,8 @@ source "$SCRIPT_DIR/common.sh"
 acquire_lock
 
 # --- Pliki, których NIGDY nie nadpisujemy podczas aktualizacji ---
-# (skrypty, konfiguracja, logi, środowisko, surowe dane)
+# (skrypty, konfiguracja, logi, środowisko, surowe dane + generowane dane GTFS,
+# które od Fazy A migracji żyją tylko na serwerze i nie ma ich w repo)
 PROTECTED_FILES=(
     "autoupdate.sh"
     "restart.sh"
@@ -40,6 +41,11 @@ PROTECTED_FILES=(
     "preview-logo.sh"
     ".gitignore"
     "README.md"
+    "processed/stops.json"
+    "processed/routes.json"
+    "processed/adjacency.json"
+    "processed/shapes.json"
+    "processed/metadata.json"
 )
 
 # --- Synchronizacja z git (bez nadpisywania chronionych plików) ---

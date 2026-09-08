@@ -138,6 +138,67 @@ class TestAdminPanel(unittest.TestCase):
         # daj chwilę na zapis (synchroniczny w handlerze)
         self.assertGreaterEqual(self._count_events('request'), 1)
 
+    def _post(self, path, payload, headers=None):
+        import urllib.request as u
+        req = u.Request(self.base + path, method='POST',
+                        data=json.dumps(payload).encode(),
+                        headers=dict({'Content-Type': 'application/json'},
+                                     **(headers or {})))
+        try:
+            with u.urlopen(req, timeout=15) as resp:
+                return resp.status, resp.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    def _authed(self):
+        status, headers = self._login('test-pass-123')
+        self.assertEqual(status, 200)
+        return {'Cookie': headers.get('Set-Cookie', '').split(';')[0]}
+
+    def test_gtfs_status_shape(self):
+        status, _, body = self._get('/api/admin/gtfs-status',
+                                    self._authed())
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        for key in ('current', 'last_check', 'last_done', 'job',
+                    'migration_pending'):
+            self.assertIn(key, data)
+        self.assertIn('version', data['current'])
+
+    def test_gtfs_update_requires_confirm(self):
+        status, body = self._post('/api/admin/gtfs-update', {},
+                                  self._authed())
+        self.assertEqual(status, 400)
+        self.assertIn('error', json.loads(body))
+
+    def test_gtfs_endpoints_require_session(self):
+        status, _, _ = self._get('/api/admin/gtfs-status')
+        self.assertEqual(status, 401)
+        status, _ = self._post('/api/admin/gtfs-update', {'confirm': True})
+        self.assertEqual(status, 401)
+        status, _ = self._post('/api/admin/gtfs-check', {})
+        self.assertEqual(status, 401)
+
+    def test_gtfs_check_starts(self):
+        # Worker stubbed — never touches the network in tests.
+        from server import gtfs_update as gu_mod
+        orig = gu_mod.run_check_job
+        gu_mod.run_check_job = lambda: {'started': True}
+        try:
+            status, body = self._post('/api/admin/gtfs-check', {},
+                                      self._authed())
+            self.assertEqual(status, 202)
+            self.assertTrue(json.loads(body).get('started'))
+        finally:
+            gu_mod.run_check_job = orig
+
+    def test_maintenance_endpoint_public(self):
+        status, _, body = self._get('/api/maintenance')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertIn('active', data)
+        self.assertFalse(data['active'])
+
     def _count_events(self, kind):
         import sqlite3
         db = os.path.join(os.path.dirname(admin_stats._config_path()),

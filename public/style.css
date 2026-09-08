@@ -1103,6 +1103,53 @@ body {
     opacity: 1;
 }
 
+/* Maintenance mode: persistent, non-closable banner with progress */
+.maintenance-banner {
+    position: fixed;
+    top: 52px;
+    left: 0;
+    right: 0;
+    background: #7d5a00;
+    color: white;
+    padding: 10px 20px;
+    text-align: center;
+    font-size: 0.9em;
+    font-weight: 500;
+    z-index: 2500;
+}
+
+.maintenance-banner .maintenance-bar {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 3px;
+    margin: 8px auto 0;
+    max-width: 420px;
+    overflow: hidden;
+}
+
+.maintenance-banner .maintenance-fill {
+    height: 100%;
+    width: 0;
+    background: #fff;
+    border-radius: 3px;
+    transition: width 0.5s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .maintenance-banner .maintenance-fill {
+        transition: none;
+    }
+}
+
+/* Disabled search UI during maintenance */
+body.maintenance .search-box input,
+body.maintenance .btn-swap,
+body.maintenance .btn-mode,
+body.maintenance .btn-mode-sm {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
 /* ============================================================
    Mobile Responsive
    ============================================================ */

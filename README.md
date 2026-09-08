@@ -76,6 +76,9 @@ cd ZaIlePrzejade
 python server.py                # http://localhost:8080
 ```
 
+Pierwsze uruchomienie pobiera rozkłady GTFS z ZTP i je przetwarza (kilka
+minut); dane trzymane są lokalnie w `processed/` i nie trafiają do repo.
+
 Dane GTFS przetwarza `process_gtfs.py` (surowe pliki zip w `data/` →
 `processed/*.json`).
 

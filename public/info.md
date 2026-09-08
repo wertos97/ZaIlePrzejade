@@ -29,7 +29,7 @@ W wynikach pokazujemy też **Interpretację B**: całą podróż jako jeden bile
 
 ## Czas przejazdu
 
-Aplikacja pokazuje też **szacunkowy czas przejazdu** (z czasem przesiadki pięciu minut). Czas liczony jest na podstawie oficjalnych rozkładów jazdy (GTFS) — to suma czasów przejazdu między przystankami na wybranej trasie.
+Aplikacja pokazuje też **szacunkowy czas przejazdu** (z czasem przesiadki pięciu minut). Czas liczony jest na podstawie oficjalnych rozkładów jazdy (GTFS, wersja {{GTFS_VERSION}}) — to suma czasów przejazdu między przystankami na wybranej trasie.
 
 ## Dwa warianty trasy
 

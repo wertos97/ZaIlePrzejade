@@ -21,6 +21,13 @@ async function fetchWithRetry(url, maxRetries, updateText) {
         try {
             var response = await fetch(url);
             if ((response.status === 429 || response.status === 503) && attempt < maxRetries) {
+                // Maintenance 503s are not transient — never retry those.
+                if (response.status === 503) {
+                    try {
+                        var peek = await response.clone().json();
+                        if (peek && peek.maintenance) return response;
+                    } catch (e) { /* fall through to retry */ }
+                }
                 if (updateText) updateText('Ponawiam wyszukiwanie... (' + attempt + '/' + maxRetries + ')');
                 await delay(delays[attempt]);
                 continue;
@@ -56,6 +63,12 @@ function formatDuration(seconds) {
 
 async function findRoute() {
     if (!state.fromStop || !state.toStop) {
+        return;
+    }
+
+    // Blocked while the server regenerates GTFS data (banner explains why).
+    if (state.maintenance && state.maintenance.active) {
+        showToast('Dane są obecnie aktualizowane. Spróbuj ponownie za chwilę.', 4000);
         return;
     }
 
@@ -105,6 +118,11 @@ async function findRoute() {
         const result = await response.json();
 
         if (result.error) {
+            if (result.maintenance) {
+                pollMaintenance();
+                showToast('Dane są obecnie aktualizowane. Spróbuj ponownie za chwilę.', 5000);
+                return;
+            }
             if (result.error.includes('przeciążony') || result.error.includes('pamięci')) {
                 showToast(result.error, 6000, 'warning');
             } else {

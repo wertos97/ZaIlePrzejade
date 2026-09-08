@@ -63,6 +63,7 @@ from . import data
 from . import cost
 from . import pathfinding
 from . import admin_stats
+from . import gtfs_update
 from .admin_page import PANEL_PAGE
 from .logging_config import get_logger
 
@@ -70,6 +71,11 @@ from .logging_config import get_logger
 # degraduje się do no-op. Bez pliku hasła cały panel /panel odpowiada 404.
 # Retencja z config.py: zdarzenia starsze niż okno są usuwane (prywatność).
 admin_stats.init(data.PROCESSED_DIR, retention_days=STATS_RETENTION_DAYS)
+
+# GTFS outputs still git-tracked? Until the Phase-2 untrack, regenerating
+# data would be silently reverted by autoupdate's `git reset --hard`.
+# Static per process (repo layout never changes without a deploy+restart).
+_GTFS_OUTPUTS_TRACKED = gtfs_update.outputs_tracked_in_git()
 
 if not TILE_API_KEY:
     get_logger('mpk.server').warning(
@@ -352,6 +358,92 @@ def _rate_limit_ok(ip, expensive=False):
 
 
 # ============================================================
+# GTFS update jobs (admin-approved; scheduler + worker threads)
+# ============================================================
+_gtfs_worker_lock = threading.RLock()
+_gtfs_worker_thread = None
+_gtfs_scheduler_thread = None
+_gtfs_scheduler_stop = threading.Event()
+
+
+def _gtfs_job_active():
+    """True when a GTFS job thread runs or persisted state says so."""
+    with _gtfs_worker_lock:
+        alive = (_gtfs_worker_thread is not None
+                 and _gtfs_worker_thread.is_alive())
+    if alive:
+        return True
+    try:
+        return gtfs_update.read_state().get('job', {}).get('state') in (
+            'checking', 'updating', 'restarting')
+    except Exception:
+        return False
+
+
+def _gtfs_start_job(target, name):
+    """Run target() in a daemon thread if no GTFS job is active."""
+    global _gtfs_worker_thread
+    with _gtfs_worker_lock:
+        if ((_gtfs_worker_thread is not None
+                and _gtfs_worker_thread.is_alive())
+                or _gtfs_job_active()):
+            return False
+        _gtfs_worker_thread = threading.Thread(
+            target=target, daemon=True, name=name)
+        _gtfs_worker_thread.start()
+        return True
+
+
+def _gtfs_scheduler_loop():
+    """Twice-daily freshness checks (09:00/17:00 Europe/Warsaw)."""
+    import datetime as _dt
+    # Staggered first check after boot: only when overdue (>12h), so a
+    # plain restart never pays the ~27MB download immediately.
+    try:
+        last_at = (gtfs_update.read_state().get('last_check') or {}).get('at')
+    except Exception:
+        last_at = None
+    if not last_at or time.time() - last_at > 12 * 3600:
+        if _gtfs_scheduler_stop.wait(60):
+            return
+        if not _gtfs_job_active():
+            try:
+                gtfs_update.run_check_job()
+            except Exception:
+                pass
+    while not _gtfs_scheduler_stop.is_set():
+        try:
+            nxt = gtfs_update.next_check_run(_dt.datetime.now(
+                gtfs_update.WARSAW))
+            wait_s = max(
+                0, (nxt - _dt.datetime.now(gtfs_update.WARSAW)).total_seconds())
+        except Exception:
+            wait_s = 3600
+        if _gtfs_scheduler_stop.wait(min(wait_s, 3600)):
+            return
+        if wait_s > 3600:
+            continue  # re-evaluate (clock shifts, long sleeps chunked)
+        if not _gtfs_job_active():
+            try:
+                gtfs_update.run_check_job()
+            except Exception:
+                pass
+
+
+def _start_gtfs_scheduler():
+    """Start the twice-daily check thread (VPS-only: admin panel gate)."""
+    global _gtfs_scheduler_thread
+    if _gtfs_scheduler_thread is not None:
+        return
+    if not admin_stats.enabled():
+        return
+    _gtfs_scheduler_stop.clear()
+    _gtfs_scheduler_thread = threading.Thread(
+        target=_gtfs_scheduler_loop, daemon=True, name='gtfs-scheduler')
+    _gtfs_scheduler_thread.start()
+
+
+# ============================================================
 # Map tile proxy (privacy)
 # ============================================================
 # Leaflet tiles are served from our own origin (/api/tiles/vN/...) so the
@@ -528,6 +620,32 @@ _OG_META_RE = re.compile(
     r'twitter:title|twitter:description|twitter:image)"\s+content="[^"]*"\s*/?>')
 
 
+_GTFS_PLACEHOLDER_RE = re.compile(r'\{\{GTFS_(VERSION|DATES)\}\}')
+
+
+def _render_md_placeholders(text):
+    """Substitute GTFS placeholders in public markdown texts.
+
+    {{GTFS_VERSION}} → feed version from metadata.json,
+    {{GTFS_DATES}} → validity range as DD.MM.RRRR–DD.MM.RRRR.
+    Keeps displayed data-access dates in sync with regenerations
+    without repo churn (substitution happens on every serve).
+    """
+    meta = data.feed_metadata or {}
+
+    def _fmt(d):
+        d = str(d or '')
+        if len(d) == 8 and d.isdigit():
+            return f'{d[6:8]}.{d[4:6]}.{d[0:4]}'
+        return '—'
+
+    values = {
+        'VERSION': str(meta.get('version') or '—'),
+        'DATES': f"{_fmt(meta.get('start_date'))}–{_fmt(meta.get('end_date'))}",
+    }
+    return _GTFS_PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], text)
+
+
 def _rewrite_og_meta(page_html, values):
     """Rewrite OG/Twitter meta tag contents by key.
 
@@ -558,7 +676,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path in ('/api/admin/login', '/api/admin/logout'):
+        if parsed.path in ('/api/admin/login', '/api/admin/logout',
+                           '/api/admin/gtfs-check', '/api/admin/gtfs-update'):
             self.handle_api(parsed.path, {})
             return
         self.send_error_page(405)
@@ -729,6 +848,25 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 get_logger('mpk.http').warning('Failed to serve index.html with nonce injection', exc_info=True)
                 pass  # Fall through to default handler
 
+        # Markdown texts (info/warning/author/privacy modals): substitute
+        # GTFS placeholders with the current feed metadata, so displayed
+        # data-access dates stay in sync with regenerations. Never cached.
+        if path.endswith('.md'):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    md_text = f.read()
+                body = _render_md_placeholders(md_text).encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/markdown; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                self.end_headers()
+                self._send_body(body)
+                return
+            except OSError:
+                self.send_error_page(404)
+                return
+
         super().do_GET()
 
     def serve_modified_html(self, from_stop, to_stop, mode):
@@ -898,6 +1036,63 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.serve_json({'ok': True})
             return
 
+        if path == '/api/admin/gtfs-status':
+            state = gtfs_update.read_state()
+            self.serve_json({
+                'current': {
+                    'version': data.feed_metadata.get('version', ''),
+                    'start_date': data.feed_metadata.get('start_date', ''),
+                    'end_date': data.feed_metadata.get('end_date', ''),
+                },
+                'last_check': state.get('last_check'),
+                'last_done': state.get('last_done'),
+                'job': state.get('job'),
+                'migration_pending': _GTFS_OUTPUTS_TRACKED,
+            })
+            return
+
+        if path == '/api/admin/gtfs-check':
+            # Manual freshness check (the scheduler also runs it 2x daily).
+            if not _gtfs_start_job(gtfs_update.run_check_job, 'gtfs-check'):
+                self.serve_json(
+                    {'error': 'Sprawdzanie już trwa. Spróbuj za chwilę.'},
+                    status=409)
+                return
+            self.serve_json({'started': True}, status=202)
+            return
+
+        if path == '/api/admin/gtfs-update':
+            try:
+                length = int(self.headers.get('Content-Length', '0') or 0)
+                payload = json.loads(
+                    self.rfile.read(min(length, 4096)) or b'{}')
+            except Exception:
+                payload = {}
+            if not payload.get('confirm'):
+                self.serve_json(
+                    {'error': 'Brak potwierdzenia (confirm:true).'},
+                    status=400)
+                return
+            if _GTFS_OUTPUTS_TRACKED:
+                # Regenerated data would be wiped by autoupdate's reset.
+                self.serve_json(
+                    {'error': 'Dokończ migrację danych (faza 2: git rm).'},
+                    status=409)
+                return
+            state = gtfs_update.read_state()
+            if not (state.get('last_check') or {}).get('newer'):
+                self.serve_json(
+                    {'error': 'Brak potwierdzonej nowszej wersji danych.'},
+                    status=400)
+                return
+            if not _gtfs_start_job(gtfs_update.run_update_job, 'gtfs-update'):
+                self.serve_json(
+                    {'error': 'Aktualizacja już trwa. Spróbuj za chwilę.'},
+                    status=409)
+                return
+            self.serve_json({'started': True}, status=202)
+            return
+
         self.send_error_page(404)
 
     # ------------------------------------------------------------
@@ -975,6 +1170,20 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
             elif path == '/api/version':
                 self.serve_json({'version': APP_VERSION})
+
+            elif path == '/api/maintenance':
+                # Public, cheap, never rate-limited: drives the frontend
+                # maintenance banner + blocks searches during GTFS updates.
+                try:
+                    job = gtfs_update.read_state().get('job') or {}
+                except Exception:
+                    job = {}
+                active = job.get('state') == 'updating'
+                self.serve_json({
+                    'active': active,
+                    'progress': job.get('progress', 0) if active else 0,
+                    'phase': job.get('phase', '') if active else '',
+                })
 
             elif path == '/api/badge/version':
                 # shields.io endpoint badge: zawsze wersja URUCHOMIONEGO
@@ -1114,6 +1323,24 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             return
         if to_stop not in data.stops_grouped:
             self.serve_json({'error': 'Przystanek końcowy nie został znaleziony'}, status=400)
+            return
+
+        # Maintenance mode (GTFS update running): searches are blocked so
+        # the engine never mixes old and half-written data. The frontend
+        # blocks the UI too — this guards API-direct callers. The
+        # `maintenance` flag tells clients NOT to retry (unlike 429/503
+        # shedding, which is transient and retried automatically).
+        try:
+            maintaining = (gtfs_update.read_state().get('job', {}).get('state')
+                           == 'updating')
+        except Exception:
+            maintaining = False
+        if maintaining:
+            self.serve_json({
+                'error': 'Dane są obecnie aktualizowane. '
+                         'Wyszukiwanie tras chwilowo niedostępne.',
+                'maintenance': True,
+            }, status=503)
             return
 
         global _route_requests, _route_timeouts

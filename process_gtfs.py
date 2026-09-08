@@ -554,43 +554,6 @@ def process_shapes(routes):
     return route_shapes
 
 
-def update_public_texts():
-    """Update the data-access dates in the public markdown files (author/warning)
-    to today's date, so the site always reflects when the GTFS data was fetched.
-
-    Replaces dates in DD.MM.YYYY format inside the "dostęp"/"pobrane" phrases in
-    public/author.md and public/warning.md.
-    """
-    import re
-    from datetime import date
-
-    today = date.today().strftime('%d.%m.%Y')
-    public_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public')
-    files = ['author.md', 'warning.md']
-
-    # Match a date in DD.MM.YYYY format that follows "dostęp " or "pobrane "
-    # (optionally inside parentheses). We replace only the date token.
-    pattern = re.compile(r'((?:dostęp|pobrane)\s+)(\d{2}\.\d{2}\.\d{4})')
-
-    updated = 0
-    for fname in files:
-        path = os.path.join(public_dir, fname)
-        if not os.path.isfile(path):
-            continue
-        with open(path, encoding='utf-8') as f:
-            content = f.read()
-        new_content, n = pattern.subn(lambda m: m.group(1) + today, content)
-        if n > 0:
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-            updated += n
-            print(f"  Updated {fname}: {n} date(s) -> {today}")
-
-    if updated == 0:
-        print("  No dates found to update in public text files.")
-    return updated
-
-
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -662,10 +625,6 @@ def main():
     with open(os.path.join(OUTPUT_DIR, 'metadata.json'), 'w') as f:
         json.dump(metadata, f, ensure_ascii=False)
     print(f"  Saved metadata.json (version: {metadata.get('version', '') or 'unknown'})")
-
-    # Update the data-access dates in the public text files to today
-    print("\n8. Updating public text dates...")
-    update_public_texts()
 
     print("\n" + "=" * 60)
     print("Processing complete!")

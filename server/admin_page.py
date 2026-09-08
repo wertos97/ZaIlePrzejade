@@ -107,6 +107,26 @@ PANEL_PAGE = """<!DOCTYPE html>
     <div id="ch-vis"></div>
   </div>
 
+  <div class="box">
+    <h2>Dane GTFS</h2>
+    <div id="gtfs-cur" class="mut">…</div>
+    <div id="gtfs-check" class="mut" style="margin-top:6px">…</div>
+    <div style="margin-top:8px">
+      <button class="view-btn" id="gtfs-btn-check">Sprawdź teraz</button>
+    </div>
+    <div id="gtfs-update-box" class="hidden" style="margin-top:10px">
+      <div id="gtfs-diff"></div>
+      <button class="view-btn" id="gtfs-btn-update" style="margin-top:8px">Aktualizuj dane</button>
+    </div>
+    <div id="gtfs-prog" class="hidden" style="margin-top:10px">
+      <div id="gtfs-prog-label" class="mut"></div>
+      <div style="height:8px;background:#eef1f4;border-radius:4px;margin-top:6px;overflow:hidden">
+        <div id="gtfs-prog-fill" style="height:100%;width:0;background:#2A5BD5"></div>
+      </div>
+    </div>
+    <div id="gtfs-result" class="mut" style="margin-top:8px"></div>
+  </div>
+
   <div class="cols">
     <div class="box"><h2>Restarty serwera</h2><div id="t-restart"></div></div>
     <div class="box"><h2>Wdrożenia (autoupdate)</h2><div id="t-updates"></div></div>
@@ -181,8 +201,9 @@ async function showDash(){
   document.getElementById('login').style.display='none';
   document.getElementById('dash').style.display='block';
   if (!view.from){ setView(30); } else { await loadStats(); }
+  loadGtfs();
   clearInterval(refreshTimer);
-  refreshTimer = setInterval(loadStats, 60000);
+  refreshTimer = setInterval(function(){ loadStats(); loadGtfs(); }, 60000);
 }
 function setView(days){
   view.from = shiftDays(days); view.to = shiftDays(1);
@@ -277,6 +298,123 @@ function render(s){
       + '</table></div>'
     : '<span class="mut">brak wdrożeń w tym zakresie</span>';
 }
+
+// ---- Dane GTFS: freshness check runs 2x daily server-side; the panel
+// only displays + (after explicit confirm) starts the update job. ----
+let gtfsFastTimer = null;
+
+function fmtGtfsTs(ts){
+  if (!ts) return '—';
+  const d = new Date(ts*1000);
+  return d.toLocaleString('pl-PL',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+
+async function loadGtfs(){
+  let r;
+  try {
+    r = await fetch('/api/admin/gtfs-status', {credentials:'same-origin'});
+  } catch(e){ return; }
+  if (r.status === 401){ location.reload(); return; }
+  if (!r.ok) return;
+  renderGtfs(await r.json());
+}
+
+function renderGtfs(s){
+  const cur = s.current || {};
+  document.getElementById('gtfs-cur').textContent =
+    'Wersja: ' + (cur.version || '—') +
+    ' · ważne: ' + (cur.start_date || '—') + '–' + (cur.end_date || '—');
+
+  const lc = s.last_check || {};
+  const checkEl = document.getElementById('gtfs-check');
+  if (s.migration_pending) {
+    checkEl.textContent = 'Dane GTFS są jeszcze w repozytorium — dokończ migrację (faza 2: git rm), aby odblokować aktualizacje.';
+  } else if (lc.error) {
+    checkEl.textContent = 'Ostatnie sprawdzenie (' + fmtGtfsTs(lc.at) + ') nieudane: ' + lc.error;
+  } else if (lc.at) {
+    checkEl.textContent = 'Ostatnie sprawdzenie: ' + fmtGtfsTs(lc.at) +
+      (lc.newer ? ' — jest nowsza wersja.' : ' — dane aktualne.');
+  } else {
+    checkEl.textContent = 'Jeszcze nie sprawdzono (kontrola 2× dziennie).';
+  }
+
+  const job = s.job || {};
+  const active = job.state === 'checking' || job.state === 'updating' || job.state === 'restarting';
+  document.getElementById('gtfs-btn-check').disabled = active;
+  const updBox = document.getElementById('gtfs-update-box');
+  const showUpdate = !!lc.newer && !active && job.state !== 'error' && !s.migration_pending;
+  updBox.classList.toggle('hidden', !showUpdate);
+  if (showUpdate) {
+    const fmtRoutes = (list)=> (list||[]).slice(0,6).map(x=>x[0]+' ('+x[1]+')').join(', ')
+      + ((list||[]).length > 6 ? ', …' : '');
+    document.getElementById('gtfs-diff').innerHTML =
+      'Nowe wersje: ' + esc(Object.values(lc.upstream||{}).map(u=>u.version).filter(Boolean).join(', ')) +
+      '<br>Przybędzie linii: ' + ((lc.added||[]).length) + (lc.added && lc.added.length ? ' (' + esc(fmtRoutes(lc.added)) + ')' : '') +
+      '<br>Zniknie linii: ' + ((lc.removed||[]).length) + (lc.removed && lc.removed.length ? ' (' + esc(fmtRoutes(lc.removed)) + ')' : '') +
+      '<br><span class="mut">Aktualizacja trwa kilka minut. Wyszukiwanie tras będzie w tym czasie niedostępne, strona poza tym działa. Po zakończeniu serwer zrestartuje się sam.</span>';
+  }
+
+  const prog = document.getElementById('gtfs-prog');
+  prog.classList.toggle('hidden', !active);
+  if (active) {
+    document.getElementById('gtfs-prog-label').textContent =
+      (job.phase || 'Praca…') + ' ' + (job.progress || 0) + '%';
+    document.getElementById('gtfs-prog-fill').style.width = (job.progress || 0) + '%';
+  }
+
+  const res = document.getElementById('gtfs-result');
+  if (job.state === 'error') {
+    res.innerHTML = '<span style="color:#e74c3c">Błąd: ' + esc(job.detail || 'nieznany') + '</span>';
+  } else if (s.last_done && s.last_done.at) {
+    res.textContent = 'Ostatnia aktualizacja: ' + fmtGtfsTs(s.last_done.at) +
+      ' (wersja ' + (s.last_done.version || '—') + ').';
+  } else {
+    res.textContent = '';
+  }
+
+  if (active && !gtfsFastTimer) {
+    gtfsFastTimer = setInterval(loadGtfs, 3000);
+  } else if (!active && gtfsFastTimer) {
+    clearInterval(gtfsFastTimer);
+    gtfsFastTimer = null;
+  }
+}
+
+async function startGtfsUpdate(){
+  if (!confirm('Rozpocząć aktualizację danych GTFS? Potrwa kilka minut, w tym czasie wyszukiwanie tras będzie niedostępne. Po zakończeniu serwer zrestartuje się automatycznie.')) return;
+  let r;
+  try {
+    r = await fetch('/api/admin/gtfs-update', {method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({confirm:true})});
+  } catch(e){ return; }
+  if (r.status === 401){ location.reload(); return; }
+  if (r.status !== 202) {
+    let msg = 'HTTP ' + r.status;
+    try { msg = (await r.json()).error || msg; } catch(e){}
+    document.getElementById('gtfs-result').innerHTML =
+      '<span style="color:#e74c3c">' + esc(msg) + '</span>';
+    return;
+  }
+  loadGtfs();
+}
+document.getElementById('gtfs-btn-update').addEventListener('click', startGtfsUpdate);
+
+async function startGtfsCheck(){
+  let r;
+  try {
+    r = await fetch('/api/admin/gtfs-check', {method:'POST', credentials:'same-origin'});
+  } catch(e){ return; }
+  if (r.status === 401){ location.reload(); return; }
+  if (r.status !== 202) {
+    let msg = 'HTTP ' + r.status;
+    try { msg = (await r.json()).error || msg; } catch(e){}
+    document.getElementById('gtfs-result').innerHTML =
+      '<span style="color:#e74c3c">' + esc(msg) + '</span>';
+    return;
+  }
+  loadGtfs();
+}
+document.getElementById('gtfs-btn-check').addEventListener('click', startGtfsCheck);
 
 async function boot(){
   try{

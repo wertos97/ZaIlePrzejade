@@ -66,6 +66,63 @@ function showBanner(message) {
     document.body.appendChild(banner);
 }
 
+// ============================================================
+// Maintenance mode (GTFS update running server-side)
+// ============================================================
+
+const MAINTENANCE_POLL_MS = 10000;
+
+function updateMaintenanceBanner(active, progress, phase) {
+    var banner = document.getElementById('maintenance-banner');
+    if (!active) {
+        if (banner) banner.remove();
+        document.body.classList.remove('maintenance');
+        return;
+    }
+    document.body.classList.add('maintenance');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'maintenance-banner';
+        banner.className = 'maintenance-banner';
+        banner.setAttribute('role', 'status');
+        document.body.appendChild(banner);
+    }
+    var label = 'Dane są obecnie aktualizowane — wyszukiwanie tras jest niedostępne.';
+    if (phase) label += ' ' + phase + '.';
+    var pct = Math.max(0, Math.min(100, Math.round(progress || 0)));
+    banner.innerHTML = '';
+    var text = document.createElement('div');
+    text.textContent = label + ' ' + pct + '%';
+    var bar = document.createElement('div');
+    bar.className = 'maintenance-bar';
+    var fill = document.createElement('div');
+    fill.className = 'maintenance-fill';
+    fill.style.width = pct + '%';
+    bar.appendChild(fill);
+    banner.appendChild(text);
+    banner.appendChild(bar);
+}
+
+function pollMaintenance() {
+    fetch('/api/maintenance')
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(s) {
+            if (!s) return;
+            state.maintenance = {
+                active: !!s.active,
+                progress: s.progress || 0,
+                phase: s.phase || '',
+            };
+            updateMaintenanceBanner(!!s.active, s.progress, s.phase);
+        })
+        .catch(function() { /* keep last state on transient errors */ });
+}
+
+function startMaintenancePolling() {
+    pollMaintenance();
+    setInterval(pollMaintenance, MAINTENANCE_POLL_MS);
+}
+
 // Global state
 const state = {
     map: null,
@@ -80,6 +137,7 @@ const state = {
     routeCache: {}, // key: "fromId_toId", value: { convenient, cheap }
     currentRouteKey: null,
     shouldFitBounds: true,
+    maintenance: { active: false, progress: 0, phase: '' },
 };
 
 // Single color for all stops
@@ -96,6 +154,7 @@ var searchAbortController = null;
 document.addEventListener('DOMContentLoaded', function() {
     initMap();
     setupEventListeners();
+    startMaintenancePolling();
     // Non-blocking health check — show banner if server is overloaded
     fetch('/api/health').then(function(r) {
         if (!r.ok) showBanner('Serwer chwilowo niedostępny. Odśwież stronę za chwilę.');

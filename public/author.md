@@ -4,7 +4,7 @@
 
 Aplikacja została stworzona w celu obliczania kosztów podróży komunikacji miejskiej w Krakowie w oparciu o nowy system biletów oparty na odległości, który ma wejść w życie w 2027 roku.
 
-Dane linii i przystanków pochodzą z ogólnodostępnych rozkładów GTFS publikowanych przez ZTP Kraków (aplikacja korzysta z aktualnego pobrania danych — po publikacji nowego rozkładu dane są odświeżane).
+Dane linii i przystanków pochodzą z ogólnodostępnych rozkładów GTFS publikowanych przez ZTP Kraków (wersja {{GTFS_VERSION}} — po publikacji nowego rozkładu dane są odświeżane).
 
 ---
 

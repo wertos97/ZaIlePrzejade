@@ -168,6 +168,31 @@ class TestStatusPayload(unittest.TestCase):
         self.assertIn('uptime_seconds', payload)
 
 
+class TestMdPlaceholders(unittest.TestCase):
+    """Public .md texts are served with GTFS placeholders substituted."""
+
+    def test_warning_dates_substituted(self):
+        from server import data as _data
+        status, body = _request('/warning.md')
+        self.assertEqual(status, 200)
+        text = body.decode('utf-8')
+        self.assertNotIn('{{GTFS_', text)
+        meta = _data.feed_metadata or {}
+        if meta.get('version'):
+            self.assertIn(str(meta['version']), text)
+
+    def test_plain_md_untouched(self):
+        status, body = _request('/privacy.md')
+        self.assertEqual(status, 200)
+        text = body.decode('utf-8')
+        self.assertNotIn('{{GTFS_', text)
+        self.assertIn('Prywatność', text)
+
+    def test_missing_md_404(self):
+        status, _ = _request('/no-such-file.md')
+        self.assertEqual(status, 404)
+
+
 class TestTileProxy(unittest.TestCase):
     """Map tiles are proxied from our own origin (privacy): coordinate
     validation must reject garbage without ever touching upstream."""

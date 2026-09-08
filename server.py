@@ -6,6 +6,7 @@ Entry point — loads modules and starts the threaded server.
 
 import os
 import signal
+import sys
 import threading
 import time
 
@@ -21,6 +22,46 @@ from server.logging_config import setup_logging, get_logger, log_cache_event
 # Configure logging FIRST so startup logs from data loading are captured.
 setup_logging(level=LOG_LEVEL, log_file=os.environ.get('LOG_FILE'))
 logger = get_logger('mpk.server')
+
+
+def _ensure_gtfs_data():
+    """Generate processed GTFS data on first boot (fresh instances).
+
+    Processed JSONs are NOT in git (generated per instance). If any are
+    missing, run process_gtfs.py synchronously (downloads + processes,
+    several minutes). Fatal when generation fails — without data the
+    server cannot serve anything.
+    """
+    base = os.path.dirname(os.path.abspath(__file__))
+    processed = os.path.join(base, 'processed')
+    needed = ('stops.json', 'routes.json', 'adjacency.json', 'shapes.json',
+              'metadata.json')
+    missing = [n for n in needed
+               if not os.path.isfile(os.path.join(processed, n))]
+    if not missing:
+        return
+    logger.warning('Missing GTFS data (%s) — generating from scratch. '
+                   'First boot takes several minutes.',
+                   ', '.join(missing))
+    import subprocess
+    try:
+        result = subprocess.run(
+            [sys.executable, '-u', os.path.join(base, 'process_gtfs.py')],
+            cwd=base, timeout=20 * 60)
+        ok = result.returncode == 0
+    except Exception as e:
+        logger.critical('GTFS generation failed: %s', e)
+        ok = False
+    still_missing = [n for n in needed
+                     if not os.path.isfile(os.path.join(processed, n))]
+    if not ok or still_missing:
+        logger.critical('GTFS data unavailable (%s) — cannot start.',
+                        ', '.join(still_missing))
+        sys.exit(1)
+    logger.warning('GTFS data ready.')
+
+
+_ensure_gtfs_data()
 
 from server.data import (  # noqa: E402 — needs logging configured first
     PUBLIC_DIR,
@@ -95,12 +136,17 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 # ============================================================
 from server.data import (
     adjacency, stops_by_id, stops_grouped as _sg,
-    stop_to_group, routes_by_id, route_shapes,
+    stop_to_group, routes_by_id, route_shapes, feed_metadata,
 )
 
 logger.info('Server starting', extra={'version': APP_VERSION})
 
 init_pathfinding(adjacency, stops_by_id, _sg, stop_to_group, routes_by_id, route_shapes)
+
+# Reconcile an interrupted/finished GTFS update (cleans the backup only
+# when on-disk data matches the expected new version).
+from server import gtfs_update as _gtfs_update
+_gtfs_update.reconcile_after_boot(feed_metadata)
 
 # Pre-build cached JSON responses
 _build_stops_json()
@@ -125,6 +171,11 @@ def main():
     # Start background rate limit cleanup thread
     from server.handler import _start_rate_limit_cleanup
     _start_rate_limit_cleanup()
+
+    # Twice-daily GTFS freshness checks (VPS-only: no admin password file
+    # → no scheduler; dev machines stay quiet).
+    from server.handler import _start_gtfs_scheduler
+    _start_gtfs_scheduler()
 
     # Trwały zapis restartu do statystyk panelu (VPS-only) — z powodem:
     # ostatni 'Powód' z autoupdate.log (update / naprawa) albo restart ręczny
