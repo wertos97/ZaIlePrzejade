@@ -66,11 +66,9 @@ async function findRoute() {
         return;
     }
 
-    // Blocked while the server regenerates GTFS data (banner explains why).
-    if (state.maintenance && state.maintenance.active) {
-        showToast('Dane są obecnie aktualizowane. Spróbuj ponownie za chwilę.', 4000);
-        return;
-    }
+    // NOTE: no maintenance pre-check here on purpose (VPS-friendly) —
+    // the server answers 503 + maintenance flag when regenerating,
+    // handled below with a toast and a one-time banner resync.
 
     const routeKey = `${state.fromStop.id}_${state.toStop.id}`;
     state.currentRouteKey = routeKey;
@@ -155,6 +153,11 @@ async function findRoute() {
 
         displayRoute(route);
         updateURL();
+        // Resync once if we thought maintenance was on: a successful
+        // search proves it ended (banner would otherwise linger).
+        if (state.maintenance && state.maintenance.active) {
+            pollMaintenance();
+        }
     } catch (error) {
         console.error('Route finding error:', error);
         showToast('Serwer chwilowo niedostępny. Spróbuj ponownie za chwilę.', 5000, 'error');

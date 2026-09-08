@@ -69,8 +69,9 @@ function showBanner(message) {
 // ============================================================
 // Maintenance mode (GTFS update running server-side)
 // ============================================================
-
-const MAINTENANCE_POLL_MS = 10000;
+// Checked on demand only: on page load/refresh and right before a
+// search starts (plus whenever the server itself reports it) —
+// no background polling.
 
 function updateMaintenanceBanner(active, progress, phase) {
     var banner = document.getElementById('maintenance-banner');
@@ -104,7 +105,7 @@ function updateMaintenanceBanner(active, progress, phase) {
 }
 
 function pollMaintenance() {
-    fetch('/api/maintenance')
+    return fetch('/api/maintenance')
         .then(function(r) { return r.ok ? r.json() : null; })
         .then(function(s) {
             if (!s) return;
@@ -116,11 +117,6 @@ function pollMaintenance() {
             updateMaintenanceBanner(!!s.active, s.progress, s.phase);
         })
         .catch(function() { /* keep last state on transient errors */ });
-}
-
-function startMaintenancePolling() {
-    pollMaintenance();
-    setInterval(pollMaintenance, MAINTENANCE_POLL_MS);
 }
 
 // Global state
@@ -154,7 +150,7 @@ var searchAbortController = null;
 document.addEventListener('DOMContentLoaded', function() {
     initMap();
     setupEventListeners();
-    startMaintenancePolling();
+    pollMaintenance();
     // Non-blocking health check — show banner if server is overloaded
     fetch('/api/health').then(function(r) {
         if (!r.ok) showBanner('Serwer chwilowo niedostępny. Odśwież stronę za chwilę.');

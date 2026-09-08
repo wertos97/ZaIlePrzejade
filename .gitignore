@@ -44,6 +44,16 @@ processed/route_cache_*
 # Runtime tile cache (map tile proxy, regenerated on demand)
 processed/tiles/
 
+# GTFS data: generated per instance via process_gtfs.py (or admin panel),
+# never committed (Faza 2 migracji). Fresh clones generate on first boot.
+processed/stops.json
+processed/routes.json
+processed/adjacency.json
+processed/shapes.json
+processed/metadata.json
+processed/.backup-*/
+processed/gtfs_update.json
+
 # Panel admina: dane i hasło — tylko na VPS, nigdy w repo
 processed/stats.sqlite*
 processed/admin_config.json
