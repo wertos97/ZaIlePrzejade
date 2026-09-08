@@ -188,37 +188,60 @@ def download_gtfs(force=False):
 
 
 def read_feed_metadata():
-    """Read feed metadata (version and validity period) from the first available
-    feed's feed_info.txt. Returns a dict with feed_version, start_date, end_date,
-    and publisher info. Falls back to defaults if feed_info.txt is missing."""
+    """Read feed metadata merged across all feeds' feed_info.txt.
+
+    Feeds use heterogeneous schemes (dateless tram versions vs dated bus
+    versions), so: version = per-feed versions joined with '_', validity =
+    min start / max end over feeds that provide dates, publisher/contact =
+    first non-empty. Falls back to defaults if nothing is available.
+    """
+    versions, starts, ends = [], [], []
+    publisher = url = lang = contact_email = contact_url = ''
     for feed_dir, _, _, _, _ in FEEDS:
         feed_info_path = os.path.join(DATA_DIR, feed_dir, 'feed_info.txt')
-        if os.path.isfile(feed_info_path):
-            try:
-                with open(feed_info_path, encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        return {
-                            'publisher': row.get('feed_publisher_name', '').strip(),
-                            'url': row.get('feed_publisher_url', '').strip(),
-                            'lang': row.get('feed_lang', '').strip(),
-                            'start_date': row.get('feed_start_date', '').strip(),
-                            'end_date': row.get('feed_end_date', '').strip(),
-                            'version': row.get('feed_version', '').strip(),
-                            'contact_email': row.get('feed_contact_email', '').strip(),
-                            'contact_url': row.get('feed_contact_url', '').strip(),
-                        }
-            except (OSError, csv.Error):
-                pass
+        if not os.path.isfile(feed_info_path):
+            continue
+        try:
+            with open(feed_info_path, encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    ver = (row.get('feed_version') or '').strip()
+                    if ver:
+                        versions.append(ver)
+                    for key, bucket in (('feed_start_date', starts),
+                                        ('feed_end_date', ends)):
+                        val = (row.get(key) or '').strip()
+                        if val:
+                            bucket.append(val)
+                    for key, current in (
+                            ('feed_publisher_name', publisher),
+                            ('feed_publisher_url', url),
+                            ('feed_lang', lang),
+                            ('feed_contact_email', contact_email),
+                            ('feed_contact_url', contact_url)):
+                        if not current:
+                            val = (row.get(key) or '').strip()
+                            if key == 'feed_publisher_name':
+                                publisher = val or publisher
+                            elif key == 'feed_publisher_url':
+                                url = val or url
+                            elif key == 'feed_lang':
+                                lang = val or lang
+                            elif key == 'feed_contact_email':
+                                contact_email = val or contact_email
+                            elif key == 'feed_contact_url':
+                                contact_url = val or contact_url
+        except (OSError, csv.Error):
+            pass
     return {
-        'publisher': '',
-        'url': '',
-        'lang': '',
-        'start_date': '',
-        'end_date': '',
-        'version': '',
-        'contact_email': '',
-        'contact_url': '',
+        'publisher': publisher,
+        'url': url,
+        'lang': lang,
+        'start_date': min(starts) if starts else '',
+        'end_date': max(ends) if ends else '',
+        'version': '_'.join(versions),
+        'contact_email': contact_email,
+        'contact_url': contact_url,
     }
 
 

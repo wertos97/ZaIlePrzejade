@@ -58,6 +58,12 @@ PANEL_PAGE = """<!DOCTYPE html>
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
   .mut { color: #99a; font-size: .8rem; }
+  .pill { display: inline-block; padding: 4px 12px; border-radius: 20px;
+          font-size: .8rem; font-weight: 600; }
+  .pill.green { background: #e6f7ec; color: #1e7e34; }
+  .pill.amber { background: #fef3e2; color: #b26a00; }
+  .pill.red { background: #fdecea; color: #c0392b; }
+  .pill.gray { background: #eef1f4; color: #667; }
   .scrollbox { max-height: 260px; overflow-y: auto; }
   details { margin: 4px 0; }
   summary { cursor: pointer; color: #2A5BD5; font-size: .85rem;
@@ -109,14 +115,18 @@ PANEL_PAGE = """<!DOCTYPE html>
 
   <div class="box">
     <h2>Dane GTFS</h2>
-    <div id="gtfs-cur" class="mut">…</div>
-    <div id="gtfs-check" class="mut" style="margin-top:6px">…</div>
-    <div style="margin-top:8px">
+    <div id="gtfs-pill" style="margin-bottom:10px"><span class="mut">…</span></div>
+    <table>
+      <tr><th style="width:220px">Wersja danych</th><td id="gtfs-cur-ver">…</td></tr>
+      <tr><th>Ważność rozkładów</th><td id="gtfs-cur-valid">…</td></tr>
+      <tr><th>Ostatnie sprawdzenie</th><td id="gtfs-check">…</td></tr>
+    </table>
+    <div class="viewbar" style="margin:10px 0 0">
       <button class="view-btn" id="gtfs-btn-check">Sprawdź teraz</button>
+      <button class="view-btn hidden" id="gtfs-btn-update">Aktualizuj dane</button>
     </div>
-    <div id="gtfs-update-box" class="hidden" style="margin-top:10px">
+    <div id="gtfs-update-box" class="hidden" style="margin-top:4px">
       <div id="gtfs-diff"></div>
-      <button class="view-btn" id="gtfs-btn-update" style="margin-top:8px">Aktualizuj dane</button>
     </div>
     <div id="gtfs-prog" class="hidden" style="margin-top:10px">
       <div id="gtfs-prog-label" class="mut"></div>
@@ -319,39 +329,77 @@ async function loadGtfs(){
   renderGtfs(await r.json());
 }
 
+function fmtGtfsDate(yyyymmdd){
+  const d = String(yyyymmdd || '');
+  if (/^\d{8}$/.test(d)) return d.slice(6, 8) + '.' + d.slice(4, 6) + '.' + d.slice(0, 4);
+  return d || '—';
+}
+
 function renderGtfs(s){
   const cur = s.current || {};
-  document.getElementById('gtfs-cur').textContent =
-    'Wersja: ' + (cur.version || '—') +
-    ' · ważne: ' + (cur.start_date || '—') + '–' + (cur.end_date || '—');
+  document.getElementById('gtfs-cur-ver').textContent = cur.version || '—';
+  const vFrom = fmtGtfsDate(cur.start_date), vTo = fmtGtfsDate(cur.end_date);
+  document.getElementById('gtfs-cur-valid').textContent =
+    (vFrom === '—' && vTo === '—') ? '—' : vFrom + ' – ' + vTo;
 
   const lc = s.last_check || {};
   const checkEl = document.getElementById('gtfs-check');
   if (s.migration_pending) {
     checkEl.textContent = 'Dane GTFS są jeszcze w repozytorium — dokończ migrację (faza 2: git rm), aby odblokować aktualizacje.';
   } else if (lc.error) {
-    checkEl.textContent = 'Ostatnie sprawdzenie (' + fmtGtfsTs(lc.at) + ') nieudane: ' + lc.error;
+    checkEl.textContent = fmtGtfsTs(lc.at) + ' — nieudane: ' + lc.error;
   } else if (lc.at) {
-    checkEl.textContent = 'Ostatnie sprawdzenie: ' + fmtGtfsTs(lc.at) +
-      (lc.newer ? ' — jest nowsza wersja.' : ' — dane aktualne.');
+    checkEl.textContent = fmtGtfsTs(lc.at);
   } else {
     checkEl.textContent = 'Jeszcze nie sprawdzono (kontrola 2× dziennie).';
   }
 
   const job = s.job || {};
   const active = job.state === 'checking' || job.state === 'updating' || job.state === 'restarting';
-  document.getElementById('gtfs-btn-check').disabled = active;
-  const updBox = document.getElementById('gtfs-update-box');
   const showUpdate = !!lc.newer && !active && job.state !== 'error' && !s.migration_pending;
+
+  // Status badge: one glance tells whether action is needed.
+  const pill = document.getElementById('gtfs-pill');
+  let pillCls = 'gray', pillTxt = 'Nie sprawdzono';
+  if (active) {
+    pillCls = 'gray';
+    pillTxt = (job.state === 'checking' ? 'Sprawdzanie…'
+      : job.state === 'restarting' ? 'Restart serwera…'
+      : 'Aktualizacja w toku…');
+  } else if (job.state === 'error') {
+    pillCls = 'red'; pillTxt = 'Błąd aktualizacji';
+  } else if (s.migration_pending) {
+    pillCls = 'gray'; pillTxt = 'Migracja w toku';
+  } else if (showUpdate) {
+    pillCls = 'amber'; pillTxt = 'Dostępna aktualizacja';
+  } else if (lc.at && !lc.error) {
+    pillCls = 'green'; pillTxt = 'Dane aktualne';
+  }
+  pill.innerHTML = '<span class="pill ' + pillCls + '">' + esc(pillTxt) + '</span>';
+
+  document.getElementById('gtfs-btn-check').disabled = active;
+  document.getElementById('gtfs-btn-update').classList.toggle('hidden', !showUpdate);
+  const updBox = document.getElementById('gtfs-update-box');
   updBox.classList.toggle('hidden', !showUpdate);
   if (showUpdate) {
-    const fmtRoutes = (list)=> (list||[]).slice(0,6).map(x=>x[0]+' ('+x[1]+')').join(', ')
-      + ((list||[]).length > 6 ? ', …' : '');
-    document.getElementById('gtfs-diff').innerHTML =
-      'Nowe wersje: ' + esc(Object.values(lc.upstream||{}).map(u=>u.version).filter(Boolean).join(', ')) +
-      '<br>Przybędzie linii: ' + ((lc.added||[]).length) + (lc.added && lc.added.length ? ' (' + esc(fmtRoutes(lc.added)) + ')' : '') +
-      '<br>Zniknie linii: ' + ((lc.removed||[]).length) + (lc.removed && lc.removed.length ? ' (' + esc(fmtRoutes(lc.removed)) + ')' : '') +
-      '<br><span class="mut">Aktualizacja trwa kilka minut. Wyszukiwanie tras będzie w tym czasie niedostępne, strona poza tym działa. Po zakończeniu serwer zrestartuje się sam.</span>';
+    const fmtRoutes = (list)=> (list||[]).slice(0,12).map(x=>x[0]+' ('+x[1]+')').join(', ')
+      + ((list||[]).length > 12 ? ', …' : '');
+    const upVers = Object.values(lc.upstream||{}).map(u=>u.version).filter(Boolean).join(', ');
+    const added = lc.added || [], removed = lc.removed || [];
+    let diffHtml = '<table><tr><th style="width:220px">Nowe wersje feedów</th><td>' +
+      esc(upVers || '—') + '</td></tr>';
+    if (added.length === 0 && removed.length === 0) {
+      diffHtml += '<tr><th>Siatka linii</th><td>bez zmian (tylko rozkłady jazdy)</td></tr>';
+    } else {
+      if (added.length) diffHtml += '<tr><th>Przybywa linii (' + added.length +
+        ')</th><td>' + esc(fmtRoutes(added)) + '</td></tr>';
+      if (removed.length) diffHtml += '<tr><th>Znika linii (' + removed.length +
+        ')</th><td>' + esc(fmtRoutes(removed)) + '</td></tr>';
+    }
+    diffHtml += '</table><div class="mut" style="margin-top:6px">Aktualizacja trwa kilka minut. ' +
+      'Wyszukiwanie tras będzie w tym czasie niedostępne, strona poza tym działa. ' +
+      'Po zakończeniu serwer zrestartuje się sam.</div>';
+    document.getElementById('gtfs-diff').innerHTML = diffHtml;
   }
 
   const prog = document.getElementById('gtfs-prog');

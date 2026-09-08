@@ -134,42 +134,43 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertNotIn(b'svg:', body)
 
     def test_og_image_price_font_scales_down(self):
-        """A capped fare ("20.00 / 20.00 zł") must render with a smaller
+        """A capped fare ("20.00 / 10.00 zł") must render with a smaller
         price font so the text keeps a safe gap before the logo on the
-        right; a typical fare keeps the full 120 px."""
-        def price_text(query, warm=False):
-            if warm:
-                # para musi być najpierw wyliczona — OG czyta tylko cache
-                status, _, _ = self._get(
-                    '/api/find-route?' + query.split('mode=')[0])
-                self.assertEqual(status, 200)
-            status, _, body = self._get('/api/og-image?' + query)
-            self.assertEqual(status, 200)
-            m = re.search(rb'<text x="80" y="548"[^>]*', body)
+        right; a typical fare keeps the full 120 px.
+
+        Data-independent: the sizing rule is tested with synthetic cached
+        results (real GTFS fares change with every feed refresh).
+        """
+        from server import pathfinding as pf_mod
+        from server import handler as handler_mod
+        orig = pf_mod.get_cached_route_result
+
+        def price_font_for(cost_regular, cost_reduced):
+            pf_mod.get_cached_route_result = lambda *a: (
+                {'cost_regular': cost_regular,
+                 'cost_reduced': cost_reduced}, None)
+            try:
+                svg = handler_mod.MPKRequestHandler.\
+                    _generate_og_image_svg(
+                        object(), self.from_id, self.to_id, 'cheap')
+            finally:
+                pf_mod.get_cached_route_result = orig
+            m = re.search(rb'<text x="80" y="548"[^>]*', svg.encode())
             self.assertIsNotNone(m, 'price text not found')
             font = int(re.search(rb'font-size="(\d+)"', m.group(0)).group(1))
             pinned = b'textLength="760"' in m.group(0)
             return font, pinned
 
-        # krótka kwota ("9.00 / 4.50 zł"): pełna czcionka, bez ściskania
-        f_short, pin_short = price_text(
-            'from=group_51&to=group_1518&mode=cheap', warm=True)
+        # krótka kwota ("4.00 / 2.00 zł"): pełna czcionka, bez ściskania
+        f_short, pin_short = price_font_for(4.0, 2.0)
         self.assertEqual(f_short, 120)
         self.assertFalse(pin_short)
 
-        # dłuższa kwota ("16.00 / 8.00 zł") — czcionka w dół i prawy brzeg
+        # długa kwota ("20.00 / 10.00 zł") — czcionka w dół i prawy brzeg
         # przypięty na x=840 (~100 px przed logo)
-        f_typ, pin_typ = price_text(
-            f'from={self.from_id}&to={self.to_id}&mode=cheap', warm=True)
-        self.assertGreaterEqual(f_typ, 96)
-        self.assertLess(f_typ, 120)
-        self.assertTrue(pin_typ)
-
-        # kwota przy capie ("15.00 / 7.50 zł") — nigdy dłuższa niż typowa
-        f_cap, pin_cap = price_text(
-            'from=group_1264&to=group_429&mode=cheap', warm=True)
-        self.assertLessEqual(f_cap, f_typ)
+        f_cap, pin_cap = price_font_for(20.0, 10.0)
         self.assertGreaterEqual(f_cap, 96)
+        self.assertLess(f_cap, 120)
         self.assertTrue(pin_cap)
 
     def test_og_image_with_invalid_stops(self):
