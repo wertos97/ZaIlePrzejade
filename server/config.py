@@ -39,28 +39,27 @@ ASTAR_TIMEOUT_SECONDS = 8
 # phase returns an ERROR — exact-only product, no approximate fallbacks.
 CHEAP_SEARCH_MAX_SECONDS = 10.0
 CONVENIENT_SEARCH_MAX_SECONDS = 8.0
-CHEAP_SEARCH_CONCURRENCY = 2  # 1-core VPS: ≤ PATHFINDING_EXECUTOR_WORKERS
+CHEAP_SEARCH_CONCURRENCY = 1  # ≤ PATHFINDING_EXECUTOR_WORKERS (RAM first)
 CHEAP_HEURISTIC_CACHE_MAX = 14000  # LRU cache: key space ~13,680
 
 # Memory protection: RSS threshold (MB) — A* bails out to avoid OOM on
 # small servers.  Use current RSS (via /proc/self/statm) not peak (ru_maxrss)
 # because peak never decreases and would kill every search after first spike.
-MEMORY_LIMIT_MB = int(os.environ.get('MEMORY_LIMIT_MB', 190))
+# 150 MB leaves headroom on a 256 MB box (server base ~76 MB + system);
+# the check runs every 1000 pops, so spikes between checks must also fit.
+MEMORY_LIMIT_MB = int(os.environ.get('MEMORY_LIMIT_MB', 150))
 
 # "Convenient" route: exact objective = fare + this penalty per boarding.
 # Each transfer is "worth" this much extra zł — tunes the balance between
 # ticket price and number of rides (higher = fewer transfers, pricier).
 CONVENIENT_BOARDING_PENALTY_ZL = 2.0
 
-# Executor threads running pathfinding. More than the cheap-search gate so
-# that distance-based searches are never queued behind fare searches that
-# are waiting for the gate.
-# The GIL serialises CPU-bound searches anyway (total throughput is the
-    # same for any pool size), but a larger pool lets queued requests START
-    # earlier — their 30s budget then covers real work instead of queue
-    # wait. 2 workers ≈ 2 searches in flight; memory is guarded by
-    # MEMORY_LIMIT_MB and the queue shed below.
-PATHFINDING_EXECUTOR_WORKERS = 2
+# Executor threads running pathfinding. The GIL serialises CPU-bound
+# searches anyway (total throughput is the same for any pool size), and a
+# single worker halves the worst-case RAM (two concurrent hard searches
+# could each approach MEMORY_LIMIT_MB before bailing). Peak bursts shed
+# fast with 503 + Retry-After instead, and the frontend retries them.
+PATHFINDING_EXECUTOR_WORKERS = 1
 # Peak shedding: when this many searches are already WAITING in the
 # executor queue, new requests fail fast with 503 + Retry-After instead of
 # sitting 30s for a guaranteed timeout. The frontend retries 503s
@@ -188,4 +187,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.6.3"
+APP_VERSION = "1.6.4"

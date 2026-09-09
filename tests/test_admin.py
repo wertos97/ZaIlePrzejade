@@ -221,5 +221,20 @@ class TestAdminPanel(unittest.TestCase):
             conn.close()
 
 
+    def test_shutdown_marker_detects_unclean(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = os.path.join(tmp, '.clean_shutdown')
+            # first boot: no marker → clean
+            self.assertFalse(admin_stats.consume_shutdown_marker(marker))
+            self.assertTrue(os.path.isfile(marker))
+            # clean shutdown removes it → next boot clean too
+            admin_stats.clear_shutdown_marker(marker)
+            self.assertFalse(os.path.isfile(marker))
+            self.assertFalse(admin_stats.consume_shutdown_marker(marker))
+            # leftover marker (kill -9 / OOM) → unclean detected
+            self.assertTrue(admin_stats.consume_shutdown_marker(marker))
+
+
 if __name__ == '__main__':
     unittest.main()

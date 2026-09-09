@@ -4,6 +4,7 @@ HTTP Server for MPK Kraków Ticket Cost Calculator.
 Entry point — loads modules and starts the threaded server.
 """
 
+import atexit
 import os
 import signal
 import sys
@@ -181,6 +182,16 @@ def main():
     # ostatni 'Powód' z autoupdate.log (update / naprawa) albo restart ręczny
     from server import admin_stats
     reason = admin_stats.read_last_reason(time.time())
+    # Marker czystego shutdownu: stawiany przy ready, zdejmowany w atexit.
+    # Brak markera = poprzedni proces nie zdążył się czysto zamknąć
+    # (OOM-kill, SIGKILL, crash) — to widać potem w panelu w restartach.
+    _shutdown_marker = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'processed', '.clean_shutdown')
+    if admin_stats.consume_shutdown_marker(_shutdown_marker):
+        reason = ('nieczyste zamknięcie poprzedniego procesu '
+                  '(możliwy OOM/kill)')
+    atexit.register(admin_stats.clear_shutdown_marker, _shutdown_marker)
     admin_stats.record_restart(APP_VERSION, reason=reason or 'ręczny start')
 
     signal.signal(signal.SIGTERM, _request_shutdown)

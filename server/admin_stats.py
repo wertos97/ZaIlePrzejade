@@ -122,6 +122,34 @@ def drop_session(token):
     _sessions.pop(token, None)
 
 
+def consume_shutdown_marker(path):
+    """Boot check for unclean previous shutdown (OOM-kill/SIGKILL/crash).
+
+    Returns True when the marker file exists (= previous run reached
+    ready but never shut down cleanly), then (re)arms it for this run.
+    The server removes it in atexit; SIGKILL/OOM never run atexit, so a
+    leftover marker is the trace. Best-effort, never raises.
+    """
+    try:
+        unclean = os.path.isfile(path)
+    except Exception:
+        unclean = False
+    try:
+        with open(path, 'w') as f:
+            f.write('ready')
+    except OSError:
+        pass
+    return unclean
+
+
+def clear_shutdown_marker(path):
+    """Atexit hook: clean shutdown removes the marker."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 # ------------------------------------------------------------
 # Setup / events
 # ------------------------------------------------------------

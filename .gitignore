@@ -53,6 +53,8 @@ processed/shapes.json
 processed/metadata.json
 processed/.backup-*/
 processed/gtfs_update.json
+# Clean-shutdown marker (OOM detection) — runtime only.
+processed/.clean_shutdown
 
 # Panel admina: dane i hasło — tylko na VPS, nigdy w repo
 processed/stats.sqlite*

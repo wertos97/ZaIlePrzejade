@@ -337,14 +337,38 @@ def _http_get(url, timeout=30, max_bytes=DOWNLOAD_MAX_BYTES):
 
 def _download(url, dest_path, timeout=DOWNLOAD_TIMEOUT_SECONDS,
               max_bytes=DOWNLOAD_MAX_BYTES):
-    """Download url to dest_path (atomic via tmp+rename). Raises on error."""
-    body = _http_get(url, timeout=timeout, max_bytes=max_bytes)
-    if len(body) > max_bytes:
-        raise OSError(f'{url} exceeds size cap ({len(body)} bytes)')
+    """Download url to dest_path (atomic via tmp+rename, streamed).
+
+    Streams in chunks so a ~20MB zip never sits whole in RAM (matters on
+    a 256MB box). Raises on error or when exceeding the size cap.
+    """
+    import shutil as _shutil
+    req = urllib.request.Request(url, headers={
+        'User-Agent': 'ZaIlePrzejade-gtfs-check/1.0 (https://zaileprzeja.de)',
+    })
     tmp = dest_path + '.part'
-    with open(tmp, 'wb') as f:
-        f.write(body)
-    os.replace(tmp, dest_path)
+    total = 0
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                raise OSError(f'HTTP {resp.status} for {url}')
+            with open(tmp, 'wb') as f:
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise OSError(
+                            f'{url} exceeds size cap ({total} bytes)')
+                    f.write(chunk)
+        os.replace(tmp, dest_path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     return dest_path
 
 

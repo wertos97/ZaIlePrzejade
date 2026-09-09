@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import sys
 import urllib.request
 import zipfile
@@ -106,10 +107,96 @@ def parse_float(val):
 
 
 def read_csv(filepath):
-    """Read a CSV file and return list of dictionaries."""
+    """Read a CSV file and return list of dictionaries.
+
+    Small files only (stops, routes) — stop_times/shapes are streamed.
+    """
     with open(filepath, 'r', encoding='utf-8-sig', newline='') as f:
         reader = csv.DictReader(f)
         return list(reader)
+
+
+def iter_csv_rows(filepath):
+    """Stream CSV rows as dicts without materializing the file."""
+    with open(filepath, 'r', encoding='utf-8-sig', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            yield row
+
+
+def is_sorted_by_key(filepath, key):
+    """Streaming check for non-decreasing `key` order (one cheap pass)."""
+    prev = None
+    for row in iter_csv_rows(filepath):
+        cur = row.get(key) or ''
+        if prev is not None and cur < prev:
+            return False
+        prev = cur
+    return True
+
+
+def _spill_rows_to_sqlite(path, entry_fn, key_fn, columns):
+    """Spill an unsorted CSV into a temp sqlite DB.
+
+    Yields (key, [entry, ...]) groups in FILE order of first appearance
+    (so edge-dedup tie-breaks match the legacy in-memory path exactly)
+    with flat RAM usage. Caller must exhaust the generator (cleanup
+    happens when it finishes).
+    """
+    import sqlite3
+    import tempfile
+    tmpdir = tempfile.mkdtemp(prefix='gtfs_spill_')
+    db_path = os.path.join(tmpdir, 'spill.db')
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute('PRAGMA journal_mode=OFF')
+        con.execute('PRAGMA synchronous=OFF')
+        con.execute('PRAGMA cache_size=-8000')
+        cols = ', '.join(f'{c} {t}' for c, t in columns)
+        con.execute(f'CREATE TABLE rows (key TEXT, {cols})')
+        order = []
+        seen = set()
+        batch = []
+        for st in iter_csv_rows(path):
+            key = key_fn(st)
+            if key is None:
+                continue
+            entry = entry_fn(st)
+            if entry is None:
+                continue
+            if key not in seen:
+                seen.add(key)
+                order.append(key)
+            batch.append((key,) + tuple(entry))
+            if len(batch) >= 5000:
+                con.executemany(
+                    f'INSERT INTO rows VALUES ({", ".join("?" * (len(columns) + 1))})',
+                    batch)
+                batch = []
+        if batch:
+            con.executemany(
+                f'INSERT INTO rows VALUES ({", ".join("?" * (len(columns) + 1))})',
+                batch)
+        con.commit()
+        con.execute('CREATE INDEX idx_key ON rows(key)')
+    except Exception:
+        con.close()
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise
+
+    col_names = ', '.join(c for c, _ in columns)
+
+    def _groups():
+        try:
+            for key in order:
+                cur = con.execute(
+                    f'SELECT {col_names} FROM rows WHERE key=?', (key,))
+                yield key, [tuple(r) for r in cur.fetchall()]
+        finally:
+            con.close()
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return _groups()
 
 
 def parse_time_to_seconds(time_str):
@@ -332,10 +419,89 @@ def process_routes():
     return routes
 
 
+def _stop_time_entry(st, stops):
+    """Parse one stop_times row; None when the stop is unknown."""
+    stop_id = st['stop_id']
+    if stop_id not in stops:
+        return None
+    return {
+        'stop_id': stop_id,
+        'sequence': int(st.get('stop_sequence', '0')),
+        'shape_dist': parse_float(st.get('shape_dist_traveled', '')),
+        'arrival': parse_time_to_seconds(st.get('arrival_time', '')),
+        'departure': parse_time_to_seconds(st.get('departure_time', '')),
+    }
+
+
+def _flush_trip(stop_list, trip_id, trip_to_route, trip_to_direction,
+                trip_to_headsign, edges, edge_lookup, stops, mode):
+    """Build deduped edges for one trip (shared by both read paths)."""
+    if len(stop_list) < 2:
+        return
+
+    # Sort by sequence
+    stop_list.sort(key=lambda x: x['sequence'])
+
+    route_id = trip_to_route.get(trip_id, '')
+    direction = trip_to_direction.get(trip_id, '0')
+    headsign = trip_to_headsign.get(trip_id, '')
+
+    for i in range(len(stop_list) - 1):
+        from_stop = stop_list[i]['stop_id']
+        to_stop = stop_list[i + 1]['stop_id']
+
+        # Calculate distance
+        dist = 0.0
+        if stop_list[i]['shape_dist'] is not None and stop_list[i + 1]['shape_dist'] is not None:
+            # Use shape_dist_traveled if available
+            dist = stop_list[i + 1]['shape_dist'] - stop_list[i]['shape_dist']
+            if dist < 0:
+                dist = 0.0
+        else:
+            # Calculate using Haversine distance
+            from_stop_data = stops[from_stop]
+            to_stop_data = stops[to_stop]
+            dist = haversine(
+                from_stop_data['lat'], from_stop_data['lon'],
+                to_stop_data['lat'], to_stop_data['lon']
+            )
+
+        # Calculate travel time (seconds) between stops:
+        # departure from current stop -> arrival at next stop
+        travel_time = None
+        dep_time = stop_list[i].get('departure')
+        arr_time = stop_list[i + 1].get('arrival')
+        if dep_time is not None and arr_time is not None:
+            travel_time = arr_time - dep_time
+            if travel_time < 0:
+                travel_time = None  # Invalid (crosses midnight or bad data)
+
+        # Deduplicate edges
+        edge_key = (from_stop, to_stop, route_id, direction)
+        if edge_key in edge_lookup:
+            continue
+        edge_lookup.add(edge_key)
+
+        edges.append({
+            'from': from_stop,
+            'to': to_stop,
+            'distance': round(dist, 4),
+            'time': travel_time,
+            'route_id': route_id,
+            'direction': direction,
+            'mode': mode,
+            'headsign': headsign,
+        })
+
+
 def process_trips_and_connections(stops, routes):
     """
     Process trips and stop_times to build stop-to-stop connections.
     Returns a list of edges: {from, to, distance, route_id, direction, mode}
+
+    Memory-conscious: stop_times are streamed trip by trip (files are
+    normally sorted by trip_id); unsorted files fall back to the legacy
+    in-memory grouping.
     """
     edges = []
     edge_lookup = set()  # For deduplication
@@ -350,102 +516,63 @@ def process_trips_and_connections(stops, routes):
 
         print(f"  Processing {feed_name} trips and stop_times...")
 
-        # Read trips to get route_id for each trip
-        trips = read_csv(trips_path)
+        # Read trips to get route_id for each trip (small: streamed, no list)
         trip_to_route = {}
         trip_to_direction = {}
         trip_to_headsign = {}
-        for trip in trips:
+        for trip in iter_csv_rows(trips_path):
             trip_id = trip['trip_id']
             trip_to_route[trip_id] = trip.get('route_id', '')
             trip_to_direction[trip_id] = trip.get('direction_id', '0')
             trip_to_headsign[trip_id] = trip.get('trip_headsign', '').strip()
 
-        # Read stop_times and group by trip_id
-        stop_times = read_csv(stop_times_path)
-        print(f"    Read {len(stop_times)} stop_time entries")
+        flush_args = (trip_to_route, trip_to_direction, trip_to_headsign,
+                      edges, edge_lookup, stops, mode)
 
-        # Group by trip_id
-        trip_stops = defaultdict(list)
-        for st in stop_times:
-            trip_id = st['trip_id']
-            stop_id = st['stop_id']
-            stop_seq = int(st.get('stop_sequence', '0'))
-            shape_dist = parse_float(st.get('shape_dist_traveled', ''))
-            arrival = parse_time_to_seconds(st.get('arrival_time', ''))
-            departure = parse_time_to_seconds(st.get('departure_time', ''))
+        if is_sorted_by_key(stop_times_path, 'trip_id'):
+            # Streaming path: one trip in memory at a time.
+            trip_count = 0
+            cur_trip_id = None
+            cur_stops = []
+            for st in iter_csv_rows(stop_times_path):
+                trip_id = st['trip_id']
+                if cur_trip_id is not None and trip_id != cur_trip_id:
+                    _flush_trip(cur_stops, cur_trip_id, *flush_args)
+                    trip_count += 1
+                    cur_stops = []
+                cur_trip_id = trip_id
+                entry = _stop_time_entry(st, stops)
+                if entry is not None:
+                    cur_stops.append(entry)
+            if cur_trip_id is not None:
+                _flush_trip(cur_stops, cur_trip_id, *flush_args)
+                trip_count += 1
+            print(f"    Streamed {trip_count} trips with stop data")
+        else:
+            # Unsorted file: spill to sqlite (flat RAM) instead of
+            # grouping everything in memory.
+            print("    stop_times not sorted by trip_id — spilling to sqlite")
+            spill_cols = (('stop_id', 'TEXT'), ('seq', 'INTEGER'),
+                          ('dist', 'REAL'), ('arr', 'INTEGER'),
+                          ('dep', 'INTEGER'))
 
-            if stop_id not in stops:
-                continue
+            def _entry(st):
+                e = _stop_time_entry(st, stops)
+                if e is None:
+                    return None
+                return (e['stop_id'], e['sequence'], e['shape_dist'],
+                        e['arrival'], e['departure'])
 
-            trip_stops[trip_id].append({
-                'stop_id': stop_id,
-                'sequence': stop_seq,
-                'shape_dist': shape_dist,
-                'arrival': arrival,
-                'departure': departure,
-            })
-
-        print(f"    Found {len(trip_stops)} trips with stop data")
-
-        # Build edges for each trip
-        for trip_id, stop_list in trip_stops.items():
-            if len(stop_list) < 2:
-                continue
-
-            # Sort by sequence
-            stop_list.sort(key=lambda x: x['sequence'])
-
-            route_id = trip_to_route.get(trip_id, '')
-            direction = trip_to_direction.get(trip_id, '0')
-            headsign = trip_to_headsign.get(trip_id, '')
-
-            for i in range(len(stop_list) - 1):
-                from_stop = stop_list[i]['stop_id']
-                to_stop = stop_list[i + 1]['stop_id']
-
-                # Calculate distance
-                dist = 0.0
-                if stop_list[i]['shape_dist'] is not None and stop_list[i + 1]['shape_dist'] is not None:
-                    # Use shape_dist_traveled if available
-                    dist = stop_list[i + 1]['shape_dist'] - stop_list[i]['shape_dist']
-                    if dist < 0:
-                        dist = 0.0
-                else:
-                    # Calculate using Haversine distance
-                    from_stop_data = stops[from_stop]
-                    to_stop_data = stops[to_stop]
-                    dist = haversine(
-                        from_stop_data['lat'], from_stop_data['lon'],
-                        to_stop_data['lat'], to_stop_data['lon']
-                    )
-
-                # Calculate travel time (seconds) between stops:
-                # departure from current stop -> arrival at next stop
-                travel_time = None
-                dep_time = stop_list[i].get('departure')
-                arr_time = stop_list[i + 1].get('arrival')
-                if dep_time is not None and arr_time is not None:
-                    travel_time = arr_time - dep_time
-                    if travel_time < 0:
-                        travel_time = None  # Invalid (crosses midnight or bad data)
-
-                # Deduplicate edges
-                edge_key = (from_stop, to_stop, route_id, direction)
-                if edge_key in edge_lookup:
-                    continue
-                edge_lookup.add(edge_key)
-
-                edges.append({
-                    'from': from_stop,
-                    'to': to_stop,
-                    'distance': round(dist, 4),
-                    'time': travel_time,
-                    'route_id': route_id,
-                    'direction': direction,
-                    'mode': mode,
-                    'headsign': headsign,
-                })
+            trip_count = 0
+            for trip_id, rows in _spill_rows_to_sqlite(
+                    stop_times_path, _entry, lambda st: st['trip_id'],
+                    spill_cols):
+                stop_list = [
+                    {'stop_id': r[0], 'sequence': r[1], 'shape_dist': r[2],
+                     'arrival': r[3], 'departure': r[4]} for r in rows]
+                _flush_trip(stop_list, trip_id, *flush_args)
+                trip_count += 1
+            print(f"    Streamed {trip_count} trips with stop data")
 
         print(f"    Created edges for {feed_name}")
 
@@ -466,8 +593,9 @@ def add_transfer_edges(edges, stops, prefix_to_stops):
         if len(stop_ids) < 2:
             continue
 
-        # Get unique stop_ids
-        unique_stops = list(set(stop_ids))
+        # Get unique stop_ids (sorted: deterministic output across runs —
+        # plain set() order depends on hash randomization)
+        unique_stops = sorted(set(stop_ids))
 
         # Connect all pairs of stops at the same location
         for i in range(len(unique_stops)):
@@ -523,10 +651,24 @@ def build_adjacency_list(edges):
     return adj
 
 
+def _flush_shape(shape_id, points, shape_to_route, route_shapes):
+    """Store one shape (shared by both read paths)."""
+    points.sort(key=lambda x: x[0])
+    route_id = shape_to_route.get(shape_id, '')
+    if route_id:
+        # Simplify: take every Nth point to reduce size
+        simplified = [(lat, lon) for _, lat, lon in points[::5]]
+        if route_id not in route_shapes or len(simplified) > len(route_shapes[route_id]):
+            route_shapes[route_id] = simplified
+
+
 def process_shapes(routes):
     """
     Process shapes from all feeds and create simplified route shapes.
     Returns dict of route_id -> list of [lat, lon] points.
+
+    Memory-conscious: shape points are streamed shape by shape (files
+    are normally sorted by shape_id); unsorted files use in-memory grouping.
     """
     route_shapes = {}
 
@@ -539,39 +681,58 @@ def process_shapes(routes):
 
         print(f"  Processing shapes for {feed_name}...")
 
-        # Read trips to map shape_id -> route_id
-        trips = read_csv(trips_path)
+        # Read trips to map shape_id -> route_id (small: streamed, no list)
         shape_to_route = {}
-        for trip in trips:
+        for trip in iter_csv_rows(trips_path):
             shape_id = trip.get('shape_id', '')
             route_id = trip.get('route_id', '')
             if shape_id and route_id and shape_id not in shape_to_route:
                 shape_to_route[shape_id] = route_id
 
-        # Read shapes and group by shape_id
-        shapes = read_csv(shapes_path)
-        print(f"    Read {len(shapes)} shape points")
+        if is_sorted_by_key(shapes_path, 'shape_id'):
+            # Streaming path: one shape in memory at a time.
+            shape_count = 0
+            cur_shape_id = None
+            cur_points = []
+            for s in iter_csv_rows(shapes_path):
+                shape_id = s['shape_id']
+                if cur_shape_id is not None and shape_id != cur_shape_id:
+                    _flush_shape(cur_shape_id, cur_points,
+                                 shape_to_route, route_shapes)
+                    shape_count += 1
+                    cur_points = []
+                cur_shape_id = shape_id
+                lat = parse_float(s.get('shape_pt_lat', ''))
+                lon = parse_float(s.get('shape_pt_lon', ''))
+                seq = int(s.get('shape_pt_sequence', '0'))
+                if lat is not None and lon is not None:
+                    cur_points.append((seq, lat, lon))
+            if cur_shape_id is not None:
+                _flush_shape(cur_shape_id, cur_points,
+                             shape_to_route, route_shapes)
+                shape_count += 1
+            print(f"    Streamed {shape_count} shapes")
+        else:
+            # Unsorted file: spill to sqlite (flat RAM).
+            print("    shapes not sorted by shape_id — spilling to sqlite")
+            spill_cols = (('seq', 'INTEGER'), ('lat', 'REAL'),
+                          ('lon', 'REAL'))
 
-        shape_points = defaultdict(list)
-        for s in shapes:
-            shape_id = s['shape_id']
-            lat = parse_float(s.get('shape_pt_lat', ''))
-            lon = parse_float(s.get('shape_pt_lon', ''))
-            seq = int(s.get('shape_pt_sequence', '0'))
-            if lat is not None and lon is not None:
-                shape_points[shape_id].append((seq, lat, lon))
+            def _shape_entry(s):
+                lat = parse_float(s.get('shape_pt_lat', ''))
+                lon = parse_float(s.get('shape_pt_lon', ''))
+                if lat is None or lon is None:
+                    return None
+                return (int(s.get('shape_pt_sequence', '0')), lat, lon)
 
-        # Sort points by sequence and store
-        for shape_id, points in shape_points.items():
-            points.sort(key=lambda x: x[0])
-            route_id = shape_to_route.get(shape_id, '')
-            if route_id:
-                # Simplify: take every Nth point to reduce size
-                simplified = [(lat, lon) for _, lat, lon in points[::5]]
-                if route_id not in route_shapes or len(simplified) > len(route_shapes[route_id]):
-                    route_shapes[route_id] = simplified
-
-        print(f"    Processed shapes for {len(shape_points)} routes")
+            shape_count = 0
+            for shape_id, rows in _spill_rows_to_sqlite(
+                    shapes_path, _shape_entry, lambda s: s['shape_id'],
+                    spill_cols):
+                _flush_shape(shape_id, list(rows),
+                             shape_to_route, route_shapes)
+                shape_count += 1
+            print(f"    Streamed {shape_count} shapes")
 
     print(f"  Total route shapes: {len(route_shapes)}")
     return route_shapes
