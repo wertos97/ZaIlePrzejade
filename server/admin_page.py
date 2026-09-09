@@ -124,7 +124,9 @@ PANEL_PAGE = """<!DOCTYPE html>
     <div class="viewbar" style="margin:10px 0 0">
       <button class="view-btn" id="gtfs-btn-check">Sprawdź teraz</button>
       <button class="view-btn hidden" id="gtfs-btn-update">Aktualizuj dane</button>
+      <button class="view-btn hidden" id="gtfs-btn-cancel">Anuluj plan</button>
     </div>
+    <div id="gtfs-sched" class="mut" style="margin-top:8px"></div>
     <div id="gtfs-update-box" class="hidden" style="margin-top:4px">
       <div id="gtfs-diff"></div>
     </div>
@@ -379,6 +381,17 @@ function renderGtfs(s){
 
   document.getElementById('gtfs-btn-check').disabled = active;
   document.getElementById('gtfs-btn-update').classList.toggle('hidden', !showUpdate);
+  const sched = s.scheduled;
+  const showSched = !!sched && !active;
+  const schedEl = document.getElementById('gtfs-sched');
+  document.getElementById('gtfs-btn-cancel').classList.toggle('hidden', !showSched);
+  if (showSched) {
+    schedEl.textContent = 'Zaplanowano instalację na ' + fmtGtfsTs(sched.at) +
+      ' (wersje: ' + (sched.versions || []).join(', ') + '). ' +
+      'Aktualizuj dane = instaluj od razu.';
+  } else {
+    schedEl.textContent = '';
+  }
   const updBox = document.getElementById('gtfs-update-box');
   updBox.classList.toggle('hidden', !showUpdate);
   if (showUpdate) {
@@ -446,6 +459,17 @@ async function startGtfsUpdate(){
   loadGtfs();
 }
 document.getElementById('gtfs-btn-update').addEventListener('click', startGtfsUpdate);
+
+async function startGtfsCancel(){
+  if (!confirm('Anulować zaplanowaną instalację? Ta wersja nie zostanie zainstalowana automatycznie.')) return;
+  let r;
+  try {
+    r = await fetch('/api/admin/gtfs-cancel', {method:'POST', credentials:'same-origin'});
+  } catch(e){ return; }
+  if (r.status === 401){ location.reload(); return; }
+  loadGtfs();
+}
+document.getElementById('gtfs-btn-cancel').addEventListener('click', startGtfsCancel);
 
 async function startGtfsCheck(){
   let r;

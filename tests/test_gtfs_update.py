@@ -193,3 +193,54 @@ class TestBackupAndReconcile(unittest.TestCase):
         gu.write_state(state)
         out = gu.reconcile_after_boot({'version': 'X'})
         self.assertEqual(out['job']['state'], 'error')
+
+
+class TestScheduling(unittest.TestCase):
+    def _at(self, h, m=0, day=8):
+        return datetime(2026, 9, day, h, m, tzinfo=WARSAW)
+
+    def test_next_3am(self):
+        self.assertEqual(gu.next_3am(self._at(10)).hour, 3)
+        self.assertEqual(gu.next_3am(self._at(10)).day, 9)
+        self.assertEqual(
+            (gu.next_3am(self._at(2)).hour, gu.next_3am(self._at(2)).day),
+            (3, 8))
+
+    def test_check_due(self):
+        t = lambda h, m=0, day=8: datetime(
+            2026, 9, day, h, m, tzinfo=WARSAW).timestamp()
+        self.assertTrue(gu.check_due(t(10), None))
+        self.assertTrue(gu.check_due(t(10), t(8)))       # 9:00 passed
+        self.assertFalse(gu.check_due(t(10), t(9, 30)))
+        # yesterday 18:00 covers yesterday's 17:00 slot → not due at 08:00
+        self.assertFalse(gu.check_due(t(8), t(18, day=7)))
+        # ...but due again after today's 09:00
+        self.assertTrue(gu.check_due(t(10), t(18, day=7)))
+
+    def test_autoschedule_and_cancel(self):
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        orig = gu.PROCESSED_DIR
+        gu.PROCESSED_DIR = tmp.name
+        try:
+            check = {'newer': True,
+                     'upstream': {'a.zip': {'version': 'V2'}}}
+            sch = gu.maybe_autoschedule(check, self._at(10))
+            self.assertIsNotNone(sch)
+            self.assertEqual(
+                datetime.fromtimestamp(sch['at'], WARSAW).hour, 3)
+            # same version again → same schedule kept
+            sch2 = gu.maybe_autoschedule(check, self._at(18))
+            self.assertEqual(sch['at'], sch2['at'])
+            # cancel → no reschedule of the same version...
+            self.assertTrue(gu.cancel_scheduled())
+            self.assertIsNone(gu.maybe_autoschedule(check, self._at(18)))
+            # ...but a *different* version reschedules
+            check2 = {'newer': True,
+                      'upstream': {'a.zip': {'version': 'V3'}}}
+            self.assertIsNotNone(gu.maybe_autoschedule(check2, self._at(18)))
+            # no-op without newer flag
+            self.assertIsNone(gu.maybe_autoschedule({'newer': False}, None))
+        finally:
+            gu.PROCESSED_DIR = orig
+            tmp.cleanup()

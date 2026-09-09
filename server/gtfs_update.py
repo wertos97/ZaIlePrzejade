@@ -97,6 +97,8 @@ def default_state():
         },
         'last_check': None,
         'last_done': None,
+        'scheduled': None,
+        'cancelled_version': None,
     }
 
 
@@ -159,6 +161,106 @@ def next_check_run(now=None):
     first = sorted(CHECK_HOURS)[0]
     nxt = now.replace(hour=first, minute=0, second=0, microsecond=0)
     return nxt + _one_day()
+
+
+def next_3am(now=None):
+    """Next 03:00 Europe/Warsaw strictly after `now` (install window)."""
+    now = now or datetime.now(WARSAW)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=WARSAW)
+    slot = now.replace(hour=3, minute=0, second=0, microsecond=0)
+    if slot > now:
+        return slot
+    return slot + _one_day()
+
+
+def most_recent_slot(now=None):
+    """Most recent CHECK_HOURS slot at or before `now` (aware datetime)."""
+    now = now or datetime.now(WARSAW)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=WARSAW)
+    for day_offset in (0, 1):
+        day = now - _days(day_offset)
+        for hour in sorted(CHECK_HOURS, reverse=True):
+            slot = day.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if slot <= now:
+                return slot
+    return None  # unreachable (a slot always exists within 24h)
+
+
+def _days(n):
+    from datetime import timedelta
+    return timedelta(days=n)
+
+
+def check_due(now_ts=None, last_at=None):
+    """True when a check slot passed since the last check (or never)."""
+    now = datetime.fromtimestamp(
+        now_ts if now_ts is not None else time.time(), WARSAW)
+    slot = most_recent_slot(now)
+    if slot is None:
+        return True
+    if not last_at:
+        return True
+    return last_at < slot.timestamp()
+
+
+def upstream_version_key(upstream):
+    """Stable identity of an upstream snapshot for dedup/cancel."""
+    upstream = upstream or {}
+    return '|'.join('%s=%s' % (z, (upstream[z] or {}).get('version', ''))
+                    for z in sorted(upstream))
+
+
+def maybe_autoschedule(check, now=None):
+    """Schedule installation at next 03:00 for a newer upstream version.
+
+    Called after every check (scheduled or manual). Respects an admin
+    cancellation for the same version; a different version reschedules.
+    Returns the scheduled dict (or None when nothing to schedule).
+    """
+    if not check or not check.get('newer'):
+        return None
+    key = upstream_version_key(check.get('upstream'))
+    if not key:
+        return None
+    state = read_state()
+    if state.get('cancelled_version') == key:
+        return None  # admin cancelled exactly this version
+    sch = state.get('scheduled')
+    if sch and sch.get('version_key') == key:
+        return sch  # already scheduled
+    at = next_3am(now).timestamp()
+    versions = sorted({(v.get('version') or '')
+                       for v in (check.get('upstream') or {}).values()
+                       if v.get('version')})
+    created = now.timestamp() if isinstance(now, datetime) else time.time()
+    state['scheduled'] = {
+        'version_key': key,
+        'versions': versions,
+        'at': at,
+        'created_at': created,
+    }
+    write_state(state)
+    return state['scheduled']
+
+
+def cancel_scheduled():
+    """Cancel a scheduled installation (safe, no side effects).
+
+    The cancelled version will NOT be auto-scheduled again; a manual
+    "update now" stays available. Returns True when something was
+    cancelled.
+    """
+    state = read_state()
+    sch = state.get('scheduled')
+    if not sch:
+        return False
+    if sch.get('version_key'):
+        state['cancelled_version'] = sch['version_key']
+    state['scheduled'] = None
+    write_state(state)
+    return True
 
 
 def _one_day():
@@ -608,10 +710,18 @@ def run_update_job():
     backup_dir = None
     try:
         state = read_state()
+        if outputs_tracked_in_git():
+            set_job('error', 0, '',
+                    'Dokończ migrację danych (faza 2: git rm).')
+            return read_state()
         if not (state.get('last_check') or {}).get('newer'):
             set_job('error', 0, '',
                     'Brak potwierdzonej nowszej wersji (najpierw sprawdzenie).')
             return read_state()
+        # Executing (manually or on schedule) consumes the plan.
+        state['scheduled'] = None
+        state['cancelled_version'] = None
+        write_state(state)
         if shutil.disk_usage(PROCESSED_DIR).free < MIN_FREE_BYTES:
             set_job('error', 0, '', 'Za mało miejsca na dysku na aktualizację.')
             return read_state()
@@ -683,6 +793,7 @@ def reconcile_after_boot(feed_metadata):
         if expected and current == expected:
             _remove_backups()
             state['last_done'] = {'at': time.time(), 'version': current}
+            state['cancelled_version'] = None
             state['job'] = {'state': 'idle', 'progress': 100,
                             'phase': '', 'detail': '', 'pid': None}
         else:

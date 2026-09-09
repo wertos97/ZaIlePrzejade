@@ -395,8 +395,15 @@ def _gtfs_start_job(target, name):
 
 
 def _gtfs_scheduler_loop():
-    """Twice-daily freshness checks (09:00/17:00 Europe/Warsaw)."""
-    import datetime as _dt
+    """Minute-tick scheduler: twice-daily checks + 03:00 installations.
+
+    - When a check slot (09:00/17:00 Europe/Warsaw) passed since the last
+      check → run check, then auto-schedule installation at next 03:00
+      when a newer version was found (unless admin cancelled it).
+    - When a scheduled installation is due → run the update job.
+    - Overdue schedules (e.g. server was down at 03:00) wait for the
+      NEXT 03:00 — never install during the day unannounced.
+    """
     # Staggered first check after boot: only when overdue (>12h), so a
     # plain restart never pays the ~27MB download immediately.
     try:
@@ -408,26 +415,40 @@ def _gtfs_scheduler_loop():
             return
         if not _gtfs_job_active():
             try:
-                gtfs_update.run_check_job()
+                check = gtfs_update.run_check_job()
+                gtfs_update.maybe_autoschedule(check)
             except Exception:
                 pass
     while not _gtfs_scheduler_stop.is_set():
-        try:
-            nxt = gtfs_update.next_check_run(_dt.datetime.now(
-                gtfs_update.WARSAW))
-            wait_s = max(
-                0, (nxt - _dt.datetime.now(gtfs_update.WARSAW)).total_seconds())
-        except Exception:
-            wait_s = 3600
-        if _gtfs_scheduler_stop.wait(min(wait_s, 3600)):
+        if _gtfs_scheduler_stop.wait(60):
             return
-        if wait_s > 3600:
-            continue  # re-evaluate (clock shifts, long sleeps chunked)
-        if not _gtfs_job_active():
-            try:
-                gtfs_update.run_check_job()
-            except Exception:
-                pass
+        try:
+            if _gtfs_job_active():
+                continue
+            state = gtfs_update.read_state()
+            now = time.time()
+            sch = state.get('scheduled')
+            if sch and now >= sch.get('at', 0):
+                _gtfs_start_job(gtfs_update.run_update_job,
+                                'gtfs-update-scheduled')
+                continue
+            last_at = (state.get('last_check') or {}).get('at')
+            if gtfs_update.check_due(now, last_at):
+                started = _gtfs_start_job(_gtfs_scheduled_check,
+                                          'gtfs-check')
+                if not started:
+                    continue
+        except Exception:
+            pass
+
+
+def _gtfs_scheduled_check():
+    """Check wrapper for the scheduler: auto-schedules on newer data."""
+    try:
+        check = gtfs_update.run_check_job()
+        gtfs_update.maybe_autoschedule(check)
+    except Exception:
+        pass
 
 
 def _start_gtfs_scheduler():
@@ -677,7 +698,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path in ('/api/admin/login', '/api/admin/logout',
-                           '/api/admin/gtfs-check', '/api/admin/gtfs-update'):
+                           '/api/admin/gtfs-check', '/api/admin/gtfs-cancel',
+                           '/api/admin/gtfs-update'):
             self.handle_api(parsed.path, {})
             return
         self.send_error_page(405)
@@ -1046,19 +1068,31 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 },
                 'last_check': state.get('last_check'),
                 'last_done': state.get('last_done'),
+                'scheduled': state.get('scheduled'),
                 'job': state.get('job'),
                 'migration_pending': _GTFS_OUTPUTS_TRACKED,
             })
             return
 
         if path == '/api/admin/gtfs-check':
-            # Manual freshness check (the scheduler also runs it 2x daily).
-            if not _gtfs_start_job(gtfs_update.run_check_job, 'gtfs-check'):
+            # Manual freshness check (same as scheduled: newer data gets
+            # auto-scheduled for 03:00).
+            if not _gtfs_start_job(_gtfs_scheduled_check, 'gtfs-check'):
                 self.serve_json(
                     {'error': 'Sprawdzanie już trwa. Spróbuj za chwilę.'},
                     status=409)
                 return
             self.serve_json({'started': True}, status=202)
+            return
+
+        if path == '/api/admin/gtfs-cancel':
+            # Cancel a scheduled installation (safe: no side effects).
+            # The same version will not be auto-scheduled again.
+            if gtfs_update.cancel_scheduled():
+                self.serve_json({'cancelled': True})
+            else:
+                self.serve_json({'cancelled': False,
+                                 'error': 'Brak zaplanowanej instalacji.'})
             return
 
         if path == '/api/admin/gtfs-update':

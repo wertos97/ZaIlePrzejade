@@ -178,6 +178,14 @@ class TestAdminPanel(unittest.TestCase):
         self.assertEqual(status, 401)
         status, _ = self._post('/api/admin/gtfs-check', {})
         self.assertEqual(status, 401)
+        status, _ = self._post('/api/admin/gtfs-cancel', {})
+        self.assertEqual(status, 401)
+
+    def test_gtfs_cancel_without_schedule(self):
+        status, body = self._post('/api/admin/gtfs-cancel', {},
+                                  self._authed())
+        self.assertEqual(status, 200)
+        self.assertFalse(json.loads(body).get('cancelled'))
 
     def test_gtfs_check_starts(self):
         # Worker stubbed — never touches the network in tests.
