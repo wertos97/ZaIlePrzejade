@@ -1424,6 +1424,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         cheap_result, cheap_error = cheap_pair
 
         if convenient_result is None and cheap_result is None:
+            _route_timeouts += 1
             try:
                 admin_stats.record_request('timeout', _get_client_ip(self))
             except Exception:

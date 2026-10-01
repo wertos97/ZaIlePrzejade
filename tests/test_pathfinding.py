@@ -165,6 +165,40 @@ class TestPathfindingIntegration(unittest.TestCase):
             self.assertLessEqual(cheap_result['cost_regular'],
                                  conv_result['cost_regular'])
 
+    def test_hard_pair_cheap_resolves_instead_of_timeout(self):
+        """Regression: Mydlniki Granica Miasta -> Kepna needs 5 rides, so
+        the <=4-ride enumeration completes empty. The driver must then
+        certify the capped bound route (20 zl) instead of timing out."""
+        pair_ids = ('group_335', 'group_614')
+        if pair_ids[0] not in self.stops_grouped \
+                or pair_ids[1] not in self.stops_grouped:
+            self.skipTest('hard pair not present in this dataset')
+        _, cheap_pair = self.pf.find_route_between_groups(
+            *pair_ids, mode='both')
+        cheap_result, cheap_err = cheap_pair
+        self.assertIsNotNone(cheap_result, cheap_err)
+        self.assertGreaterEqual(cheap_result['cost_regular'], 0.0)
+        self.assertLessEqual(cheap_result['cost_regular'], 20.0)
+
+    def test_enumeration_seed_never_changes_optimum(self):
+        """Seeding best_scalar with a valid upper bound only prunes work:
+        same pair, seeded vs unseeded, must yield the same best fare."""
+        from_ids = [p['id'] for p in
+                    self.stops_grouped[self.test_from]['platforms'][:2]]
+        to_ids = [p['id'] for p in
+                  self.stops_grouped[self.test_to]['platforms'][:2]]
+        import time as _time
+        unseeded = self.pf._enumerate_ride_bound(
+            from_ids, to_ids, 0.0, _time.monotonic() + 25.0)
+        seeded = self.pf._enumerate_ride_bound(
+            from_ids, to_ids, 0.0, _time.monotonic() + 25.0,
+            upper_bound=30.0)
+        self.assertEqual(len(unseeded), 3)
+        self.assertEqual(len(seeded), 3)
+        if unseeded[0] is None or seeded[0] is None:
+            self.skipTest('seed comparison needs a resolvable test pair')
+        self.assertAlmostEqual(unseeded[1], seeded[1])
+
     def test_find_route_completes_within_30s_budget(self):
         """The whole dual-mode search must fit the 30s product promise
         (phase budgets 8s short + 8s convenient + 10s cheap)."""

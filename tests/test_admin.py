@@ -188,10 +188,15 @@ class TestAdminPanel(unittest.TestCase):
         self.assertFalse(json.loads(body).get('cancelled'))
 
     def test_gtfs_check_starts(self):
-        # Worker stubbed — never touches the network in tests.
+        # Worker stubbed — never touches the network in tests. State is
+        # stubbed to idle: a stale job file from a real run must not
+        # make this hermetic test flake with 409.
         from server import gtfs_update as gu_mod
         orig = gu_mod.run_check_job
+        orig_state = gu_mod.read_state
         gu_mod.run_check_job = lambda: {'started': True}
+        gu_mod.read_state = lambda: {'job': {'state': 'idle'},
+                                     'last_check': None}
         try:
             status, body = self._post('/api/admin/gtfs-check', {},
                                       self._authed())
@@ -199,6 +204,7 @@ class TestAdminPanel(unittest.TestCase):
             self.assertTrue(json.loads(body).get('started'))
         finally:
             gu_mod.run_check_job = orig
+            gu_mod.read_state = orig_state
 
     def test_maintenance_endpoint_public(self):
         status, _, body = self._get('/api/maintenance')

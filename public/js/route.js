@@ -141,11 +141,22 @@ async function findRoute() {
         // Update equality indicator
         updateEqualityIndicators(result.cheap, result.convenient);
 
-        // Exact-only product, no fallbacks: if the requested mode's search
-        // exceeded its time budget, tell the user and stop — the other mode
-        // (if any) is one click away, but we never silently swap it in.
+        // The requested mode timed out but the other one computed:
+        // show it instead of leaving the user with nothing — switch
+        // to that mode (cached, no refetch) and say why. Only a fully
+        // failed search (both modes null) ends with a timeout toast.
         const route = result[state.routeMode];
         if (!route) {
+            const otherMode =
+                state.routeMode === 'cheap' ? 'convenient' : 'cheap';
+            if (result[otherMode]) {
+                const names = { cheap: 'Tania', convenient: 'Wygodna' };
+                showToast('Tryb "' + names[state.routeMode] + '" przekroczył '
+                    + 'czas wyszukiwania (30 s) — pokazuję trasę "'
+                    + names[otherMode] + '".', 6000, 'warning');
+                setRouteMode(otherMode);
+                return;
+            }
             showToast('Przekroczono czas wyszukiwania trasy (30 s). '
                 + 'Spróbuj ponownie za chwilę.', 6000, 'warning');
             return;

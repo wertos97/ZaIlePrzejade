@@ -691,7 +691,7 @@ def _ride_fragment(parents, start, end):
 
 
 def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
-                          deadline):
+                          deadline, upper_bound=float('inf')):
     """Exact-for-up-to-4-rides fare enumeration over the line graph (no A*).
 
     Composes WHOLE rides instead of expanding per-hop states:
@@ -712,8 +712,19 @@ def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
     (the driver certifies this explicitly). The A* remains as the fallback
     for the degenerate case of the enumeration hitting its deadline.
 
-    Returns (path_with_edges, scalar) for the best route, or (None, inf).
+    Returns (path_with_edges, scalar, completed) for the best route.
+    `completed` is True only when every composition loop ran to exhaustion
+    (no deadline break fired) — the driver uses it to certify "nothing
+    better exists" outcomes without running the expensive A* deepening.
+    On deadline the partial best-so-far is still returned (completed=False)
+    purely to tighten the caller's upper bound; it never certifies anything.
+    `upper_bound` (same scalar units: uncapped fare + penalty per boarding)
+    optionally seeds best_scalar: a valid complete route costs at most that,
+    so anything reaching it prunes immediately. Seeding never affects
+    exactness — it only cuts work, and stage exits / certification below
+    treat a seeded-but-empty best as "no route" (callers ignore None frags).
     """
+    end_set = set(end_platforms)
     end_set = set(end_platforms)
     penalty = boarding_penalty_zl
     # Straight-line distance to the destination group, per platform (memo):
@@ -733,8 +744,10 @@ def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
     # groups (walks are free) — expand the platform sets to whole groups.
     from_platforms = {p for o in from_platforms for p in _walk_platforms(o)}
     end_platforms = {p for e in end_platforms for p in _walk_platforms(e)}
-    best_scalar = float('inf')
+    best_scalar = upper_bound
     best = None  # ride list [(line, from_platform, to_platform), ...]
+    # False as soon as any composition loop bails out on the deadline.
+    completed = True
 
     def consider(scalar, rides):
         nonlocal best_scalar, best
@@ -763,9 +776,11 @@ def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
 
     # ---- stage 1 exit: if the best 1-ride route can already be certified
     # (every route with 2+ boardings costs >= per_floor * 2), stop here.
+    # The `best is not None` guard keeps seeded runs searching: a seeded
+    # scalar must never certify an empty result.
     per_floor = _BASE_FARE + penalty
-    if best_scalar <= per_floor * 2 + 1e-9:
-        return _materialize(best), best_scalar
+    if best is not None and best_scalar <= per_floor * 2 + 1e-9:
+        return _materialize(best), best_scalar, True
 
     # ---- B1: cheapest single rides TO the destination.
     # b1[(platform, line)] = (acc, dest_platform); b1_top[platform] holds
@@ -800,6 +815,7 @@ def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
     # ---- 2-ride composition: F1 arrival + B1
     for (t, line1), (acc1, o) in f1.items():
         if time.monotonic() > deadline:
+            completed = False
             break
         for t2 in _walk_platforms(t):
             pair = b1_best(t2, line1)
@@ -809,8 +825,8 @@ def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
                          [(line1, o, t), b1_desc])
 
     # ---- stage 2 exit: <= 2-ride routes fully enumerated
-    if best_scalar <= per_floor * 3 + 1e-9:
-        return _materialize(best), best_scalar
+    if best is not None and best_scalar <= per_floor * 3 + 1e-9:
+        return _materialize(best), best_scalar, True
 
     # ---- F2: second rides — Pareto (closed2, acc2) per (platform, line).
     # closed2 = p (board ride 1) + price(acc1) + p (board ride 2).
@@ -853,6 +869,7 @@ def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
 
     for comp, top in comp_top2.items():
         if time.monotonic() > deadline:
+            completed = False
             break
         for t2 in comp:
             for route2 in _stop_routes.get(t2, ()):
@@ -871,6 +888,7 @@ def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
     # ---- 3-ride composition: F2 arrival + B1
     for (u, line_m), entries in list(f2.items()):
         if time.monotonic() > deadline:
+            completed = False
             break
         for u2 in _walk_platforms(u):
             pair = b1_best(u2, line_m)
@@ -975,9 +993,11 @@ def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
                 + 2 * penalty >= best_scalar - 1e-9:
             continue
         if time.monotonic() > deadline:
+            completed = False
             break
         for u2 in _walk_platforms(u):
             if time.monotonic() > deadline:
+                completed = False
                 break
             entry_s2 = min(closed2 + _ticket_price(acc2)
                            for closed2, acc2, _d in entries)
@@ -991,7 +1011,7 @@ def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
                          + [(line_m, f1_desc[3], u)] + list(b2_rides))
                 consider(total, rides)
 
-    return _materialize(best), best_scalar
+    return _materialize(best), best_scalar, completed
 
 
 
@@ -1065,8 +1085,36 @@ def _find_exact_fare_route(start_ids, end_ids, upper_bound, boarding_penalty_zl,
         # tight upper bound that shrinks the A* ball by an order of
         # magnitude. It never affects exactness: its route is a real route,
         # and the floor argument holds regardless of completeness.
-        enum_frag, enum_scalar = _enumerate_ride_bound(
-            start_ids, end_ids, boarding_penalty_zl, deadline)
+        enum_frag, enum_scalar, enum_completed = _enumerate_ride_bound(
+            start_ids, end_ids, boarding_penalty_zl, deadline,
+            upper_bound=upper_bound)
+        if enum_frag is None and enum_completed and bound_route is not None:
+            # Complete <=4-ride coverage with nothing under the upper bound:
+            # certify the bound route directly when no unseen route can
+            # display less. Every <=4-ride route has scalar >= upper (else
+            # it would have been recorded), so those display >= F4 below;
+            # every zero-free 5+-ride route has uncapped fare >= 5*base
+            # (reaches the daily cap) hence displays >= F5; routes WITH
+            # zero-distance rides are weakly dominated (dropping such a
+            # ride keeps connectivity at <= fare and <= penalty).
+            # The bound attains the upper, so if its displayed scalar
+            # beats both floors, it is the certified global optimum —
+            # no A* deepening needed (this is what saves 5+-ride pairs
+            # like Mydlniki->Kepna, whose short route already caps at 20).
+            bound_fare = sum(seg.get('cost_regular', 0.0)
+                             for seg in bound_route.get('segments', []))
+            bound_nr = len(bound_route.get('segments', []))
+            bound_displayed = min(bound_fare, MAX_DAILY_COST_REGULAR) + \
+                boarding_penalty_zl * bound_nr
+            floor4 = min(upper_bound, MAX_DAILY_COST_REGULAR +
+                         boarding_penalty_zl)
+            floor5 = MAX_DAILY_COST_REGULAR + 5 * boarding_penalty_zl
+            if _route_scalar(bound_route, boarding_penalty_zl) \
+                    <= upper_bound + 1e-9 and \
+                    bound_displayed <= min(floor4, floor5) + 1e-9:
+                result = bound_route, None
+                _cache_put_find(cache_key, result)
+                return result
         if enum_frag is not None:
             enum_result = _build_route_result(enum_frag)
             # Certify on the DISPLAYED scalar (daily-capped fare + penalty

@@ -332,5 +332,33 @@ class TestStatsRetention(unittest.TestCase):
             self._cleanup()
 
 
+class TestTimeoutCountersAgree(unittest.TestCase):
+    """A search where BOTH modes time out must increment the overlay
+    counter (/api/status route_timeouts) AND record the panel event —
+    never just one of them (that desync was reported live: 0 vs 2)."""
+
+    def test_both_modes_timeout_counts_everywhere(self):
+        import server.handler as handler_mod
+        from server import data as data_mod
+        groups = list(data_mod.stops_grouped.keys())
+        self.assertGreaterEqual(len(groups), 2)
+        from_id, to_id = groups[0], groups[1]
+
+        orig_runner = handler_mod.run_pathfinding_with_timeout
+        handler_mod.run_pathfinding_with_timeout = lambda *a, **k: (
+            (None, 'Timeout: cheap'), (None, 'Timeout: convenient'))
+        before = handler_mod._route_timeouts
+        try:
+            status, body = _request(
+                f'/api/find-route?from={from_id}&to={to_id}')
+            self.assertEqual(status, 200)
+            self.assertIn('error', json.loads(body))
+            self.assertEqual(handler_mod._route_timeouts, before + 1)
+            payload = json.loads(_request('/api/status')[1])
+            self.assertEqual(payload['route_timeouts'], before + 1)
+        finally:
+            handler_mod.run_pathfinding_with_timeout = orig_runner
+
+
 if __name__ == '__main__':
     unittest.main()
