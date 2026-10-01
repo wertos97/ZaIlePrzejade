@@ -58,6 +58,13 @@ PANEL_PAGE = """<!DOCTYPE html>
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
   .mut { color: #99a; font-size: .8rem; }
+  .chip { display: inline-block; padding: 2px 9px; border-radius: 12px;
+          font-size: .72rem; font-weight: 600; margin: 1px 3px 1px 0;
+          white-space: nowrap; }
+  .chip.red { background: #fdecea; color: #c0392b; }
+  .chip.orange { background: #fef3e2; color: #b26a00; }
+  .chip.blue { background: #e8f4fd; color: #1a5276; }
+  .chip.gray { background: #eef1f4; color: #667; }
   .pill { display: inline-block; padding: 4px 12px; border-radius: 20px;
           font-size: .8rem; font-weight: 600; }
   .pill.green { background: #e6f7ec; color: #1e7e34; }
@@ -97,6 +104,35 @@ PANEL_PAGE = """<!DOCTYPE html>
   </div>
 
   <div class="cards" id="kpis"></div>
+
+  <div class="box">
+    <h2>Stan na żywo</h2>
+    <div class="legend">
+      <span><i style="background:#27ae60"></i>ok</span>
+      <span><i style="background:#f39c12"></i>uwaga</span>
+      <span><i style="background:#e74c3c"></i>krytyczne</span>
+    </div>
+    <div id="live-box"><span class="mut">…</span></div>
+  </div>
+
+  <div class="box">
+    <h2>Ostatnie wyszukiwania</h2>
+    <div class="legend" id="anomaly-legend">
+      <span><i style="background:#e74c3c"></i>timeout</span>
+      <span><i style="background:#f39c12"></i>kolejka / wolne (&gt;15 s)</span>
+      <span><i style="background:#2A5BD5"></i>limit 20 zł / długa (&gt;15 km)</span>
+    </div>
+    <div class="viewbar">
+      <button class="view-btn active" id="flt-all">Wszystkie</button>
+      <button class="view-btn" id="flt-anom">Tylko anomalie</button>
+      <span class="mut" id="searches-count"></span>
+    </div>
+    <div class="scrollbox" style="max-height:320px"><table>
+      <tr><th>kiedy</th><th>trasa</th><th>czas</th><th>dystans</th>
+          <th>cena N / U</th><th>wynik</th></tr>
+      <tbody id="t-searches"></tbody>
+    </table></div>
+  </div>
 
   <div class="box">
     <h2>Wyszukiwania tras / dzień</h2>
@@ -214,8 +250,9 @@ async function showDash(){
   document.getElementById('dash').style.display='block';
   if (!view.from){ setView(30); } else { await loadStats(); }
   loadGtfs();
+  loadLive();
   clearInterval(refreshTimer);
-  refreshTimer = setInterval(function(){ loadStats(); loadGtfs(); }, 60000);
+  refreshTimer = setInterval(function(){ loadStats(); loadGtfs(); loadLive(); }, 60000);
 }
 function setView(days){
   view.from = shiftDays(days); view.to = shiftDays(1);
@@ -236,6 +273,7 @@ function syncInputs(){
 }
 function setActiveBtn(v){
   document.querySelectorAll('.view-btn').forEach(b=>{
+    if (b.dataset.f) return;  // przyciski filtra wyszukiwań mają własny stan
     b.classList.toggle('active',
       b.dataset.days === v || b.dataset.view === v);
   });
@@ -257,6 +295,114 @@ async function loadStats(){
   if (r.status === 401){ location.reload(); return; }
   render(await r.json());
 }
+
+// ---- Stan na żywo (/api/status jest publiczny, tu wołamy z sesji) ----
+function fmtUptimeS(sec){
+  sec = Math.max(0, Math.round(sec || 0));
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600),
+        m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return d + ' d ' + h + ' h';
+  if (h > 0) return h + ' h ' + m + ' min';
+  return m + ' min';
+}
+function levelColor(frac){
+  // frac 0..1 względem limitu — progi jak w nakładce na mapie
+  if (!(frac >= 0)) return '#888';
+  return frac >= 0.85 ? '#e74c3c' : frac >= 0.6 ? '#f39c12' : '#27ae60';
+}
+async function loadLive(){
+  let r;
+  try {
+    r = await fetch('/api/status', {credentials:'same-origin'});
+  } catch(e){ return; }
+  if (!r.ok) return;
+  renderLive(await r.json());
+}
+function renderLive(s){
+  const fc = s.find_cache || {}, cheap = s.cheap || {};
+  const rss = s.rss_mb || 0, lim = s.memory_limit_mb || 1;
+  const req = s.route_requests || 0, tout = s.route_timeouts || 0;
+  const rows = [
+    ['Wersja / uptime', 'v' + (s.version || '?') + ' · ' + fmtUptimeS(s.uptime_seconds)],
+    ['Pamięć', '<b style="color:' + levelColor(rss / lim) + '">' + rss + ' / ' + lim + ' MB</b>'],
+    ['Żądania HTTP', 'aktywne ' + (s.active_requests || 0) + ' / ' + (s.max_concurrent || '?')],
+    ['Cache tras', (fc.route_entries || 0) + ' w pamięci · ' + (s.routes_from_disk || 0) + ' z dysku · ' + (s.routes_computed || 0) + ' wyliczonych'],
+    ['Wyszukiwania (od restartu)', req + ' · timeouty ' + tout +
+      (req ? ' (' + Math.round(100 * tout / req) + '%)' : '')],
+    ['Silnik', 'perony ' + (fc.find_entries || 0) + ' · sweeps ' + (s.sweep_lru || 0) +
+      ' · exact ' + (cheap.searches || 0) + ' (timeouty ' + (cheap.timeouts || 0) + ')'],
+  ];
+  document.getElementById('live-box').innerHTML =
+    '<table>' + rows.map(r=>'<tr><th style="width:220px">' + r[0] +
+      '</th><td>' + r[1] + '</td></tr>').join('') + '</table>';
+}
+
+// ---- Ostatnie wyszukiwania z anomaliami ----
+const ANOM = { SLOW_MS: 15000, LONG_KM: 15, CAP_REG: 20.0 };
+let searchFilter = 'all';
+let lastSearches = [];
+
+function fmtMs(ms){
+  if (ms == null) return '—';
+  if (ms < 1000) return ms + ' ms';
+  return (ms / 1000).toFixed(1).replace('.', ',') + ' s';
+}
+function fmtKm(km){
+  if (km == null) return '—';
+  return String(km).replace('.', ',') + ' km';
+}
+function fmtPrice(v){
+  if (v == null) return '—';
+  return v.toFixed(2).replace('.', ',') + ' zł';
+}
+function searchAnomalies(s){
+  // Zwraca listę [klasa, etykieta]; pusto = wszystko w normie.
+  const d = s.detail || {};
+  const chips = [];
+  if (s.outcome === 'timeout') chips.push(['red', 'timeout']);
+  else if (s.outcome === 'busy') chips.push(['orange', 'kolejka']);
+  if (d.from && d.to && d.from === d.to) chips.push(['gray', 'ta sama stacja']);
+  const cheap = (d.modes || {}).cheap;
+  if (cheap) {
+    if (cheap.dist != null && cheap.dist > ANOM.LONG_KM) chips.push(['blue', 'długa']);
+    if (cheap.reg != null && cheap.reg >= ANOM.CAP_REG) chips.push(['blue', 'limit']);
+  }
+  if (s.outcome === 'ok' && (d.ms == null || d.ms > ANOM.SLOW_MS))
+    chips.push(['orange', 'wolne']);
+  return chips;
+}
+function renderSearches(list){
+  lastSearches = list || [];
+  const shown = searchFilter === 'anom'
+    ? lastSearches.filter(s => searchAnomalies(s).length > 0)
+    : lastSearches;
+  document.getElementById('searches-count').textContent =
+    'pokazano ' + shown.length + ' z ' + lastSearches.length + ' (ostatnie 100 w zakresie)';
+  document.getElementById('flt-all').classList.toggle('active', searchFilter === 'all');
+  document.getElementById('flt-anom').classList.toggle('active', searchFilter === 'anom');
+  const tb = document.getElementById('t-searches');
+  if (!shown.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="mut">brak wyszukiwań</td></tr>';
+    return;
+  }
+  tb.innerHTML = shown.map(s => {
+    const d = s.detail || {};
+    const cheap = (d.modes || {}).cheap || {};
+    const route = (d.from_name || d.from || '?') + ' → ' + (d.to_name || d.to || '?');
+    const chips = searchAnomalies(s).map(c =>
+      '<span class="chip ' + c[0] + '">' + esc(c[1]) + '</span>').join('');
+    return '<tr><td>' + fmtTs(s.ts) + '</td><td>' + esc(route) +
+      '</td><td>' + fmtMs(d.ms) + '</td><td>' + fmtKm(cheap.dist) +
+      '</td><td>' + fmtPrice(cheap.reg) + ' / ' + fmtPrice(cheap.red) +
+      '</td><td>' + (chips || '<span class="mut">ok</span>') + '</td></tr>';
+  }).join('');
+}
+document.getElementById('flt-all').addEventListener('click', function(){
+  searchFilter = 'all'; renderSearches(lastSearches);
+});
+document.getElementById('flt-anom').addEventListener('click', function(){
+  searchFilter = 'anom'; renderSearches(lastSearches);
+});
 document.querySelectorAll('.view-btn[data-days]').forEach(b=>{
   b.addEventListener('click', ()=>setView(Number(b.dataset.days)));
 });
@@ -309,6 +455,8 @@ function render(s){
       + s.updates.map(u=>'<tr><td>'+esc(u.ts)+'</td><td>'+esc(u.what)+'</td></tr>').join('')
       + '</table></div>'
     : '<span class="mut">brak wdrożeń w tym zakresie</span>';
+
+  renderSearches(s.searches || []);
 }
 
 // ---- Dane GTFS: freshness check runs 2x daily server-side; the panel

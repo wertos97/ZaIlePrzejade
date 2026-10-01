@@ -1040,11 +1040,20 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 from_ts = to_ts = None
             daily, unique_total, stats_meta = admin_stats.daily_series(
                 from_ts=from_ts, to_ts=to_ts)
+            searches = admin_stats.recent_searches(
+                limit=100, from_ts=from_ts, to_ts=to_ts)
+            for s in searches:
+                d = s.get('detail') or {}
+                for key in ('from', 'to'):
+                    gid = d.get(key)
+                    grp = data.stops_grouped.get(gid) if gid else None
+                    d[key + '_name'] = grp['name'] if grp else None
             self.serve_json({
                 'daily': daily,
                 'unique_total': len(unique_total),
                 'unique_exact': stats_meta['unique_exact'],
                 'unique_since': stats_meta['unique_since'],
+                'searches': searches,
                 'range': {'from': f_str, 'to': t_str},
                 'restarts': admin_stats.restarts(from_ts=from_ts,
                                                  to_ts=to_ts),
@@ -1380,15 +1389,36 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         global _route_requests, _route_timeouts
         _route_requests += 1
 
+        def _search_detail(ms, convenient_result=None, cheap_result=None):
+            def _mode_summary(res):
+                if not res:
+                    return None
+                return {
+                    'dist': round(res.get('total_distance', 0.0), 2),
+                    'reg': res.get('cost_regular'),
+                    'red': res.get('cost_reduced'),
+                }
+            return {
+                'from': from_stop,
+                'to': to_stop,
+                'ms': ms,
+                'modes': {
+                    'cheap': _mode_summary(cheap_result),
+                    'convenient': _mode_summary(convenient_result),
+                },
+            }
+
         # Synchronous: compute convenient + cheap, both EXACT, in one call.
         # On 1-core VPS a single worker avoids GIL contention entirely.
         # Outer 30s cap = the product's hard search-time promise; phase
         # budgets inside sum below it so it only fires as a safety net.
+        _search_t0 = time.monotonic()
         result = run_pathfinding_with_timeout(
             pathfinding.find_route_between_groups,
             from_stop, to_stop,
             timeout=30.0
         )
+        _search_ms = int((time.monotonic() - _search_t0) * 1000)
 
         is_busy = (isinstance(result, tuple) and len(result) == 2
                    and result[0] == 'busy' and result[1] is None)
@@ -1396,9 +1426,13 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                    and isinstance(result[0], tuple))
         try:
             if is_busy:
-                admin_stats.record_request('busy', _get_client_ip(self))
+                admin_stats.record_request(
+                    'busy', _get_client_ip(self),
+                    _search_detail(_search_ms))
             elif not is_pair:
-                admin_stats.record_request('timeout', _get_client_ip(self))
+                admin_stats.record_request(
+                    'timeout', _get_client_ip(self),
+                    _search_detail(_search_ms))
         except Exception:
             pass
         if is_busy:
@@ -1426,7 +1460,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         if convenient_result is None and cheap_result is None:
             _route_timeouts += 1
             try:
-                admin_stats.record_request('timeout', _get_client_ip(self))
+                admin_stats.record_request(
+                    'timeout', _get_client_ip(self),
+                    _search_detail(_search_ms))
             except Exception:
                 pass
             self.serve_json({'error': _user_facing_error(
@@ -1435,7 +1471,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             return
 
         try:
-            admin_stats.record_request('ok', _get_client_ip(self))
+            admin_stats.record_request(
+                'ok', _get_client_ip(self),
+                _search_detail(_search_ms, convenient_result, cheap_result))
         except Exception:
             pass
 

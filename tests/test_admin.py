@@ -241,6 +241,42 @@ class TestAdminPanel(unittest.TestCase):
             # leftover marker (kill -9 / OOM) → unclean detected
             self.assertTrue(admin_stats.consume_shutdown_marker(marker))
 
+    def test_recent_searches_roundtrip(self):
+        """record_request(detail) → recent_searches() keeps from/to/ms."""
+        detail = {'from': 'group_1', 'to': 'group_2', 'ms': 123,
+                  'modes': {'cheap': {'dist': 3.5, 'reg': 4.0, 'red': 2.0},
+                            'convenient': None}}
+        admin_stats.record_request('ok', 'test-search-ip', detail)
+        try:
+            rows = admin_stats.recent_searches(limit=5)
+            mine = [r for r in rows
+                    if r['detail'].get('ms') == 123
+                    and r['detail'].get('from') == 'group_1']
+            self.assertTrue(mine, 'recorded search not found')
+            self.assertEqual(mine[0]['outcome'], 'ok')
+        finally:
+            with admin_stats._lock:
+                admin_stats._conn.execute(
+                    "DELETE FROM events WHERE iph=?",
+                    (admin_stats._ip_hash('test-search-ip'),))
+                admin_stats._conn.commit()
+
+    def test_stats_includes_searches_with_names(self):
+        # Para ten sam przystanek: natychmiastowy wynik bez ciężkiego
+        # liczenia (chodzi o łańcuch zapis → odczyt → nazwy, nie o trasy).
+        status, _, body = self._get('/api/find-route?from=%s&to=%s'
+                                    % (self.from_id, self.from_id))
+        self.assertEqual(status, 200)
+        status, _, body = self._get('/api/admin/stats', self._authed())
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertIn('searches', data)
+        mine = [r for r in data['searches']
+                if (r.get('detail') or {}).get('from') == self.from_id]
+        self.assertTrue(mine, 'fresh search missing from stats')
+        self.assertIn('ms', mine[0]['detail'])
+        self.assertTrue(mine[0]['detail'].get('from_name'))
+
 
 if __name__ == '__main__':
     unittest.main()

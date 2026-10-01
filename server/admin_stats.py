@@ -299,8 +299,19 @@ def record_event(kind, outcome=None, ip=None, detail=None):
         pass
 
 
-def record_request(outcome, ip):
-    record_event('request', outcome=outcome, ip=ip)
+def record_request(outcome, ip, detail=None):
+    """Append a route-search event.
+
+    detail (optional dict) carries non-personal search facts: from/to
+    group IDs, duration_ms and per-mode {dist, reg, red}. Stored as JSON
+    in extra; same 90-day retention as everything else.
+    """
+    if detail is not None:
+        try:
+            detail = json.dumps(detail, ensure_ascii=False)
+        except (TypeError, ValueError):
+            detail = None
+    record_event('request', outcome=outcome, ip=ip, detail=detail)
 
 
 def record_visit(ip):
@@ -393,6 +404,48 @@ def daily_series(days=None, tz=ZoneInfo('Europe/Warsaw'),
         # only when there is no rolled-up history in range either.
         meta['unique_exact'] = not rolled
     return dict(sorted(out.items())), unique_total, meta
+
+
+def recent_searches(limit=100, from_ts=None, to_ts=None):
+    """Newest route-search events (for the admin "recent searches" box).
+
+    Returns [{ts, outcome, detail}] newest-first, where detail is the
+    parsed JSON recorded by record_request ({} when absent/unparseable).
+    Same retention as everything else (pruned request rows simply stop
+    appearing). Best-effort, never raises.
+    """
+    if _conn is None:
+        return []
+    try:
+        limit = max(1, min(int(limit), 500))
+    except (TypeError, ValueError):
+        limit = 100
+    try:
+        q = ('SELECT ts, outcome, extra FROM events '
+             "WHERE kind='request'")
+        args = []
+        if from_ts is not None:
+            q += ' AND ts >= ?'
+            args.append(from_ts)
+        if to_ts is not None:
+            q += ' AND ts <= ?'
+            args.append(to_ts)
+        q += ' ORDER BY ts DESC LIMIT ?'
+        args.append(limit)
+        with _lock:
+            rows = _conn.execute(q, args).fetchall()
+    except Exception:
+        return []
+    out = []
+    for ts, outcome, extra in rows:
+        try:
+            detail = json.loads(extra) if extra else {}
+            if not isinstance(detail, dict):
+                detail = {}
+        except (TypeError, ValueError):
+            detail = {}
+        out.append({'ts': ts, 'outcome': outcome, 'detail': detail})
+    return out
 
 
 def parse_warsaw_range(from_str, to_str):
