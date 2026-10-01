@@ -78,6 +78,20 @@ PANEL_PAGE = """<!DOCTYPE html>
   #logout { background: none; border: 1px solid #ccd; color: #567;
             border-radius: 8px; padding: 6px 12px; cursor: pointer;
             font-size: .8rem; }
+  html { scroll-behavior: smooth; }
+  .box { scroll-margin-top: 110px; }
+  .section-nav { position: sticky; top: 0; z-index: 50;
+                 background: #f4f6f8; padding: 10px 0;
+                 display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav-pill { padding: 6px 14px; border: 1px solid #ccd; border-radius: 20px;
+              background: #fff; cursor: pointer; font-size: .82rem;
+              color: #1a2a3a; text-decoration: none; }
+  .nav-pill.active { background: #2A5BD5; color: #fff; border-color: #2A5BD5; }
+  .card.clickable { cursor: pointer; }
+  .card.clickable:hover { border-color: #2A5BD5; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
 </style>
 </head>
 <body>
@@ -105,7 +119,15 @@ PANEL_PAGE = """<!DOCTYPE html>
 
   <div class="cards" id="kpis"></div>
 
-  <div class="box">
+  <nav class="section-nav" id="section-nav" aria-label="Sekcje panelu">
+    <a class="nav-pill" href="#sec-live" data-sec="sec-live">Na żywo</a>
+    <a class="nav-pill" href="#sec-searches" data-sec="sec-searches">Wyszukiwania</a>
+    <a class="nav-pill" href="#sec-req" data-sec="sec-req">Wykresy</a>
+    <a class="nav-pill" href="#sec-gtfs" data-sec="sec-gtfs">Dane</a>
+    <a class="nav-pill" href="#sec-sys" data-sec="sec-sys">System</a>
+  </nav>
+
+  <div class="box" id="sec-live">
     <h2>Stan na żywo</h2>
     <div class="legend">
       <span><i style="background:#27ae60"></i>ok</span>
@@ -115,11 +137,11 @@ PANEL_PAGE = """<!DOCTYPE html>
     <div id="live-box"><span class="mut">…</span></div>
   </div>
 
-  <div class="box">
+  <div class="box" id="sec-searches">
     <h2>Ostatnie wyszukiwania</h2>
     <div class="legend" id="anomaly-legend">
       <span><i style="background:#e74c3c"></i>timeout</span>
-      <span><i style="background:#f39c12"></i>kolejka / wolne (&gt;15 s)</span>
+      <span><i style="background:#f39c12"></i>kolejka / wolne (&gt;15 s) / tryb timeout</span>
       <span><i style="background:#2A5BD5"></i>limit 20 zł / długa (&gt;15 km)</span>
     </div>
     <div class="viewbar">
@@ -134,7 +156,7 @@ PANEL_PAGE = """<!DOCTYPE html>
     </table></div>
   </div>
 
-  <div class="box">
+  <div class="box" id="sec-req">
     <h2>Wyszukiwania tras / dzień</h2>
     <div class="legend">
       <span><i style="background:#27ae60"></i>ok</span>
@@ -144,12 +166,12 @@ PANEL_PAGE = """<!DOCTYPE html>
     <div id="ch-req"></div>
   </div>
 
-  <div class="box">
+  <div class="box" id="sec-vis">
     <h2>Użytkownicy (unikalne IP/dzień)</h2>
     <div id="ch-vis"></div>
   </div>
 
-  <div class="box">
+  <div class="box" id="sec-gtfs">
     <h2>Dane GTFS</h2>
     <div id="gtfs-pill" style="margin-bottom:10px"><span class="mut">…</span></div>
     <table>
@@ -175,7 +197,7 @@ PANEL_PAGE = """<!DOCTYPE html>
     <div id="gtfs-result" class="mut" style="margin-top:8px"></div>
   </div>
 
-  <div class="cols">
+  <div class="cols" id="sec-sys">
     <div class="box"><h2>Restarty serwera</h2><div id="t-restart"></div></div>
     <div class="box"><h2>Wdrożenia (autoupdate)</h2><div id="t-updates"></div></div>
   </div>
@@ -357,19 +379,30 @@ function fmtPrice(v){
 }
 function searchAnomalies(s){
   // Zwraca listę [klasa, etykieta]; pusto = wszystko w normie.
+  // Dla wyniku 'ok' z jednym trybem pokazujemy dane tego trybu, a brak
+  // drugiego oznaczamy chipem (użytkownik widział wtedy toast o trybie).
   const d = s.detail || {};
+  const modes = d.modes || {};
   const chips = [];
   if (s.outcome === 'timeout') chips.push(['red', 'timeout']);
   else if (s.outcome === 'busy') chips.push(['orange', 'kolejka']);
   if (d.from && d.to && d.from === d.to) chips.push(['gray', 'ta sama stacja']);
-  const cheap = (d.modes || {}).cheap;
-  if (cheap) {
-    if (cheap.dist != null && cheap.dist > ANOM.LONG_KM) chips.push(['blue', 'długa']);
-    if (cheap.reg != null && cheap.reg >= ANOM.CAP_REG) chips.push(['blue', 'limit']);
+  if (s.outcome === 'ok') {
+    if (!modes.cheap && modes.convenient) chips.push(['orange', 'tania: timeout']);
+    else if (modes.cheap && !modes.convenient) chips.push(['orange', 'wygodna: timeout']);
   }
-  if (s.outcome === 'ok' && (d.ms == null || d.ms > ANOM.SLOW_MS))
+  const shown = modes.cheap || modes.convenient;
+  if (shown) {
+    if (shown.dist != null && shown.dist > ANOM.LONG_KM) chips.push(['blue', 'długa']);
+    if (shown.reg != null && shown.reg >= ANOM.CAP_REG) chips.push(['blue', 'limit']);
+  }
+  if (s.outcome === 'ok' && d.ms != null && d.ms > ANOM.SLOW_MS)
     chips.push(['orange', 'wolne']);
   return chips;
+}
+function searchDisplayMode(s){
+  const modes = (s.detail || {}).modes || {};
+  return modes.cheap || modes.convenient || {};
 }
 function renderSearches(list){
   lastSearches = list || [];
@@ -387,13 +420,13 @@ function renderSearches(list){
   }
   tb.innerHTML = shown.map(s => {
     const d = s.detail || {};
-    const cheap = (d.modes || {}).cheap || {};
+    const m = searchDisplayMode(s);
     const route = (d.from_name || d.from || '?') + ' → ' + (d.to_name || d.to || '?');
     const chips = searchAnomalies(s).map(c =>
       '<span class="chip ' + c[0] + '">' + esc(c[1]) + '</span>').join('');
     return '<tr><td>' + fmtTs(s.ts) + '</td><td>' + esc(route) +
-      '</td><td>' + fmtMs(d.ms) + '</td><td>' + fmtKm(cheap.dist) +
-      '</td><td>' + fmtPrice(cheap.reg) + ' / ' + fmtPrice(cheap.red) +
+      '</td><td>' + fmtMs(d.ms) + '</td><td>' + fmtKm(m.dist) +
+      '</td><td>' + fmtPrice(m.reg) + ' / ' + fmtPrice(m.red) +
       '</td><td>' + (chips || '<span class="mut">ok</span>') + '</td></tr>';
   }).join('');
 }
@@ -435,11 +468,26 @@ function render(s){
         ? ' (dokł. od ' + s.unique_since.split('-').reverse().join('.') + ')' : '');
 
   document.getElementById('kpis').innerHTML = [
-    {l:'wyszukiwania · ' + rng, v:total('requests'), c:''},
-    {l:usersLabel, v:(s.unique_total||0), c:''},
-    {l:'timeouty', v:total('timeout'), c:total('timeout')?'red':''},
-    {l:'odrzucone', v:total('busy'), c:total('busy')?'orange':''}
-  ].map(k=>'<div class="card"><div class="v '+k.c+'">'+k.v+'</div><div class="l">'+esc(k.l)+'</div></div>').join('');
+    {l:'wyszukiwania · ' + rng, v:total('requests'), c:'', sec:'sec-searches'},
+    {l:usersLabel, v:(s.unique_total||0), c:'', sec:'sec-vis'},
+    {l:'timeouty', v:total('timeout'), c:total('timeout')?'red':'', sec:'sec-searches', filter:'anom'},
+    {l:'odrzucone', v:total('busy'), c:total('busy')?'orange':'', sec:'sec-searches', filter:'anom'}
+  ].map(k=>'<div class="card clickable" data-sec="'+k.sec+'"' +
+    (k.filter ? ' data-filter="' + k.filter + '"' : '') +
+    '><div class="v '+k.c+'">'+k.v+'</div><div class="l">'+esc(k.l)+'</div></div>').join('');
+  document.querySelectorAll('#kpis .card.clickable').forEach(el=>{
+    el.onclick = function(){
+      if (el.dataset.filter) {
+        searchFilter = el.dataset.filter;
+        renderSearches(lastSearches);
+      }
+      const reduceMotion = window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const target = document.getElementById(el.dataset.sec);
+      if (target) target.scrollIntoView(
+        {behavior: reduceMotion ? 'auto' : 'smooth', block:'start'});
+    };
+  });
 
   document.getElementById('t-restart').innerHTML = s.restarts.length
     ? '<div class="scrollbox"><table><tr><th>kiedy</th><th>wersja</th><th>powód</th></tr>'
@@ -636,7 +684,31 @@ async function startGtfsCheck(){
 }
 document.getElementById('gtfs-btn-check').addEventListener('click', startGtfsCheck);
 
+// ---- Nawigacja sekcji: przyklejany pasek + podświetlenie aktywnej ----
+function initSectionNav(){
+  const pills = Array.prototype.slice.call(
+    document.querySelectorAll('#section-nav .nav-pill'));
+  if (!pills.length || !('IntersectionObserver' in window)) return;
+  const byId = {};
+  pills.forEach(function(p){ byId[p.dataset.sec] = p; });
+  const obs = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if (e.isIntersecting && byId[e.target.id]) {
+        pills.forEach(function(p){
+          p.classList.toggle('active', p === byId[e.target.id]);
+        });
+      }
+    });
+  }, {rootMargin: '-30% 0px -60% 0px'});
+  ['sec-live', 'sec-searches', 'sec-req', 'sec-gtfs', 'sec-sys']
+    .forEach(function(id){
+      const el = document.getElementById(id);
+      if (el) obs.observe(el);
+    });
+}
+
 async function boot(){
+  initSectionNav();
   try{
     const r = await fetch('/api/admin/session', {credentials:'same-origin'});
     if (r.ok) showDash(); else document.getElementById('login').style.display='block';
