@@ -1123,7 +1123,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                     status=409)
                 return
             state = gtfs_update.read_state()
-            if not (state.get('last_check') or {}).get('newer'):
+            if not (state.get('last_check') or {}).get('newer') \
+                    and not state.get('scheduled'):
+                # The newer flag is relative ("changed since last check")
+                # and a later check may have flipped it while a scheduled
+                # install was still pending — a pending schedule counts too.
                 self.serve_json(
                     {'error': 'Brak potwierdzonej nowszej wersji danych.'},
                     status=400)

@@ -244,3 +244,73 @@ class TestScheduling(unittest.TestCase):
         finally:
             gu.PROCESSED_DIR = orig
             tmp.cleanup()
+
+
+class TestScheduledUpdateExecutes(unittest.TestCase):
+    """The 2026-10-02 incident: a pending schedule was voided because a
+    later check flipped last_check.newer to False. The job must run off
+    the schedule itself; a regen that changes nothing must not restart."""
+
+    def setUp(self):
+        import json as _json
+        self.tmp = tempfile.TemporaryDirectory()
+        self._orig_dir = gu.PROCESSED_DIR
+        gu.PROCESSED_DIR = self.tmp.name
+        for name in gu.TRACKED_OUTPUTS:
+            with open(os.path.join(self.tmp.name, name), 'w') as f:
+                _json.dump({'version': 'V1'}, f)
+        self._orig_run = gu._run_process
+        self._orig_flock = gu._acquire_flock
+        gu._acquire_flock = lambda: 99999
+        self._orig_tracked = gu.outputs_tracked_in_git
+        gu.outputs_tracked_in_git = lambda: False
+        self.popen_calls = []
+        import subprocess as _sp
+        self._orig_popen = _sp.Popen
+        _sp.Popen = lambda *a, **k: self.popen_calls.append((a, k)) or None
+
+    def tearDown(self):
+        import subprocess as _sp
+        gu._run_process = self._orig_run
+        gu._acquire_flock = self._orig_flock
+        gu.outputs_tracked_in_git = self._orig_tracked
+        _sp.Popen = self._orig_popen
+        gu.PROCESSED_DIR = self._orig_dir
+        self.tmp.cleanup()
+
+    def _stub_regen(self, version):
+        import json as _json
+
+        def fake_run(argv):
+            with open(os.path.join(self.tmp.name, 'metadata.json'),
+                      'w') as f:
+                _json.dump({'version': version}, f)
+            yield '0. Downloading...\n'
+            yield '7. Saving...\n'
+        return fake_run
+
+    def _planned_state(self):
+        gu.write_state({
+            'job': {'state': 'idle', 'progress': 0, 'phase': '',
+                    'detail': '', 'pid': None},
+            'last_check': {'at': 1, 'newer': False, 'upstream': {}},
+            'last_done': None,
+            'scheduled': {'version_key': 'k', 'versions': ['V2'],
+                          'at': 1, 'created_at': 1},
+            'cancelled_version': None,
+        })
+
+    def test_stale_flag_does_not_block_scheduled_run(self):
+        gu._run_process = self._stub_regen('V2')
+        self._planned_state()
+        state = gu.run_update_job()
+        self.assertEqual(state['job']['state'], 'restarting')
+        self.assertEqual(state['job']['new_version'], 'V2')
+        self.assertTrue(self.popen_calls, 'restart was not triggered')
+
+    def test_identical_regen_skips_restart(self):
+        gu._run_process = self._stub_regen('V1')
+        self._planned_state()
+        state = gu.run_update_job()
+        self.assertEqual(state['job']['state'], 'idle')
+        self.assertFalse(self.popen_calls, 'noop must not restart')

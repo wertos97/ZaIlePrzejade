@@ -695,6 +695,16 @@ def _remove_backups():
                           ignore_errors=True)
 
 
+def _metadata_version():
+    """Current on-disk feed version ('' when unreadable)."""
+    try:
+        with open(os.path.join(PROCESSED_DIR, 'metadata.json'),
+                  encoding='utf-8') as f:
+            return str(json.load(f).get('version') or '')
+    except Exception:
+        return ''
+
+
 def _append_restart_reason(new_version):
     """Write an autoupdate.log line so the boot picks the restart reason.
 
@@ -722,6 +732,14 @@ def run_update_job():
     Backup → process --force → verify → restart reason → detached
     restart.sh. Rollback from backup on any failure. Never raises
     (all outcomes land in the state file).
+
+    NOTE: no last_check.newer gate here on purpose. The schedule (or
+    the manual endpoint, which checks newer itself) already authorized
+    this run — and the flag is relative ("changed since last check"),
+    so an intervening check would falsely invalidate a pending install
+    (this exact race skipped the 2026-10-02 03:00 install). A regen
+    that changes nothing is detected below and ends as a restart-free
+    no-op instead.
     """
     import subprocess
     import sys as _sys
@@ -738,14 +756,11 @@ def run_update_job():
             set_job('error', 0, '',
                     'Dokończ migrację danych (faza 2: git rm).')
             return read_state()
-        if not (state.get('last_check') or {}).get('newer'):
-            set_job('error', 0, '',
-                    'Brak potwierdzonej nowszej wersji (najpierw sprawdzenie).')
-            return read_state()
         # Executing (manually or on schedule) consumes the plan.
         state['scheduled'] = None
         state['cancelled_version'] = None
         write_state(state)
+        pre_version = _metadata_version()
         if shutil.disk_usage(PROCESSED_DIR).free < MIN_FREE_BYTES:
             set_job('error', 0, '', 'Za mało miejsca na dysku na aktualizację.')
             return read_state()
@@ -762,14 +777,15 @@ def run_update_job():
                 pct = 8 + round(pct * 87 / 100)
                 set_job('updating', pct, phase, '')
         set_job('updating', 96, 'Weryfikacja', 'porównanie wersji')
-        try:
-            with open(os.path.join(PROCESSED_DIR, 'metadata.json'),
-                      encoding='utf-8') as f:
-                new_version = str(json.load(f).get('version') or '')
-        except Exception:
-            new_version = ''
+        new_version = _metadata_version()
         if not new_version:
             raise OSError('regeneracja nie zapisała metadata.json')
+        if new_version == pre_version:
+            # Upstream moved on (or versions were withdrawn) — same data
+            # as before, so restarting would only cause pointless downtime.
+            _remove_backups()
+            set_job('idle', 100, '', 'Dane bez zmian — restart pominięty.')
+            return read_state()
         _append_restart_reason(new_version)
         state = read_state()
         state['job'] = {'state': 'restarting', 'progress': 100,
