@@ -181,8 +181,6 @@ class TestPathfindingIntegration(unittest.TestCase):
         self.assertLessEqual(cheap_result['cost_regular'], 20.0)
 
     def test_enumeration_seed_never_changes_optimum(self):
-        """Seeding best_scalar with a valid upper bound only prunes work:
-        same pair, seeded vs unseeded, must yield the same best fare."""
         from_ids = [p['id'] for p in
                     self.stops_grouped[self.test_from]['platforms'][:2]]
         to_ids = [p['id'] for p in
@@ -198,6 +196,33 @@ class TestPathfindingIntegration(unittest.TestCase):
         if unseeded[0] is None or seeded[0] is None:
             self.skipTest('seed comparison needs a resolvable test pair')
         self.assertAlmostEqual(unseeded[1], seeded[1])
+
+    def test_enumeration_seed_equal_to_optimum_finds_it(self):
+        """Regression (Czarnowiejska->Dworzec Gl. Zachod, 2026-10-06): a
+        seeded upper bound EQUAL to the optimum must not prune the optimum
+        itself away (strict < vs seed). Before the fix the seeded run
+        returned frag=None after exhausting the budget (~10s) while the
+        unseeded run certified in 0.2s."""
+        # Group IDs are unstable across GTFS feeds — resolve by name.
+        from server.data import stops_by_name_grouped as _by_name
+        from_ids_of = _by_name.get('czarnowiejska')
+        to_ids_of = _by_name.get('dworzec główny zachód')
+        if not from_ids_of or not to_ids_of:
+            self.skipTest('regression pair not present in this dataset')
+        pair_ids = (from_ids_of[0], to_ids_of[0])
+        import time as _time
+        from_ids = [p['id'] for p in
+                    self.stops_grouped[pair_ids[0]]['platforms'][:2]]
+        to_ids = [p['id'] for p in
+                  self.stops_grouped[pair_ids[1]]['platforms'][:2]]
+        # Optimum for this pair is a 2-ride 8.0 route; a seed AT the
+        # optimum is the adversarial case for the consider() comparison.
+        frag, scalar, completed = self.pf._enumerate_ride_bound(
+            from_ids, to_ids, 0.0, _time.monotonic() + 25.0,
+            upper_bound=8.0)
+        self.assertTrue(completed)
+        self.assertIsNotNone(frag, 'seeded bound pruned the optimum away')
+        self.assertAlmostEqual(scalar, 8.0)
 
     def test_find_route_completes_within_30s_budget(self):
         """The whole dual-mode search must fit the 30s product promise

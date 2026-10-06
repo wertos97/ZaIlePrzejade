@@ -751,7 +751,16 @@ def _enumerate_ride_bound(from_platforms, end_platforms, boarding_penalty_zl,
 
     def consider(scalar, rides):
         nonlocal best_scalar, best
-        if scalar < best_scalar - 1e-9:
+        # Strict improvement always records. Additionally, the FIRST route
+        # at/below a seeded upper bound is recorded (ties with the seed):
+        # otherwise a bound that EQUALS the optimum (e.g. a capped short
+        # route) prunes the optimum itself away and the enumeration burns
+        # the whole budget proving emptiness (Czarnowiejska->Dworzec Gł.
+        # Zach.: 0.2s unseeded vs 9.6s seeded). Recording the tie restores
+        # the stage exits; optimality is unaffected (best is always a real
+        # route, ties are equally optimal, later improvements stay strict).
+        if scalar < best_scalar - 1e-9 or (
+                best is None and scalar <= best_scalar + 1e-9):
             best_scalar = scalar
             best = rides
 
