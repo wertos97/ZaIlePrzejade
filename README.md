@@ -35,7 +35,7 @@ Aplikacja pokazuje połączenia pomiędzy dwoma wybranymi przystankami w **dwóc
 
 ## OG Image dla sociali
 
-Aplikacja automatycznie generuje obrazki OG w sposób dynamiczny dla danej trasy.
+Aplikacja generuje obrazki OG 1200×630 w formacie PNG dla danej trasy. PNG jest wymagany przez Facebooka, X, Slacka i Discorda; SVG działa tylko jako awaryjny fallback, gdy brakuje Pillow.
 
 | Typowa cena | Dłuższa trasa |
 |---|---|
@@ -78,11 +78,12 @@ Aplikacja ma też panel operatora ze statystykami. Własny ruch operatora jest o
 
 ## Uruchomienie
 
-Wymagania: **Python 3.10+** (testowane na 3.12), zero dodatkowych pakietów.
+Wymagania: **Python 3.10+** (testowane na 3.12). Podglądy PNG wymagają **Pillow >= 10.1**; bez Pillow działa awaryjny fallback SVG.
 
 ```bash
 git clone https://github.com/wertos97/ZaIlePrzejade.git
 cd ZaIlePrzejade
+python3 -m pip install -r requirements.txt   # Pillow (opcjonalnie, dla PNG)
 python3 server.py                # http://localhost:8080
 ```
 
@@ -97,14 +98,14 @@ Dane GTFS przetwarza `process_gtfs.py` (surowe pliki zip w `data/` → `processe
 | `GET /api/find-route?from=<id>&to=<id>` | `{convenient, cheap}` — obie trasy |
 | `GET /api/stops` · `/api/stops/search?q=` · `/api/stop?id=` · `/api/stop-platforms?name=` | Przystanki, wyszukiwanie, perony |
 | `GET /api/pricing` · `/api/data-info` · `/api/cost?distance=<km>` | Cennik, wersja GTFS, koszt dla dystansu |
-| `GET /api/og-image?from=<id>&to=<id>&mode=` | Karta OG (SVG) |
+| `GET /api/og-image?from=<id>&to=<id>&mode=` | Karta OG (PNG, fallback SVG) |
 | `GET /api/health` · `/api/status` · `/api/version` · `/api/maintenance` · `/api/badge/version` | Kondycja serwera, wersja, tryb serwisowy, badge |
 | `GET /api/tiles/v2/{z}/{x}/{y}.png` | Proxy kafelków mapy (cache po stronie serwera) |
 
 ## Testy
 
 ```bash
-python3 -m unittest discover -s tests     # 143 testów
+python3 -m unittest discover -s tests     # 146 testów
 ```
 
 W tym `TestExactSearchExactness` — na małym grafie testowym algorytm jest porównywany z metodą, która sprawdza wszystkie możliwe trasy. Wyniki muszą się zgadzać. Testy admina wymagają `init_pathfinding`; część testów pomija się, gdy brak danych GTFS.

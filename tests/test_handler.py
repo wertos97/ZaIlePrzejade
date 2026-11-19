@@ -80,6 +80,12 @@ class TestHandlerEndpoints(unittest.TestCase):
             self._last_headers = dict(resp.headers)
             return resp.status, self._last_headers, resp.read()
 
+    def _assert_png(self, headers, body):
+        self.assertEqual(headers.get('Content-Type'), 'image/png')
+        self.assertTrue(body.startswith(b'\x89PNG\r\n\x1a\n'))
+        self.assertEqual(int.from_bytes(body[16:20], 'big'), 1200)
+        self.assertEqual(int.from_bytes(body[20:24], 'big'), 630)
+
     # ------------------------------------------------------------
     # P0 regressions
     # ------------------------------------------------------------
@@ -111,26 +117,49 @@ class TestHandlerEndpoints(unittest.TestCase):
         # and truncates to at most 50 entries.
         self.assertLessEqual(len(results), 50)
 
-    def test_og_image_returns_svg(self):
-        """Regression: og-image previously crashed on tuple unpacking."""
+    def test_og_image_returns_png(self):
+        """Social crawlers reject SVG; the endpoint must serve a raster card."""
         status, headers, body = self._get(
             f'/api/og-image?from={self.from_id}&to={self.to_id}&mode=short')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'image/svg+xml')
-        self.assertTrue(body.lstrip().startswith(b'<svg'))
-        self.assertIn(b'zloty', body.lower().replace(b'z\xc5\x82', b'zloty'))
+        self._assert_png(headers, body)
+        self.assertGreater(len(body), 20000)
 
-    def test_og_image_is_valid_xml(self):
-        """Regression: the inlined logo uses an Inkscape namespaced export
+    def test_og_image_svg_fallback_is_valid_xml(self):
+        """The SVG fallback must stay parseable if Pillow is unavailable.
+
+        Regression: the inlined logo uses an Inkscape namespaced export
         (<svg:svg ...> with <svg:rect> children). The old root-strip left an
-        unbound svg: prefix and a leaked </svg:svg> inside the OG image, so
-        the whole document was unparseable — <img> rejected it and the share
-        dialog showed 'Podgląd niedostępny' instead of the preview."""
+        unbound svg: prefix and a leaked </svg:svg>, so the whole document
+        was unparseable — <img> rejected it and the share dialog showed
+        'Podgląd niedostępny' instead of the preview."""
         import xml.etree.ElementTree as ET
-        status, headers, body = self._get(
-            f'/api/og-image?from={self.from_id}&to={self.to_id}&mode=cheap')
+        from server import handler as handler_mod
+        svg = handler_mod.MPKRequestHandler._generate_og_image_svg(
+            object.__new__(handler_mod.MPKRequestHandler),
+            self.from_id, self.to_id, 'cheap')
+        ET.fromstring(svg.encode('utf-8'))
+        self.assertNotIn('svg:', svg)
+
+    def test_og_image_falls_back_to_svg_without_pillow(self):
+        """A missing/broken renderer must not turn embeds into a 500."""
+        import xml.etree.ElementTree as ET
+        from server import og_image
+
+        def broken(*_args):
+            raise RuntimeError('Pillow unavailable')
+
+        original = og_image.render_route_png
+        og_image.render_route_png = broken
+        try:
+            status, headers, body = self._get(
+                f'/api/og-image?from={self.from_id}&to={self.to_id}&mode=cheap')
+        finally:
+            og_image.render_route_png = original
         self.assertEqual(status, 200)
-        ET.fromstring(body)  # raises on invalid XML
+        self.assertEqual(headers.get('Content-Type'), 'image/svg+xml')
+        self.assertEqual(headers.get('Cache-Control'), 'no-store')
+        ET.fromstring(body)
         self.assertNotIn(b'svg:', body)
 
     def test_og_image_price_font_scales_down(self):
@@ -152,7 +181,8 @@ class TestHandlerEndpoints(unittest.TestCase):
             try:
                 svg = handler_mod.MPKRequestHandler.\
                     _generate_og_image_svg(
-                        object(), self.from_id, self.to_id, 'cheap')
+                        object.__new__(handler_mod.MPKRequestHandler),
+                        self.from_id, self.to_id, 'cheap')
             finally:
                 pf_mod.get_cached_route_result = orig
             m = re.search(rb'<text x="80" y="548"[^>]*', svg.encode())
@@ -178,8 +208,25 @@ class TestHandlerEndpoints(unittest.TestCase):
         status, headers, body = self._get(
             '/api/og-image?from=group_999999&to=group_888888&mode=short')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'image/svg+xml')
-        self.assertTrue(body.lstrip().startswith(b'<svg'))
+        self._assert_png(headers, body)
+
+    def test_static_og_image_is_png(self):
+        status, headers, body = self._get('/og-image.png?v=' + APP_VERSION)
+        self.assertEqual(status, 200)
+        self._assert_png(headers, body)
+        self.assertIn('immutable', headers.get('Cache-Control', ''))
+
+    def test_crawler_meta_points_to_png(self):
+        status, _, body = self._get(
+            f'/?from={self.from_id}&to={self.to_id}&mode=cheap',
+            {'User-Agent': 'facebookexternalhit/1.1'})
+        self.assertEqual(status, 200)
+        text = body.decode('utf-8')
+        self.assertIn('property="og:image" content="https://zaileprzeja.de/api/og-image?', text)
+        self.assertIn('property="og:image:type" content="image/png"', text)
+        self.assertIn('&amp;v=' + APP_VERSION, text)
+        self.assertIn('property="og:image:alt"', text)
+        self.assertIn('name="twitter:image:alt"', text)
 
     # ------------------------------------------------------------
     # Route API
@@ -225,8 +272,7 @@ class TestHandlerEndpoints(unittest.TestCase):
         status, headers, body = self._get(
             f'/api/og-image?from={self.from_id}&to={self.to_id}&mode=cheap')
         self.assertEqual(status, 200)
-        self.assertEqual(headers.get('Content-Type'), 'image/svg+xml')
-        self.assertTrue(body.lstrip().startswith(b'<svg'))
+        self._assert_png(headers, body)
 
     def test_route_path_carries_group_id(self):
         """Regression: frontend dimming needs group_id on path stops."""

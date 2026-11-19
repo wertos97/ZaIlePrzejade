@@ -110,6 +110,16 @@ def _estimate_bold_text_width(text: str, font_size: float) -> float:
     return width_em * font_size
 
 
+def _truncate_og_name(name: str, max_chars: int = 26) -> str:
+    if len(name) <= max_chars:
+        return name
+    cut = name[:max_chars - 3]
+    last_space = cut.rfind(' ')
+    if last_space > max_chars * 0.5:
+        cut = cut[:last_space]
+    return cut.rstrip() + '...'
+
+
 def _extract_svg_inner(svg_content: str) -> str:
     """Strip the ROOT <svg> element from an SVG document, keeping its
     children for inlining into another SVG.
@@ -217,6 +227,7 @@ def _user_facing_error(error_msg):
 # ============================================================
 PUBLIC_DIR = os.path.realpath(data.PUBLIC_DIR)
 _PUBLIC_HOST = PUBLIC_BASE_URL.split('//', 1)[-1]
+_og_png_fallback_logged = False
 
 BLOCKED_PREFIXES = _BLOCKED_PREFIXES
 BLOCKED_PATHS = _BLOCKED_PATHS
@@ -671,8 +682,9 @@ def html_escape(s):
 # ============================================================
 
 _OG_META_RE = re.compile(
-    r'<meta\s+(property|name)="(og:title|og:description|og:url|og:image|'
-    r'twitter:title|twitter:description|twitter:image)"\s+content="[^"]*"\s*/?>')
+    r'<meta\s+(property|name)="(og:image:type|og:image:alt|og:image|'
+    r'og:title|og:description|og:url|twitter:image:alt|twitter:image|'
+    r'twitter:title|twitter:description)"\s+content="[^"]*"\s*/?>')
 
 
 _GTFS_PLACEHOLDER_RE = re.compile(r'\{\{GTFS_(VERSION|DATES)\}\}')
@@ -950,26 +962,40 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             if to_group:
                 to_name = to_group['name']
 
-            from_name_esc = html_escape(from_name)
-            to_name_esc = html_escape(to_name)
             # Use proper URL encoding for query parameters
             from_stop_url = urllib.parse.quote(from_stop, safe='')
             to_stop_url = urllib.parse.quote(to_stop, safe='')
             mode_url = urllib.parse.quote(mode, safe='')
 
-            og_image_url = f"{PUBLIC_BASE_URL}/api/og-image?from={from_stop_url}&to={to_stop_url}&mode={mode_url}"
+            og_image_url = (
+                f"{PUBLIC_BASE_URL}/api/og-image?from={from_stop_url}"
+                f"&to={to_stop_url}&mode={mode_url}&v={APP_VERSION}")
             current_url = f"{PUBLIC_BASE_URL}/?from={from_stop_url}&to={to_stop_url}&mode={mode_url}"
-            title = f"Za Ile Przejadę? {from_name_esc} → {to_name_esc}"
-            description = f"Oblicz koszt przejazdu z {from_name_esc} do {to_name_esc} w nowym systemie biletów komunikacji miejskiej w Krakowie."
+            title = f"Za Ile Przejadę? {from_name} → {to_name}"
+            description = (
+                f"Oblicz koszt przejazdu z przystanku {from_name} "
+                f"do przystanku {to_name} w nowym systemie biletów "
+                f"komunikacji miejskiej w Krakowie.")
+            cache_mode = mode if mode in ('cheap', 'convenient') else 'cheap'
+            result, _err = pathfinding.get_cached_route_result(
+                from_stop, to_stop, cache_mode)
+            if result:
+                description += (
+                    f" Szacunkowa cena: {result['cost_regular']:.2f} zł normalny"
+                    f" / {result['cost_reduced']:.2f} zł ulgowy.")
+            alt = f"Podgląd trasy: {from_name} → {to_name}"
 
             page_html = _rewrite_og_meta(page_html, {
                 'og:title': html_escape(title),
                 'og:description': html_escape(description),
-                'og:url': current_url,
-                'og:image': og_image_url,
+                'og:url': html_escape(current_url),
+                'og:image': html_escape(og_image_url),
+                'og:image:type': 'image/png',
+                'og:image:alt': html_escape(alt),
                 'twitter:title': html_escape(title),
                 'twitter:description': html_escape(description),
-                'twitter:image': og_image_url,
+                'twitter:image': html_escape(og_image_url),
+                'twitter:image:alt': html_escape(alt),
             })
 
             page_html = page_html.replace('?v=__VERSION__', f'?v={APP_VERSION}')
@@ -1736,12 +1762,30 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.serve_json({'error': error}, status=400)
             return
 
-        svg = self._generate_og_image_svg(from_stop, to_stop, mode)
-        body = svg.encode('utf-8')
+        parts = self._og_image_parts(from_stop, to_stop, mode)
+        try:
+            from .og_image import render_route_png
+            body = render_route_png(*parts)
+            content_type = 'image/png'
+        except Exception:
+            global _og_png_fallback_logged
+            if not _og_png_fallback_logged:
+                _og_png_fallback_logged = True
+                get_logger('mpk.http').warning(
+                    'PNG OG renderer unavailable, serving SVG fallback',
+                    exc_info=True)
+            body = self._render_og_image_svg(*parts).encode('utf-8')
+            content_type = 'image/svg+xml'
+
         self.send_response(200)
-        self.send_header('Content-Type', 'image/svg+xml')
+        self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', f'public, max-age={OG_IMAGE_CACHE_MAX_AGE}')
+        if content_type == 'image/png':
+            cache_control = f'public, max-age={OG_IMAGE_CACHE_MAX_AGE}'
+        else:
+            # Do not let a temporary renderer failure stick in caches.
+            cache_control = 'no-store'
+        self.send_header('Cache-Control', cache_control)
         self.end_headers()
         self._send_body(body)
 
@@ -1866,8 +1910,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     # ------------------------------------------------------------
     # OG image generation
     # ------------------------------------------------------------
-    def _generate_og_image_svg(self, from_stop_id, to_stop_id, mode):
-        """Generate OG image as SVG."""
+    def _og_image_parts(self, from_stop_id, to_stop_id, mode):
+        """Resolve names and the cached fare for a preview."""
         from_name = "Przystanek początkowy"
         to_name = "Przystanek końcowy"
         cost_text = ""
@@ -1891,20 +1935,15 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             if result:
                 cost_text = f"{result['cost_regular']:.2f} / {result['cost_reduced']:.2f} zł"
 
+        return _truncate_og_name(from_name), _truncate_og_name(to_name), cost_text
+
+    def _render_og_image_svg(self, from_name, to_name, cost_text):
+        """Render the SVG fallback used when Pillow is unavailable."""
+        if not cost_text:
+            cost_text = "Sprawdź cenę"
+
         def esc(s):
             return html.escape(str(s), quote=True)
-
-        def truncate_name(name, max_chars=26):
-            if len(name) <= max_chars:
-                return name
-            cut = name[:max_chars - 3]
-            last_space = cut.rfind(' ')
-            if last_space > max_chars * 0.5:
-                cut = cut[:last_space]
-            return cut.rstrip() + '...'
-
-        from_name = truncate_name(from_name)
-        to_name = truncate_name(to_name)
 
         from_name_esc = esc(from_name)
         to_name_esc = esc(to_name)
@@ -1954,6 +1993,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             '</svg>'
         )
         return svg
+
+    def _generate_og_image_svg(self, from_stop_id, to_stop_id, mode):
+        """Generate the SVG fallback for an OG preview."""
+        return self._render_og_image_svg(
+            *self._og_image_parts(from_stop_id, to_stop_id, mode))
 
     def log_message(self, format, *args):
         """Log API requests and errors through the structured logger."""

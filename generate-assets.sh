@@ -1,16 +1,19 @@
 #!/bin/bash
-# Generate favicon.svg and og-image.svg from the single source of truth: public/logo.svg
+# Generate favicon.svg, og-image.svg and og-image.png from the single source
+# of truth: public/logo.svg
 # Run: bash generate-assets.sh
 # This ensures that editing public/logo.svg propagates to:
 #   - public/favicon.svg (favicon)
 #   - public/og-image.svg (static OG image)
-#   - dynamic OG image (server.py already injects logo.svg at runtime)
+#   - public/og-image.png (raster OG image for social crawlers)
+#   - dynamic SVG fallback (server.py injects logo.svg at runtime)
 
 set -e
 
 LOGO="public/logo.svg"
 FAVICON="public/favicon.svg"
 OG_IMAGE="public/og-image.svg"
+OG_IMAGE_PNG="public/og-image.png"
 
 if [ ! -f "$LOGO" ]; then
     echo "✗ Error: $LOGO not found"
@@ -82,6 +85,16 @@ $LOGO_INNER
 EOF
 echo "✓ $OG_IMAGE"
 
+# 3. Raster OG image: social crawlers reject SVG. The PNG renderer mirrors
+#    the bus logo primitives from logo.svg; update server/og_image.py when
+#    the logo changes.
+if python3 -c "import PIL" 2>/dev/null; then
+    python3 -m server.og_image --default "$OG_IMAGE_PNG"
+    echo "✓ $OG_IMAGE_PNG"
+else
+    echo "⚠ Pillow not installed - keeping existing $OG_IMAGE_PNG"
+fi
+
 echo ""
 echo "=== Generating previews ==="
 
@@ -91,13 +104,15 @@ mkdir -p previews
 cp public/favicon.svg previews/favicon.svg
 echo "✓ previews/favicon.svg"
 
-# 2. Static OG image preview
+# 2. Static OG image previews
 cp public/og-image.svg previews/og-image.svg
+cp public/og-image.png previews/og-image.png
 echo "✓ previews/og-image.svg"
+echo "✓ previews/og-image.png"
 
 # 3. Dynamic OG image preview (from running server, if available)
-if curl -sf "http://localhost:8080/api/og-image?from=group_0&to=group_10&mode=short" -o previews/og-image-api.svg 2>/dev/null; then
-    echo "✓ previews/og-image-api.svg"
+if curl -sf "http://localhost:8080/api/og-image?from=group_0&to=group_10&mode=short" -o previews/og-image-api.png 2>/dev/null; then
+    echo "✓ previews/og-image-api.png"
 else
     echo "⚠ Server not running - skipping dynamic OG preview (start server and run preview-logo.sh)"
 fi
@@ -107,8 +122,9 @@ echo "=== Done ==="
 echo "Assets regenerated from $LOGO"
 echo "  $FAVICON"
 echo "  $OG_IMAGE"
+echo "  $OG_IMAGE_PNG"
 echo "Previews in previews/:"
 ls -la previews/
 echo ""
-echo "Note: The dynamic OG image (/api/og-image) already reads logo.svg at runtime,"
-echo "so it updates automatically without running this script."
+echo "Note: the SVG assets read logo.svg at runtime; the PNG renderer in"
+echo "server/og_image.py mirrors the logo primitives, so regenerate after edits."

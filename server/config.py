@@ -161,6 +161,9 @@ BOT_USER_AGENTS = [
     'telegrambot', 'discordbot', 'whatsapp', 'skypeuripreview',
     'applebot', 'bingbot', 'googlebot', 'yandexbot', 'duckduckbot',
     'facebot', 'meta-externalagent',
+    # Mastodon/Bluesky previews fetch with their own UAs; without these the
+    # route-specific title/image would fall back to the generic homepage card.
+    'mastodon', 'bluesky', 'cardyb',
 ]
 
 # ============================================================
@@ -183,4 +186,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "2.1.3"
+APP_VERSION = "2.1.4"

@@ -142,6 +142,7 @@ const STOP_COLOR = '#3498db';
 // Keyboard navigation state for search results
 var searchSelectedIndex = { from: -1, to: -1 };
 var searchAbortController = null;
+var appVersion = '';
 
 // ============================================================
 // Initialization
@@ -285,7 +286,12 @@ function initMap() {
     // page load, no polling.
     fetch('/api/version')
         .then(r => r.json())
-        .then(s => { if (s && s.version) statusEl.textContent = 'v' + s.version; })
+        .then(s => {
+            if (s && s.version) {
+                appVersion = s.version;
+                statusEl.textContent = 'v' + s.version;
+            }
+        })
         .catch(() => { /* badge stays as '…' */ });
 
     // Pricing panel: values live in pricing.json on the server; keep the
@@ -904,11 +910,12 @@ function openShareModal() {
     // Set the link input
     document.getElementById('share-link').value = shareUrl;
 
-    // Set the OG image preview (dynamic). Generation can take a few seconds
-    // (server-side A* + SVG), so show a spinner until the image arrives.
+    // Set the OG image preview (dynamic). It is rendered server-side from
+    // the cached route result, so show a spinner until the image arrives.
     var ogImageUrl = '/api/og-image?from=' + encodeURIComponent(state.fromStop.id) +
         '&to=' + encodeURIComponent(state.toStop.id) +
-        '&mode=' + encodeURIComponent(state.routeMode);
+        '&mode=' + encodeURIComponent(state.routeMode) +
+        (appVersion ? '&v=' + encodeURIComponent(appVersion) : '');
     var ogImage = document.getElementById('share-og-image');
     var ogLoading = document.getElementById('share-og-loading');
     var ogRetryCount = 0;
@@ -928,6 +935,7 @@ function openShareModal() {
             ogLoading.innerHTML = '<span class="loading-text">Podgląd niedostępny. Udostępnij link bezpośrednio.</span>';
         }
     };
+    ogImage.alt = 'Podgląd trasy ' + state.fromStop.name + ' → ' + state.toStop.name;
     ogImage.src = ogImageUrl;
 
     // Show the modal
