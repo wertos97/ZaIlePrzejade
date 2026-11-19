@@ -106,7 +106,7 @@ Dane GTFS przetwarza `process_gtfs.py` (surowe pliki zip w `data/` → `processe
 ## Testy
 
 ```bash
-python3 -m unittest discover -s tests     # 150 testów
+python3 -m unittest discover -s tests     # 151 testów
 ```
 
 W tym `TestExactSearchExactness` — na małym grafie testowym algorytm jest porównywany z metodą, która sprawdza wszystkie możliwe trasy. Wyniki muszą się zgadzać. Testy admina wymagają `init_pathfinding`; część testów pomija się, gdy brak danych GTFS.

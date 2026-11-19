@@ -741,7 +741,15 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
 
+    def _close_on_body(self):
+        """A GET/HEAD/OPTIONS body is never consumed; close instead of
+        letting unread bytes become the next request on a keep-alive socket."""
+        length = (self.headers.get('Content-Length') or '').strip()
+        if self.headers.get('Transfer-Encoding') or (length and length != '0'):
+            self.close_connection = True
+
     def do_HEAD(self):
+        self._close_on_body()
         self._head_only = True
         self.do_GET()
 
@@ -770,6 +778,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.send_error_page(405)
 
     def do_OPTIONS(self):
+        self._close_on_body()
         self.send_response(204)
         self.send_header('Allow', 'GET, HEAD, OPTIONS')
         self.end_headers()
@@ -780,6 +789,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.wfile.write(body)
 
     def do_GET(self):
+        self._close_on_body()
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)

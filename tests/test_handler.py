@@ -166,6 +166,20 @@ class TestHandlerEndpoints(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_get_with_body_closes_keep_alive_connection(self):
+        """GET bodies are ignored by the handler, so the socket must close."""
+        import http.client
+        conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=10)
+        try:
+            conn.request('GET', '/api/version', body=b'x' * 10)
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertTrue(response.will_close)
+            self.assertEqual(response.getheader('Connection'), 'close')
+            response.read()
+        finally:
+            conn.close()
+
     def test_og_image_returns_png(self):
         """Social crawlers reject SVG; the endpoint must serve a raster card."""
         status, headers, body = self._get(
