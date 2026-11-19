@@ -133,6 +133,39 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertEqual(body, b'')
             self.assertEqual(headers.get('ETag'), etag)
 
+    def test_http11_keep_alive(self):
+        """Cloudflare can reuse one origin connection for several requests."""
+        import http.client
+        conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=10)
+        try:
+            conn.request('GET', '/api/version')
+            first = conn.getresponse()
+            self.assertEqual(first.status, 200)
+            self.assertEqual(first.version, 11)
+            self.assertFalse(first.will_close)
+            first.read()
+
+            conn.request('GET', '/api/health')
+            second = conn.getresponse()
+            self.assertEqual(second.status, 200)
+            self.assertFalse(second.will_close)
+            second.read()
+        finally:
+            conn.close()
+
+    def test_post_closes_keep_alive_connection(self):
+        """Unread POST bytes must never be parsed as the next request."""
+        import http.client
+        conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=10)
+        try:
+            conn.request('POST', '/api/not-admin', body=b'x' * 8192)
+            response = conn.getresponse()
+            self.assertEqual(response.status, 405)
+            self.assertTrue(response.will_close)
+            response.read()
+        finally:
+            conn.close()
+
     def test_og_image_returns_png(self):
         """Social crawlers reject SVG; the endpoint must serve a raster card."""
         status, headers, body = self._get(

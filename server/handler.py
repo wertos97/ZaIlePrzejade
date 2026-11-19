@@ -733,6 +733,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
 
     server_version = ''
     sys_version = ''
+    # HTTP/1.1 lets Cloudflare reuse the origin connection instead of a new
+    # TCP/thread per request. timeout closes idle keep-alive sockets.
+    protocol_version = 'HTTP/1.1'
+    timeout = 15
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
@@ -742,6 +746,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.do_GET()
 
     def do_POST(self):
+        # Admin handlers cap how much of the body they read. Close the
+        # connection so unread bytes cannot become the next request.
+        self.close_connection = True
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path in ('/api/admin/login', '/api/admin/logout',
                            '/api/admin/gtfs-check', '/api/admin/gtfs-cancel',
@@ -751,12 +758,15 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self.send_error_page(405)
 
     def do_PUT(self):
+        self.close_connection = True
         self.send_error_page(405)
 
     def do_DELETE(self):
+        self.close_connection = True
         self.send_error_page(405)
 
     def do_PATCH(self):
+        self.close_connection = True
         self.send_error_page(405)
 
     def do_OPTIONS(self):
@@ -1857,6 +1867,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         self._headers_sent = True
         self._security_headers()
         self.send_header('X-App-Version', APP_VERSION)
+        if getattr(self, 'close_connection', False):
+            self.send_header('Connection', 'close')
         super().end_headers()
 
     def serve_json(self, data_obj, status=200, retry_after=None):
@@ -2044,5 +2056,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         """Log API requests and errors through the structured logger."""
         msg = format % args
+        # Idle keep-alive sockets hit the 15s timeout by design; not an error.
+        if msg.startswith('Request timed out'):
+            return
         if '/api/' in msg or 'Error' in msg or 'error' in msg:
             get_logger('mpk.http').info('HTTP access: %s', msg)

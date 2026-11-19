@@ -11,7 +11,9 @@ import os
 DEFAULT_PORT = int(os.environ.get('PORT', 8080))
 # Searches hold their HTTP thread for up to 30s, so the cap must leave
 # room for everyone else's static/page requests during that window.
-MAX_CONCURRENT_REQUESTS = 24
+# HTTP/1.1 keep-alive also counts idle origin connections here; the
+# pathfinding queue still sheds expensive work separately.
+MAX_CONCURRENT_REQUESTS = 48
 REQUEST_QUEUE_SIZE = 64
 
 # ============================================================
@@ -186,4 +188,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "2.1.5"
+APP_VERSION = "2.1.6"
