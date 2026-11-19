@@ -123,14 +123,15 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertEqual(status, 200)
         etag = headers.get('ETag')
         self.assertTrue(etag)
-        try:
-            status, headers, body = self._get(
-                '/api/stops', {'If-None-Match': etag})
-        except urllib.error.HTTPError as e:
-            status, headers, body = e.code, dict(e.headers), e.read()
-        self.assertEqual(status, 304)
-        self.assertEqual(body, b'')
-        self.assertEqual(headers.get('ETag'), etag)
+        for candidate in (etag, 'W/' + etag):
+            try:
+                status, headers, body = self._get(
+                    '/api/stops', {'If-None-Match': candidate})
+            except urllib.error.HTTPError as e:
+                status, headers, body = e.code, dict(e.headers), e.read()
+            self.assertEqual(status, 304)
+            self.assertEqual(body, b'')
+            self.assertEqual(headers.get('ETag'), etag)
 
     def test_og_image_returns_png(self):
         """Social crawlers reject SVG; the endpoint must serve a raster card."""

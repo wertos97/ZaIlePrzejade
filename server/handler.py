@@ -1908,7 +1908,12 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         etag = '"%s-%s"' % (
             feed_version or APP_VERSION,
             path.strip('/').replace('/', '-'))
-        if self.headers.get('If-None-Match', '').strip() in (etag, '*'):
+        if_none_match = self.headers.get('If-None-Match', '').strip()
+        if if_none_match.startswith('W/'):
+            # Cloudflare weakens ETags on compressed responses; GET uses
+            # weak comparison, so accept both forms.
+            if_none_match = if_none_match[2:].strip()
+        if if_none_match in (etag, '*'):
             self.send_response(304)
             self.send_header('ETag', etag)
             self.send_header('Cache-Control', 'public, max-age=3600')
