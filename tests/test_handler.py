@@ -326,6 +326,31 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertIn('cheap', result)
         self.assertIn('convenient', result)
 
+    def test_route_json_cache_skips_hydration(self):
+        """A repeated route serves the stored bytes, not a fresh hydration."""
+        from server import handler as handler_mod
+
+        # Warm the serialized response cache for this pair.
+        self._get(f'/api/find-route?from={self.from_id}&to={self.to_id}')
+
+        def fail(*_args, **_kwargs):
+            raise AssertionError('route cache hydrated for a cached response')
+
+        original_pair = handler_mod.pathfinding.get_cached_route_pair
+        original_runner = handler_mod.run_pathfinding_with_timeout
+        handler_mod.pathfinding.get_cached_route_pair = fail
+        handler_mod.run_pathfinding_with_timeout = fail
+        try:
+            status, _, body = self._get(
+                f'/api/find-route?from={self.from_id}&to={self.to_id}')
+        finally:
+            handler_mod.pathfinding.get_cached_route_pair = original_pair
+            handler_mod.run_pathfinding_with_timeout = original_runner
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertIn('cheap', result)
+        self.assertIn('convenient', result)
+
     def test_find_route_cheap_not_more_expensive(self):
         """Exactness invariant: when both exact searches complete, the cheap
         fare can never exceed the convenient route's fare."""
@@ -394,10 +419,12 @@ class TestHandlerEndpoints(unittest.TestCase):
         release = threading.Event()
         blockers = [handler_mod._pathfinding_executor.submit(
             release.wait, 5) for _ in range(4)]
-        # This test is about the cold-request path; keep the warm-cache
-        # shortcut from answering before the shed check runs.
+        # This test is about the cold-request path; keep both cache shortcuts
+        # from answering before the shed check runs.
         original_cached = handler_mod.pathfinding.get_cached_route_pair
+        original_json_get = handler_mod._route_json_get
         handler_mod.pathfinding.get_cached_route_pair = lambda *_a: None
+        handler_mod._route_json_get = lambda *_a: None
         # wait until the executor queue actually reaches the shed threshold
         shed_deadline = _time.monotonic() + 5
         while _time.monotonic() < shed_deadline:
@@ -420,6 +447,7 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertIn('przeciążony', result['error'])
         finally:
             handler_mod.pathfinding.get_cached_route_pair = original_cached
+            handler_mod._route_json_get = original_json_get
             release.set()
             # wait for every blocker to actually finish — later tests must
             # start from a completely idle executor

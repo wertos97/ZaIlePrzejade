@@ -17,7 +17,7 @@ import time
 import traceback
 import urllib.parse
 import urllib.request
-from collections import deque
+from collections import deque, OrderedDict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from http.server import SimpleHTTPRequestHandler
 
@@ -229,8 +229,57 @@ PUBLIC_DIR = os.path.realpath(data.PUBLIC_DIR)
 _PUBLIC_HOST = PUBLIC_BASE_URL.split('//', 1)[-1]
 _og_png_fallback_logged = False
 
+# Serialized /api/find-route payloads. Hydration + json.dumps + gzip on every
+# warm request is measurable on one core; this keeps the final bytes instead.
+_ROUTE_JSON_CACHE_MAX = 128
+_route_json_cache = OrderedDict()
+_route_json_lock = threading.Lock()
+
 BLOCKED_PREFIXES = _BLOCKED_PREFIXES
 BLOCKED_PATHS = _BLOCKED_PATHS
+
+
+def _route_json_key(from_stop: str, to_stop: str) -> tuple:
+    feed = (data.feed_metadata or {}).get('version', '')
+    return (from_stop, to_stop, feed)
+
+
+def _route_json_get(from_stop: str, to_stop: str):
+    key = _route_json_key(from_stop, to_stop)
+    with _route_json_lock:
+        entry = _route_json_cache.get(key)
+        if entry is not None:
+            _route_json_cache.move_to_end(key)
+        return entry
+
+
+def _route_json_put(from_stop: str, to_stop: str, entry) -> None:
+    key = _route_json_key(from_stop, to_stop)
+    with _route_json_lock:
+        _route_json_cache[key] = entry
+        _route_json_cache.move_to_end(key)
+        while len(_route_json_cache) > _ROUTE_JSON_CACHE_MAX:
+            _route_json_cache.popitem(last=False)
+
+
+def _encode_json_pair(payload):
+    body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    body_gz = gzip.compress(body, compresslevel=6) if len(body) > 1024 else body
+    return body, body_gz
+
+
+def _mode_summary(res):
+    if not res:
+        return None
+    return {
+        'dist': round(res.get('total_distance', 0.0), 2),
+        'reg': res.get('cost_regular'),
+        'red': res.get('cost_reduced'),
+        # Ride count for the cheap-vs-convenient invariants checked in
+        # the admin panel (cheap must not cost more, convenient must not
+        # ride more).
+        'rides': len(res.get('segments', [])),
+    }
 
 
 # ============================================================
@@ -1535,27 +1584,18 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         global _route_requests, _route_timeouts
         _route_requests += 1
 
-        def _search_detail(ms, convenient_result=None, cheap_result=None):
-            def _mode_summary(res):
-                if not res:
-                    return None
-                return {
-                    'dist': round(res.get('total_distance', 0.0), 2),
-                    'reg': res.get('cost_regular'),
-                    'red': res.get('cost_reduced'),
-                    # Ride count for the cheap-vs-convenient invariants
-                    # checked in the admin panel (cheap must not cost
-                    # more, convenient must not ride more).
-                    'rides': len(res.get('segments', [])),
+        def _search_detail(ms, convenient_result=None, cheap_result=None,
+                           modes=None):
+            if modes is None:
+                modes = {
+                    'cheap': _mode_summary(cheap_result),
+                    'convenient': _mode_summary(convenient_result),
                 }
             return {
                 'from': from_stop,
                 'to': to_stop,
                 'ms': ms,
-                'modes': {
-                    'cheap': _mode_summary(cheap_result),
-                    'convenient': _mode_summary(convenient_result),
-                },
+                'modes': modes,
             }
 
         # Synchronous: compute convenient + cheap, both EXACT, in one call.
@@ -1567,26 +1607,34 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         # skipped — the panel hides it by default with a toggle.
         _is_op = 1 if _is_operator(self) else 0
 
-        # Warm hit: serve straight from the route cache. Submitting this to
-        # the single worker would make a cached route wait behind a cold A*
-        # search, even though there is nothing to compute.
+        # Warm hit: serve the final serialized payload straight from cache.
+        # This skips cache hydration, json.dumps and gzip on every repeat.
         _cache_t0 = time.monotonic()
+        cached_json = _route_json_get(from_stop, to_stop)
+        if cached_json is not None:
+            body, body_gz, modes = cached_json
+            _cache_ms = int((time.monotonic() - _cache_t0) * 1000)
+            try:
+                admin_stats.record_request(
+                    'ok', _get_client_ip(self),
+                    {'from': from_stop, 'to': to_stop,
+                     'ms': _cache_ms, 'modes': modes},
+                    op=_is_op)
+            except Exception:
+                pass
+            self._serve_json_bytes(body, body_gz)
+            return
+
+        # Warm route cache without a serialized response (first hit after
+        # restart): hydrate once, then keep the final bytes for next time.
         cached_pair = pathfinding.get_cached_route_pair(from_stop, to_stop)
         if cached_pair is not None:
             convenient_result, _convenient_error = cached_pair[0]
             cheap_result, _cheap_error = cached_pair[1]
             _cache_ms = int((time.monotonic() - _cache_t0) * 1000)
-            try:
-                admin_stats.record_request(
-                    'ok', _get_client_ip(self),
-                    _search_detail(_cache_ms, convenient_result, cheap_result),
-                    op=_is_op)
-            except Exception:
-                pass
-            self.serve_json({
-                'convenient': convenient_result,
-                'cheap': cheap_result,
-            })
+            self._serve_route_result(
+                from_stop, to_stop, convenient_result, cheap_result,
+                _cache_ms, _is_op)
             return
 
         _search_t0 = time.monotonic()
@@ -1647,20 +1695,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 or "Nie znaleziono trasy między tymi przystankami")})
             return
 
-        try:
-            admin_stats.record_request(
-                'ok', _get_client_ip(self),
-                _search_detail(_search_ms, convenient_result, cheap_result),
-                op=_is_op)
-        except Exception:
-            pass
-
         # Two user-facing modes only. A mode whose exact search timed out is
         # null — the frontend shows a timeout toast for the requested mode.
-        self.serve_json({
-            'convenient': convenient_result,
-            'cheap': cheap_result,
-        })
+        self._serve_route_result(
+            from_stop, to_stop, convenient_result, cheap_result,
+            _search_ms, _is_op)
 
     def _handle_cost(self, query):
         distance_str = query.get('distance', ['0'])[0]
@@ -1909,6 +1948,52 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 self.send_header('Retry-After', str(retry_after))
             self.end_headers()
         self._send_body(body)
+
+    def _serve_json_bytes(self, body, body_gz):
+        """Serve pre-serialized JSON, gzipped when the client accepts it."""
+        accept = self.headers.get('Accept-Encoding', '')
+        if 'gzip' in accept and body_gz is not body:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Encoding', 'gzip')
+            self.send_header('Vary', 'Accept-Encoding')
+            self.send_header('Content-Length', str(len(body_gz)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self._send_body(body_gz)
+        else:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Vary', 'Accept-Encoding')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            self._send_body(body)
+
+    def _serve_route_result(self, from_stop, to_stop,
+                            convenient_result, cheap_result,
+                            elapsed_ms, is_operator):
+        """Record stats, cache the final bytes, and serve both modes."""
+        modes = {
+            'cheap': _mode_summary(cheap_result),
+            'convenient': _mode_summary(convenient_result),
+        }
+        try:
+            admin_stats.record_request(
+                'ok', _get_client_ip(self),
+                {'from': from_stop, 'to': to_stop,
+                 'ms': elapsed_ms, 'modes': modes},
+                op=is_operator)
+        except Exception:
+            pass
+
+        body, body_gz = _encode_json_pair({
+            'convenient': convenient_result,
+            'cheap': cheap_result,
+        })
+        if convenient_result is not None and cheap_result is not None:
+            _route_json_put(from_stop, to_stop, (body, body_gz, modes))
+        self._serve_json_bytes(body, body_gz)
 
     def serve_json_cached(self, path):
         """Serve pre-computed JSON for static endpoints."""
