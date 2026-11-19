@@ -14,11 +14,24 @@
   <a href="https://zaileprzeja.de"><strong>🌐 zaileprzeja.de</strong></a>
 </p>
 
-Kalkulator cen biletów komunikacji miejskiej w Krakowie w taryfie 2027 (opartej na przejechanym dystansie). Taryfa ma być opcjonalna — działać obok obecnych biletów czasowych, jednorazowych i okresowych. Aplikacja pokazuje połączenia pomiędzy dwoma wybranymi przystankami w **dwóch wariantach**:
+Kalkulator **planowanej, opcjonalnej taryfy odległościowej** w Krakowie (2027). Taryfa ma działać **obok** obecnych biletów czasowych, jednorazowych i okresowych — pasażer sam wybiera sposób rozliczenia. Start jest **planowany na 4 stycznia 2027 r.**, ale przetarg na system nie jest formalnie zakończony (odwołanie do KIO), więc termin może się przesunąć.
 
-- **Trasa tania** — najtańszy wariant. Kalkulator zakłada, że każdy przejazd to osobny bilet liczony
-  od zera (miasto nie opisało jeszcze zasad rozliczania przesiadek), więc najtańsza trasa nie zawsze jest najkrótsza,
-- **Trasa wygodna** — najmniej przesiadek przy rozsądnej cenie.
+Aplikacja pokazuje połączenia pomiędzy dwoma wybranymi przystankami w **dwóch wariantach**:
+
+- **Trasa tania** — najtańszy wariant w modelu kalkulatora (Interpretacja A). W podstawowej wersji systemu każdy przejazd pojazdem to osobny bilet liczony od zera — to potwierdzona zasada na pierwsze miesiące. Trasa tania nie zawsze jest najkrótsza.
+- **Trasa wygodna** — mniej przesiadek przy rozsądnej cenie.
+
+## Status taryfy i źródła
+
+- **17.12.2025** — Rada Miasta Krakowa przyjęła uchwałę; **2.03.2026** weszły nowe ceny klasyczne, a przepisy taryfy odległościowej mają wejść **4.01.2027** (Zarządzenie nr 425/2026 Prezydenta Miasta Krakowa).
+- **23.07.2026** — ZTP ogłosił przetarg na system. Cennik: **4 zł / 2 zł** (ulgowy) do 3,5 km, **+0,50 zł / +0,25 zł** za każde rozpoczęte 500 m, maks. **9 zł / 4,50 zł** za przejazd, limit **20 zł / 10 zł** w 24 h. Taryfa jest opcjonalna; system ma działać m.in. w mKraków; przesiadki mają być uwzględnione w kolejnym etapie.
+- **11.09.2026** — ZTP wybrał Mera-Serwis SGL; **21.09.2026** Beesset wniósł odwołanie do KIO (sprawa **4697/26**, rozprawa 14.10.2026). Na 19.10.2026 nie było publicznego rozstrzygnięcia; ostatnie komunikaty nie potwierdzają podpisania umowy. **Start w styczniu 2027 r. nie jest pewny.**
+- **Oficjalny dystans jest liczony w linii prostej** (tabela w załączniku do uchwały/Zarządzenia 425/2026). Cena między tymi samymi przystankami ma być stała, niezależnie od objazdu czy korków.
+- **Kalkulator liczy dystans wzdłuż trasy GTFS** (`shape_dist_traveled`), a nie w linii prostej. Trasa bywa dłuższa, więc pokazana cena może być **zawyżona** względem oficjalnego systemu. To świadome przybliżenie — szczegóły w „Uwaga” i „Info” w aplikacji.
+- **Przesiadki:** przez pierwsze około **6 miesięcy** od wdrożenia podstawowej wersji każdy pojazd to osobny, płatny przejazd. Później ma pojawić się łączenie przejazdów; szczegóły (czas, odległość, powrót) nie są opublikowane. Interpretacja B (cała podróż jako jeden bilet) to hipoteza przyszłej wersji, nie obecna zasada.
+- **Kanał:** oficjalna taryfa ma działać **wyłącznie przez aplikacje mobilne** (mKraków lub inne po umowie z ZTP). Pasażer podaje numer pojazdu, rozpoczyna i kończy przejazd; przy kontroli pokazuje kod QR; zapomnienie zakończenia może oznaczać opłatę do końca linii.
+
+Źródła: [ZTP, 23.07.2026](https://ztp.krakow.pl/wszystkie-aktualnosci/kmk/ogloszenie-przetargu-na-wprowadzenie-odleglosciowej-taryfy-biletowej.html), [ZTP, 23.09.2026](https://ztp.krakow.pl/wszystkie-aktualnosci/kmk/taryfa-odleglosciowa-w-kmk-wybrano-wykonawce-wplynelo-odwolanie-do-kio.html), [Miasto Kraków, 2.02.2026](https://krakow.pl/aktualnosci/301273,1912,komunikat,od_2_marca_nowe_ceny_biletow_komunikacji_miejskiej_w_krakowie.html), [Miasto Kraków, 28.09.2026](https://krakow.pl/aktualnosci/338735,1912,komunikat,taryfa_odleglosciowa_w_kmk__po_wyborze_wykonawcy_wplynelo_odwolanie_do_kio.html), [Głos24, 19.10.2026](https://glos24.pl/bilet-za-kilometry-w-krakowie-ztp-wyjasnia-jak-to-ma-dzialac), [TransInfo, 14.09.2026](https://transinfo.pl/infotrans/mera-bierze-kolejny-kontrakt-w-krakowie-i-za-prawie-6-mln-zl-zrobi-taryfe-odleglosciowa/), [Zarządzenie 425/2026](https://www.kk.krakow.pl/aktyprawne/taryfa-biletowa/download,43.html).
 
 ## OG Image dla sociali
 
@@ -30,17 +43,14 @@ Aplikacja automatycznie generuje obrazki OG w sposób dynamiczny dla danej trasy
 
 ## Wyszukiwanie tras
 
-Podstawą jest graf zbudowany z danych GTFS (`process_gtfs.py` →
-`processed/`): przystanki z pozycjami, przejazdy linii z realnymi
-dystansami (`shape_dist_traveled`) i przejścia piesze między przystankami (peronami).
+Podstawą jest graf zbudowany z danych GTFS (`process_gtfs.py` → `processed/`): przystanki z pozycjami, przejazdy linii z **dystansami trasy** (`shape_dist_traveled`) i przejścia piesze między przystankami (peronami). Dystans trasy nie jest tym samym co oficjalna linia prosta — to przybliżenie kalkulatora.
 
 1. **Cała jazda liczona naraz** — Dijkstra przechodzi po krawędziach jednej linii i wyznacza koszt jazdy daną linią do wszystkich przystanków jednocześnie.
 2. **Składanie tras z przejazdów** — trasa to kilka takich jazd połączonych przesiadkami. Aplikacja składa: jazdy ze startu, jazdy do celu i jazdy pośrednie. Te złożenia pokrywają **wszystkie trasy do 4 przejazdów**, a tańsze opcje odcinają droższe, więc typowa para liczy się w ułamkach sekundy.
-3. **Gwarancja najlepszej ceny** — 5. przejazd zawsze kosztuje co najmniej taryfę bazową, a łączna cena nie może przekroczyć limitu 24-godzinnego. Dlatego najlepsza trasa do 4 przejazdów jest **matematycznie najlepszą możliwą trasą** — i właśnie ją pokazujemy.
-4. **Awaryjne A\*** — dla bardzo trudnych par: dokładne wyszukiwanie Pareto z limitami czasu (8 s / 8 s / 10 s przy limicie żądania 30 s). Gdy limit przekroczony — błąd dla trybu, nigdy wynik „na oko".
+3. **Gwarancja najlepszej ceny w modelu kalkulatora** — 5. przejazd zawsze kosztuje co najmniej taryfę bazową, a łączna cena nie może przekroczyć limitu 24-godzinnego. Dlatego najlepsza trasa do 4 przejazdów jest **matematycznie najlepszą możliwą trasą w Interpretacji A** — i właśnie ją pokazujemy. Nie jest to gwarancja ceny w oficjalnym systemie, który liczy linię prostą i ma inne zasady przesiadek.
+4. **Awaryjne A\*** — dla bardzo trudnych par: dokładne wyszukiwanie Pareto z limitami czasu (8 s / 8 s / 10 s przy limicie żądania 30 s). Gdy limit przekroczony — błąd dla trybu, nigdy wynik „na oko”.
 
-Dwa tryby różnią się tylko tym, co liczą: **tania** minimalizuje samą
-taryfę, **wygodna** taryfę powiększoną o 2,00 zł za każde wsiadanie.
+Dwa tryby różnią się tylko tym, co liczą: **tania** minimalizuje samą taryfę, **wygodna** taryfę powiększoną o 2,00 zł za każde wsiadanie.
 
 ## Cache
 
@@ -58,44 +68,43 @@ Wyniki zapisują się w **dwóch miejscach** i żyją, dopóki nie zmienią się
 | Maksymalna cena pojedynczego biletu | 9,00 zł / 4,50 zł |
 | **Limit 24-godzinny** | **20,00 zł / 10,00 zł** |
 
-Konfiguracja: [`pricing.json`](pricing.json).
+Oficjalne przedziały są liczone **w linii prostej**; kalkulator używa dystansu trasy GTFS. Konfiguracja: [`pricing.json`](pricing.json) (z metadanymi źródła).
 
 ## Prywatność
 
-Bez kont, bez reklam, bez Google Analytics i bez profili użytkowników. Przeglądarka łączy się wyłącznie z naszym serwerem — nawet kafelki mapy serwujemy sami (proxy, więc CARTO nigdy nie widzi odwiedzających). Pełne szczegóły w aplikacji pod przyciskiem „🔒 Prywatność" (`public/privacy.md`).
+Bez kont, bez reklam, bez Google Analytics i bez profili użytkowników. Strona jest dostarczana przez **Cloudflare** (CDN/ochrona; tunel do serwera) — Cloudflare widzi techniczne dane połączenia i przetwarza je zgodnie z własną polityką. Kafelki mapy serwujemy sami (proxy), więc CARTO nie widzi odwiedzających. Statystyki używają solonego skrótu IP (bez surowego IP), surowe zdarzenia są usuwane po 90 dniach, a dzienne rollupy nie mają identyfikatorów. Pełne szczegóły w aplikacji pod przyciskiem „🔒 Prywatność" (`public/privacy.md`).
 
-Aplikacja oferuje też panel operatora z ogólnymi statystykami działania (widoczny tylko na serwerze z konfiguracją).
+Aplikacja ma też panel operatora ze statystykami. Własny ruch operatora jest oznaczany (`op=1`) i domyślnie ukrywany; opcjonalne ciasteczko `operator=1` ustawia tylko operator na własnym urządzeniu.
 
 ## Uruchomienie
 
-Wymagania: Python 3.8+, zero dodatkowych pakietów.
+Wymagania: **Python 3.10+** (testowane na 3.12), zero dodatkowych pakietów.
 
 ```bash
 git clone https://github.com/wertos97/ZaIlePrzejade.git
 cd ZaIlePrzejade
-python server.py                # http://localhost:8080
+python3 server.py                # http://localhost:8080
 ```
 
-Pierwsze uruchomienie pobiera rozkłady GTFS z ZTP i je przetwarza (kilka
-minut); dane trzymane są lokalnie w `processed/` i nie trafiają do repo.
+Pierwsze uruchomienie pobiera rozkłady GTFS z ZTP i je przetwarza (kilka minut); dane trzymane są lokalnie w `processed/` i nie trafiają do repo.
 
-Dane GTFS przetwarza `process_gtfs.py` (surowe pliki zip w `data/` →
-`processed/*.json`).
+Dane GTFS przetwarza `process_gtfs.py` (surowe pliki zip w `data/` → `processed/*.json`).
 
 ## API
 
 | Endpoint | Opis |
 |----------|------|
 | `GET /api/find-route?from=<id>&to=<id>` | `{convenient, cheap}` — obie trasy |
-| `GET /api/stops` / `api/stops/search?q=` | Przystanki / wyszukiwanie |
-| `GET /api/cost?distance=<km>` | Koszt dla dystansu |
+| `GET /api/stops` · `/api/stops/search?q=` · `/api/stop?id=` · `/api/stop-platforms?name=` | Przystanki, wyszukiwanie, perony |
+| `GET /api/pricing` · `/api/data-info` · `/api/cost?distance=<km>` | Cennik, wersja GTFS, koszt dla dystansu |
 | `GET /api/og-image?from=<id>&to=<id>&mode=` | Karta OG (SVG) |
-| `GET /api/health` · `api/status` · `api/version` | Kondycja serwera |
+| `GET /api/health` · `/api/status` · `/api/version` · `/api/maintenance` · `/api/badge/version` | Kondycja serwera, wersja, tryb serwisowy, badge |
+| `GET /api/tiles/v2/{z}/{x}/{y}.png` | Proxy kafelków mapy (cache po stronie serwera) |
 
 ## Testy
 
 ```bash
-python -m unittest discover -s tests     # 75 testów
+python3 -m unittest discover -s tests     # 144 testów
 ```
 
-W tym `TestExactSearchExactness` — na małym grafie testowym algorytm jest porównywany z metodą, która sprawdza wszystkie możliwe trasy. Wyniki muszą się zgadzać.
+W tym `TestExactSearchExactness` — na małym grafie testowym algorytm jest porównywany z metodą, która sprawdza wszystkie możliwe trasy. Wyniki muszą się zgadzać. Testy admina wymagają `init_pathfinding`; część testów pomija się, gdy brak danych GTFS.

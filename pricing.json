@@ -8,5 +8,9 @@
     "max_cost_regular": 9.00,
     "max_cost_reduced": 4.50,
     "max_daily_cost_regular": 20.00,
-    "max_daily_cost_reduced": 10.00
+    "max_daily_cost_reduced": 10.00,
+    "_source": "ZTP Kraków, komunikat 23.07.2026; Zarządzenie nr 425/2026 Prezydenta Miasta Krakowa",
+    "_source_url": "https://ztp.krakow.pl/wszystkie-aktualnosci/kmk/ogloszenie-przetargu-na-wprowadzenie-odleglosciowej-taryfy-biletowej.html",
+    "_valid_from": "2027-01-04",
+    "_note": "Oficjalne przedziały kilometrowe są liczone w linii prostej; kalkulator używa dystansu trasy GTFS, więc cena może być zawyżona."
 }

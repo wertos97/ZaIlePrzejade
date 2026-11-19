@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Za Ile Przejadę? - Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027</title>
-    <meta name="description" content="Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027. Oblicz koszt przejazdu tramwajem lub autobusem w Krakowie w nowym systemie biletów opartych na odległości. Sprawdź cenę biletu normalnego i ulgowego.">
+    <title>Za Ile Przejadę? - Kalkulator planowanej taryfy odległościowej w Krakowie (2027)</title>
+    <meta name="description" content="Kalkulator planowanej, opcjonalnej taryfy odległościowej w Krakowie (2027). Sprawdź szacunkowy koszt przejazdu tramwajem lub autobusem według cennika ZTP. Oficjalny dystans liczony jest w linii prostej; kalkulator używa trasy GTFS, więc cena jest poglądowa.">
     <meta name="theme-color" content="#1a5276">
     <!-- iOS PWA support -->
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -13,8 +13,8 @@
     <link rel="apple-touch-icon" href="/favicon.svg">
     <link rel="canonical" href="https://zaileprzeja.de/">
     <!-- Open Graph -->
-    <meta property="og:title" content="Za Ile Przejadę? - Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027">
-    <meta property="og:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">
+    <meta property="og:title" content="Za Ile Przejadę? - Kalkulator planowanej taryfy odległościowej w Krakowie (2027)">
+    <meta property="og:description" content="Kalkulator planowanej taryfy odległościowej w Krakowie (2027) — szacunkowy koszt przejazdu, cennik ZTP, dwie interpretacje ceny.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://zaileprzeja.de/">
     <meta property="og:image" content="https://zaileprzeja.de/og-image.svg">
@@ -24,8 +24,8 @@
     <meta property="og:locale" content="pl_PL">
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027">
-    <meta name="twitter:description" content="Oblicz koszt przejazdu komunikacją miejską w Krakowie w oparciu o nowy system biletów opartych na odległości.">
+    <meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator planowanej taryfy odległościowej w Krakowie (2027)">
+    <meta name="twitter:description" content="Kalkulator planowanej taryfy odległościowej w Krakowie (2027) — szacunkowy koszt przejazdu, cennik ZTP, dwie interpretacje ceny.">
     <meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -40,7 +40,8 @@
         "@type": "WebApplication",
         "name": "Za Ile Przejadę?",
         "url": "https://zaileprzeja.de/",
-        "description": "Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027. Oblicz koszt przejazdu tramwajem lub autobusem w Krakowie w nowym systemie biletów opartych na odległości.",
+        "description": "Kalkulator planowanej, opcjonalnej taryfy odległościowej w Krakowie (2027). Szacunkowy koszt przejazdu według cennika ZTP; oficjalny dystans w linii prostej, kalkulator używa trasy GTFS.",
+        "dateModified": "2026-11-19",
         "applicationCategory": "TravelApplication",
         "operatingSystem": "Any",
         "inLanguage": "pl",
@@ -64,7 +65,7 @@
                 <img src="/logo.svg" alt="Logo" class="header-logo">
                 <div>
                     <h1>Za Ile Przejadę?</h1>
-                    <p class="subtitle">Kalkulator cen biletów komunikacji miejskiej w Krakowie 2027</p>
+                    <p class="subtitle">Kalkulator planowanej taryfy odległościowej — Kraków 2027</p>
                 </div>
             </div>
         </div>
@@ -147,7 +148,7 @@
                     <span id="price-daily">20,00 zł / 10,00 zł</span>
                 </div>
                 <div class="price-note">
-                    Założenie kalkulatora: każdy przejazd (między przesiadkami) to osobny bilet liczony od zera. Miasto nie opisało jeszcze zasad rozliczania przesiadek.
+                    Założenie kalkulatora: w podstawowej wersji systemu każdy przejazd (między przesiadkami) to osobny bilet liczony od zera — tak ma działać przez pierwsze miesiące. Łączenie przesiadek ma wejść później. Dystans: trasa GTFS; oficjalna taryfa liczy linię prostą, więc cena może być zawyżona.
                 </div>
             </div>
         </div>
@@ -180,13 +181,13 @@
                         <div class="fare-title"><span>Cena</span><span class="fare-title-sub">normalny / ulgowy</span></div>
                         <div class="fare-row">
                             <span class="fare-label">Interpretacja A
-                                <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera. Cena to suma wszystkich przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod kątem tej interpretacji.">ⓘ</span>
+                                <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera — tak ma działać podstawowa wersja systemu przez pierwsze miesiące. Cena to suma przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod tę interpretację. Dystans to trasa GTFS, nie linia prosta.">ⓘ</span>
                             </span>
                             <span class="fare-values" id="result-fare-a">--</span>
                         </div>
                         <div class="fare-row">
                             <span class="fare-label">Interpretacja B
-                                <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za łączny dystans trasy. Miasto nie potwierdziło jeszcze, jak będą rozliczane przesiadki.">ⓘ</span>
+                                <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za łączny dystans trasy. To hipotetyczna wersja przyszłej taryfy z łączeniem przesiadek; szczegóły nie są opublikowane. Dystans to trasa GTFS, nie linia prosta.">ⓘ</span>
                             </span>
                             <span class="fare-values" id="result-fare-b">--</span>
                         </div>
@@ -239,13 +240,13 @@
                 <div class="fare-title"><span>Cena</span><span class="fare-title-sub">normalny / ulgowy</span></div>
                 <div class="fare-row">
                     <span class="fare-label">Interpretacja A
-                        <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera. Cena to suma wszystkich przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod kątem tej interpretacji.">ⓘ</span>
+                        <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera — tak ma działać podstawowa wersja systemu przez pierwsze miesiące. Cena to suma przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod tę interpretację. Dystans to trasa GTFS, nie linia prosta.">ⓘ</span>
                     </span>
                     <span class="fare-values" id="mobile-result-fare-a">--</span>
                 </div>
                 <div class="fare-row">
                     <span class="fare-label">Interpretacja B
-                        <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za łączny dystans trasy. Miasto nie potwierdziło jeszcze, jak będą rozliczane przesiadki.">ⓘ</span>
+                        <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za łączny dystans trasy. To hipotetyczna wersja przyszłej taryfy z łączeniem przesiadek; szczegóły nie są opublikowane. Dystans to trasa GTFS, nie linia prosta.">ⓘ</span>
                     </span>
                     <span class="fare-values" id="mobile-result-fare-b">--</span>
                 </div>
