@@ -2064,10 +2064,19 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             *self._og_image_parts(from_stop_id, to_stop_id, mode))
 
     def log_message(self, format, *args):
-        """Log API requests and errors through the structured logger."""
+        """Log API errors and expensive requests; keep cheap chatter at DEBUG."""
         msg = format % args
         # Idle keep-alive sockets hit the 15s timeout by design; not an error.
         if msg.startswith('Request timed out'):
             return
-        if '/api/' in msg or 'Error' in msg or 'error' in msg:
+        if '/api/' not in msg:
+            return
+
+        match = re.search(r'"\s+(\d{3})\s', msg)
+        status = int(match.group(1)) if match else 0
+        expensive = ('/api/find-route' in msg or '/api/og-image' in msg
+                     or '/api/admin' in msg)
+        if status >= 400 or expensive or 'Error' in msg or 'error' in msg:
             get_logger('mpk.http').info('HTTP access: %s', msg)
+        else:
+            get_logger('mpk.http').debug('HTTP access: %s', msg)
