@@ -469,7 +469,7 @@ function drawRouteOnMap(result) {
                 className: 'segment-label',
                 html: `<div class="segment-label-box">
                     <span class="segment-label-cost">${costText}</span>
-                    <span class="segment-label-dist">${distKm} km</span>
+                    <span class="segment-label-dist">${distKm} km A→B</span>
                 </div>`,
                 // Auto-size to content; CSS uses width:max-content
                 iconSize: [0, 0],
@@ -578,15 +578,12 @@ function displayResult(result) {
     if (timeEl) {
         timeEl.textContent = totalTimeText ? `· ${totalTimeText}` : '';
     }
-    // Two fare interpretations for the same route (see warning.md):
-    // A = each ride a separate ticket, B = whole journey as one ticket.
+    // Official first-phase fare: each ride is a separate ticket.
     const farePair = (reg, red) =>
         (reg != null && red != null)
             ? `${reg.toFixed(2)} zł / ${red.toFixed(2)} zł` : '––';
     const fareA = farePair(result.cost_regular, result.cost_reduced);
-    const fareB = farePair(result.cost_b_regular, result.cost_b_reduced);
-    document.getElementById('result-fare-a').textContent = fareA;
-    document.getElementById('result-fare-b').textContent = fareB;
+    document.getElementById('result-fare').textContent = fareA;
 
     document.getElementById('mobile-result-distance').textContent =
         `${result.total_distance.toFixed(2)} km`;
@@ -596,8 +593,7 @@ function displayResult(result) {
     if (mobileTimeEl) {
         mobileTimeEl.textContent = totalTimeText ? `· ${totalTimeText}` : '';
     }
-    document.getElementById('mobile-result-fare-a').textContent = fareA;
-    document.getElementById('mobile-result-fare-b').textContent = fareB;
+    document.getElementById('mobile-result-fare').textContent = fareA;
 
     const transferCount = result.transfers ? result.transfers.length : 0;
     const transferText = transferCount > 0 ? `${transferCount} przesiadka(e/k)` : 'Bez przesiadek';
@@ -658,7 +654,7 @@ function buildStepsHtml(result) {
                 <div class="route-step" data-seg-index="${index}">
                     <div class="step-header">
                         <span class="step-title">${modeIcon} Przejazd</span>
-                        <span class="step-distance">${billedKm.toFixed(2)} km${segTimeText} · ${segCost} zł</span>
+                        <span class="step-distance">${billedKm.toFixed(2)} km A→B${segTimeText} · ${segCost} zł</span>
                     </div>
                     <div class="step-routes">Linie: ${escapeHtml(routeLabel)}</div>
                     <div class="step-detail">

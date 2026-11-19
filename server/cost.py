@@ -2,6 +2,11 @@
 
 Pricing is loaded from pricing.json and used by calculate_cost and
 calculate_route_cost to compute regular and reduced fares.
+
+The official model (first phase) charges every vehicle separately: each
+ride is a ticket priced from zero on the straight-line A→B distance between
+its boarding and alighting stop. calculate_route_cost sums those rides and
+applies the 24h limit.
 """
 
 import json
@@ -67,9 +72,9 @@ def calculate_cost(distance_km: float) -> tuple[float, float]:
 
 
 def calculate_route_cost(segments: list[dict]) -> tuple[float, float]:
-    """Total route cost — Interpretation A: each ride between transfers is
-    a separate ticket priced from zero; the sum is capped by the 24h limit
-    (after reaching it, further rides are free).
+    """Total route cost in the official first-phase model: each ride
+    between transfers is a separate ticket priced from zero; the sum is
+    capped by the 24h limit (after reaching it, further rides are free).
 
     Returns (total_regular, total_reduced).
     """
@@ -87,18 +92,6 @@ def calculate_route_cost(segments: list[dict]) -> tuple[float, float]:
     total_regular = min(total_regular, MAX_DAILY_COST_REGULAR)
     total_reduced = min(total_reduced, MAX_DAILY_COST_REDUCED)
     return round(total_regular, 2), round(total_reduced, 2)
-
-
-def calculate_single_ticket_cost(distance_km: float) -> tuple[float, float]:
-    """Journey cost — Interpretation B: the whole trip is a single ticket
-    priced from the total distance (transfers do not reset the fare).
-    The 24h limit caps the result the same way as in Interpretation A.
-
-    Returns (total_regular, total_reduced).
-    """
-    reg, red = calculate_cost(distance_km)
-    return round(min(reg, MAX_DAILY_COST_REGULAR), 2), \
-        round(min(red, MAX_DAILY_COST_REDUCED), 2)
 
 
 # Initialize pricing on import using the default pricing.json

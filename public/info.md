@@ -23,12 +23,9 @@ Kraków planuje uruchomić **opcjonalną taryfę odległościową** (wcześniej 
 
 **W podstawowej wersji systemu każdy pojazd to osobny, płatny przejazd.** ZTP zapowiada, że pełne łączenie przejazdów z przesiadkami ma pojawić się dopiero **około sześciu miesięcy po wdrożeniu** podstawowej wersji; do tego czasu nawet przesiadka wymuszona awarią oznacza drugi bilet. Szczegóły późniejszego łączenia (czas, odległość, powrót) nie są opublikowane. ([Głos24, 19.10.2026](https://glos24.pl/bilet-za-kilometry-w-krakowie-ztp-wyjasnia-jak-to-ma-dzialac); [ZTP, 23.07.2026](https://ztp.krakow.pl/wszystkie-aktualnosci/kmk/ogloszenie-przetargu-na-wprowadzenie-odleglosciowej-taryfy-biletowej.html))
 
-**Kalkulator pokazuje dwie interpretacje:**
+**Kalkulator pokazuje wyłącznie aktualny, pierwszy etap systemu:** każdy przejazd pojazdem to osobny bilet liczony od zera. Dystans każdego przejazdu to linia prosta **A→B** między przystankiem wsiadania i wysiadania — nie długość trasy i nie suma odcinków między kolejnymi przystankami. Po włączeniu łączenia przesiadek (około sześciu miesięcy później) zasady mają się zmienić, ale szczegóły nie są opublikowane; nie pokazujemy hipotetycznych wariantów.
 
-- **A** — każdy przejazd pojazdem to osobny bilet liczony od zera. To odpowiada **podstawowej wersji** systemu (pierwsze miesiące).
-- **B** — cała podróż jako jeden bilet za odległość w linii prostej od pierwszego do ostatniego przystanku. To **hipotetyczna interpretacja przyszłej wersji** z łączeniem przesiadek; szczegóły nie są znane.
-
-Przykład: 2 km tramwajem (4 zł) + 1 km autobusem (4 zł) = **8 zł** w A. W B liczy się linia prosta od pierwszego do ostatniego przystanku — jeśli wynosi 3 km, bilet kosztuje 4 zł. Trasy są wyszukiwane pod A; B liczone dla tej samej trasy.
+Przykład: 2 km tramwajem (4 zł) + 1 km autobusem (4 zł) = **8 zł** — każdy pojazd osobno, każdy dystans A→B liczony od zera.
 
 ## Jak ma działać oficjalny system
 
@@ -46,12 +43,12 @@ Aplikacja pokazuje też **szacunkowy czas przejazdu** (z czasem przesiadki pięc
 
 ## Dwa warianty trasy
 
-Aplikacja pokazuje **dwie trasy** i obie mają **gwarancję najniższej możliwej ceny w modelu przyjętym przez kalkulator** (Interpretacja A — osobny bilet za przejazd; algorytm sprawdza wszystkie sensowne kombinacje przejazdów):
+Aplikacja pokazuje **dwie trasy** i obie mają **gwarancję najniższej możliwej ceny w modelu kalkulatora** (oficjalny pierwszy etap — osobny bilet za każdy przejazd; algorytm sprawdza wszystkie sensowne kombinacje przejazdów):
 
 - 💰 **Tania trasa** — najtańsze łączne bilety,
 - 🛋️ **Wygodna trasa** — mniej przesiadek (każde wsiadanie „kosztuje" w cenniku algorytmu 2 zł, więc algorytm balansuje cenę i wygodę).
 
-Gwarancja dotyczy modelu kalkulatora (oficjalna linia prosta za każdy przejazd, Interpretacja A), nie oficjalnego systemu — ten może stosować inne zaokrąglenia i przez pierwsze miesiące rozlicza osobno każdy pojazd.
+Gwarancja dotyczy modelu kalkulatora (oficjalna linia prosta A→B za każdy przejazd, pierwszy etap), nie oficjalnego systemu — ten może stosować inne zaokrąglenia i przez pierwsze miesiące rozlicza osobno każdy pojazd.
 
 ---
 

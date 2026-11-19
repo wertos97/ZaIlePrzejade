@@ -14,7 +14,7 @@
     <link rel="canonical" href="https://zaileprzeja.de/">
     <!-- Open Graph -->
     <meta property="og:title" content="Za Ile Przejadę? - Kalkulator planowanej taryfy odległościowej w Krakowie (2027)">
-    <meta property="og:description" content="Kalkulator planowanej taryfy odległościowej w Krakowie (2027) — szacunkowy koszt przejazdu, cennik ZTP, dwie interpretacje ceny.">
+    <meta property="og:description" content="Kalkulator planowanej taryfy odległościowej w Krakowie (2027) — szacunkowy koszt przejazdu, cennik ZTP, dystans A→B w linii prostej.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://zaileprzeja.de/">
     <meta property="og:image" content="https://zaileprzeja.de/og-image.svg">
@@ -25,7 +25,7 @@
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator planowanej taryfy odległościowej w Krakowie (2027)">
-    <meta name="twitter:description" content="Kalkulator planowanej taryfy odległościowej w Krakowie (2027) — szacunkowy koszt przejazdu, cennik ZTP, dwie interpretacje ceny.">
+    <meta name="twitter:description" content="Kalkulator planowanej taryfy odległościowej w Krakowie (2027) — szacunkowy koszt przejazdu, cennik ZTP, dystans A→B w linii prostej.">
     <meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -148,7 +148,7 @@
                     <span id="price-daily">20,00 zł / 10,00 zł</span>
                 </div>
                 <div class="price-note">
-                    Założenie kalkulatora: w podstawowej wersji systemu każdy przejazd (między przesiadkami) to osobny bilet liczony od zera — tak ma działać przez pierwsze miesiące. Łączenie przesiadek ma wejść później. Dystans liczymy w linii prostej między przystankiem wsiadania i wysiadania — zgodnie z oficjalną taryfą.
+                    Oficjalny model (pierwszy etap): każdy pojazd to osobny bilet liczony od zera. Dystans każdego przejazdu liczymy w linii prostej A→B między przystankiem wsiadania i wysiadania — zgodnie z oficjalną taryfą. Łączenie przesiadek ma wejść później; szczegóły nie są opublikowane.
                 </div>
             </div>
         </div>
@@ -174,7 +174,7 @@
                         <span id="result-distance">--</span>
                     </div>
                     <div class="result-row">
-                        <span title="Suma odcinków w linii prostej; każdy przejazd wyceniany osobno.">Dystans taryfy:</span>
+                        <span title="Suma odległości A→B poszczególnych przejazdów; każdy przejazd wyceniany osobno. To nie jest odległość całej podróży w linii prostej.">Suma odcinków (A→B):</span>
                         <span id="result-billed-distance">--</span>
                     </div>
                     <div class="result-row">
@@ -184,16 +184,10 @@
                     <div class="result-fares">
                         <div class="fare-title"><span>Cena</span><span class="fare-title-sub">normalny / ulgowy</span></div>
                         <div class="fare-row">
-                            <span class="fare-label">Interpretacja A
-                                <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera — tak ma działać podstawowa wersja systemu przez pierwsze miesiące. Cena to suma przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod tę interpretację. Dystans każdego przejazdu liczymy w linii prostej — zgodnie z oficjalną taryfą.">ⓘ</span>
+                            <span class="fare-label">Taryfa odległościowa
+                                <span class="interp-info" tabindex="0" data-tip="Oficjalny pierwszy etap: każdy przejazd między przesiadkami to osobny bilet liczony od zera. Cena to suma przejazdów (z limitem 24-godzinnym). Dystans każdego przejazdu liczymy w linii prostej A→B między przystankiem wsiadania i wysiadania — zgodnie z oficjalną taryfą. Łączenie przesiadek ma wejść później; szczegóły nie są opublikowane.">ⓘ</span>
                             </span>
-                            <span class="fare-values" id="result-fare-a">--</span>
-                        </div>
-                        <div class="fare-row">
-                            <span class="fare-label">Interpretacja B
-                                <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za odległość w linii prostej od pierwszego do ostatniego przystanku. To hipotetyczna wersja przyszłej taryfy z łączeniem przesiadek; szczegóły nie są opublikowane.">ⓘ</span>
-                            </span>
-                            <span class="fare-values" id="result-fare-b">--</span>
+                            <span class="fare-values" id="result-fare">--</span>
                         </div>
                     </div>
                     <div class="result-row">
@@ -237,7 +231,7 @@
                 <span id="mobile-result-distance">--</span>
             </div>
             <div class="result-row">
-                <span title="Suma odcinków w linii prostej; każdy przejazd wyceniany osobno.">Dystans taryfy</span>
+                <span title="Suma odległości A→B poszczególnych przejazdów; każdy przejazd wyceniany osobno. To nie jest odległość całej podróży w linii prostej.">Suma odcinków (A→B)</span>
                 <span id="mobile-result-billed-distance">--</span>
             </div>
             <div class="result-row">
@@ -247,16 +241,10 @@
             <div class="result-fares">
                 <div class="fare-title"><span>Cena</span><span class="fare-title-sub">normalny / ulgowy</span></div>
                 <div class="fare-row">
-                    <span class="fare-label">Interpretacja A
-                        <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera — tak ma działać podstawowa wersja systemu przez pierwsze miesiące. Cena to suma przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod tę interpretację. Dystans każdego przejazdu liczymy w linii prostej — zgodnie z oficjalną taryfą.">ⓘ</span>
+                    <span class="fare-label">Taryfa odległościowa
+                        <span class="interp-info" tabindex="0" data-tip="Oficjalny pierwszy etap: każdy przejazd między przesiadkami to osobny bilet liczony od zera. Cena to suma przejazdów (z limitem 24-godzinnym). Dystans każdego przejazdu liczymy w linii prostej A→B między przystankiem wsiadania i wysiadania — zgodnie z oficjalną taryfą. Łączenie przesiadek ma wejść później; szczegóły nie są opublikowane.">ⓘ</span>
                     </span>
-                    <span class="fare-values" id="mobile-result-fare-a">--</span>
-                </div>
-                <div class="fare-row">
-                    <span class="fare-label">Interpretacja B
-                        <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za odległość w linii prostej od pierwszego do ostatniego przystanku. To hipotetyczna wersja przyszłej taryfy z łączeniem przesiadek; szczegóły nie są opublikowane.">ⓘ</span>
-                    </span>
-                    <span class="fare-values" id="mobile-result-fare-b">--</span>
+                    <span class="fare-values" id="mobile-result-fare">--</span>
                 </div>
             </div>
             <div class="result-row">

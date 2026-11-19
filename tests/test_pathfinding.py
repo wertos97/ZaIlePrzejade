@@ -105,6 +105,11 @@ class TestPathfindingIntegration(unittest.TestCase):
         convenient_pair, cheap_pair = result
         self.assertIsInstance(convenient_pair, tuple)
         self.assertIsInstance(cheap_pair, tuple)
+        for res, _err in (convenient_pair, cheap_pair):
+            if res is not None:
+                self.assertNotIn('cost_b_regular', res)
+                self.assertNotIn('cost_b_reduced', res)
+                self.assertNotIn('journey_distance', res)
 
     def test_find_route_short_mode(self):
         """mode='short' should return a single (result, error) pair."""

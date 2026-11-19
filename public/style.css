@@ -518,7 +518,7 @@ body {
     border-bottom: none;
 }
 
-/* Interpretation fares (A/B) — separate container in the result panel */
+/* Fare box — official per-ride model */
 .result-fares {
     margin: 4px 0;
     border-top: 1px solid #eee;

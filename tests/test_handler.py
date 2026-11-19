@@ -205,27 +205,20 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertLessEqual(result['cheap']['cost_regular'],
                                  result['convenient']['cost_regular'])
 
-    def test_find_route_carries_interpretation_b(self):
-        """Each route carries Interpretation B fares: whole journey as one
-        ticket — consistent with /api/cost for the total distance."""
+    def test_find_route_has_no_hypothetical_b(self):
+        """The app serves only the official first-phase model: no B fares
+        and no whole-journey straight-line distance in the payload."""
         status, _, body = self._get(
             f'/api/find-route?from={self.from_id}&to={self.to_id}')
         result = json.loads(body)
         route = result.get('cheap') or result.get('convenient')
         self.assertIsNotNone(route)
-        self.assertIn('cost_b_regular', route)
-        self.assertIn('cost_b_reduced', route)
-        _, _, cost_body = self._get(
-            f"/api/cost?distance={route['total_distance']}")
-        single = json.loads(cost_body)
-        _, _, pricing_body = self._get('/api/pricing')
-        cap = json.loads(pricing_body)
-        self.assertAlmostEqual(route['cost_b_regular'],
-                               min(single['cost_regular'],
-                                   cap['max_daily_cost_regular']))
-        self.assertAlmostEqual(route['cost_b_reduced'],
-                               min(single['cost_reduced'],
-                                   cap['max_daily_cost_reduced']))
+        self.assertNotIn('cost_b_regular', route)
+        self.assertNotIn('cost_b_reduced', route)
+        self.assertNotIn('journey_distance', route)
+        self.assertIn('total_billed_distance', route)
+        self.assertIn('cost_regular', route)
+        self.assertIn('cost_reduced', route)
 
     def test_og_image_cheap_mode(self):
         """OG image accepts the cheap mode."""

@@ -39,7 +39,6 @@ from .config import (
 from .cost import (
     calculate_cost,
     calculate_route_cost,
-    calculate_single_ticket_cost,
     MAX_DAILY_COST_REGULAR,
     MAX_DAILY_COST_REDUCED,
 )
@@ -1631,18 +1630,6 @@ def _build_route_result(path_with_edges):
     total_billed_distance = round(sum(raw_billed), 4)
 
     cost_regular, cost_reduced = calculate_route_cost(segments)
-    # Interpretation B for the same route: whole journey as one ticket.
-    # Its distance is the straight line from the first boarding platform to
-    # the last alighting platform (hypothetical merged-transfer tariff).
-    journey_distance = 0.0
-    if segments:
-        journey_km = _straight_line_km(segments[0]['stops'][0],
-                                       segments[-1].get('end_stop'))
-        if journey_km is None:
-            journey_km = total_billed_distance
-        journey_distance = round(journey_km, 4)
-    cost_b_regular, cost_b_reduced = calculate_single_ticket_cost(
-        journey_distance)
 
     total_time = sum(seg.get('time', 0) for seg in segments)
     total_time += TRANSFER_TIME_SECONDS * len(transfers)
@@ -1650,12 +1637,9 @@ def _build_route_result(path_with_edges):
     return {
         'total_distance': total_distance,
         'total_billed_distance': total_billed_distance,
-        'journey_distance': journey_distance,
         'total_time': total_time,
         'cost_regular': cost_regular,
         'cost_reduced': cost_reduced,
-        'cost_b_regular': cost_b_regular,
-        'cost_b_reduced': cost_b_reduced,
         'max_daily_cost_regular': MAX_DAILY_COST_REGULAR,
         'max_daily_cost_reduced': MAX_DAILY_COST_REDUCED,
         'path': path_stops,
@@ -1771,8 +1755,10 @@ _CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 #  fields, corrected 4-ride enumeration;
 #  v8: ride fares resolved on stop-group centroids (search/display agree),
 #  min-ride fallback for 5+-ride pairs;
-#  v9: single transfer entry after multi-hop walks, exact billed total).
-_CACHE_ALGO_VERSION = 'v9'
+#  v9: single transfer entry after multi-hop walks, exact billed total;
+#  v10: hypothetical Interpretation B removed; result carries only the
+#  official per-ride model (total_billed_distance = sum of ride A→B legs)).
+_CACHE_ALGO_VERSION = 'v10'
 
 _sqlite_conn = None
 _SQLITE_LOCK = threading.Lock()
@@ -1970,16 +1956,12 @@ def _compute_route_internal(cache_key, from_group_id, to_group_id):
     # Same group — zero-distance trip
     if from_group_id == to_group_id:
         cost_reg, cost_red = calculate_cost(0)
-        cost_b_reg, cost_b_red = calculate_single_ticket_cost(0)
         result = ({
             'total_distance': 0,
             'total_billed_distance': 0,
-            'journey_distance': 0,
             'total_time': 0,
             'cost_regular': cost_reg,
             'cost_reduced': cost_red,
-            'cost_b_regular': cost_b_reg,
-            'cost_b_reduced': cost_b_red,
             'max_daily_cost_regular': MAX_DAILY_COST_REGULAR,
             'max_daily_cost_reduced': MAX_DAILY_COST_REDUCED,
             'path': [{
