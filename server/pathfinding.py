@@ -1389,8 +1389,13 @@ def _build_route_result(path_with_edges):
             if current_segment is not None:
                 segments.append(current_segment)
                 current_segment = None
-            transfer_from = (prev_route if prev_route != 'transfer'
-                             else (path_with_edges[i - 2][1] if i >= 2 else None))
+            transfer_from = None
+            j = i - 1
+            while j >= 0:
+                if path_with_edges[j][1] != 'transfer':
+                    transfer_from = path_with_edges[j][1]
+                    break
+                j -= 1
             transfer_to = None
             for j in range(i + 1, len(path_with_edges)):
                 if path_with_edges[j][1] != 'transfer':
@@ -1589,6 +1594,7 @@ def _build_route_result(path_with_edges):
     # (shape_dist_traveled) while walking the path — round it for output.
     # The FARE, however, uses the official tariff distance: the straight
     # line between the ride's boarding and alighting platforms.
+    raw_billed = []
     for segment in segments:
         segment['distance'] = round(segment['distance'], 4)
 
@@ -1598,6 +1604,7 @@ def _build_route_result(path_with_edges):
         billed_km = _straight_line_km(first_stop_id, last_stop_id)
         if billed_km is None:
             billed_km = segment['distance']
+        raw_billed.append(billed_km)
         segment['billed_distance'] = round(billed_km, 4)
 
         seg_reg, seg_red = calculate_cost(billed_km)
@@ -1621,8 +1628,7 @@ def _build_route_result(path_with_edges):
     # map draws. The tariff distance is the sum of per-ride straight lines.
     total_distance = sum(seg.get('distance', 0.0) for seg in segments)
     total_distance = round(total_distance, 4)
-    total_billed_distance = round(
-        sum(seg.get('billed_distance', 0.0) for seg in segments), 4)
+    total_billed_distance = round(sum(raw_billed), 4)
 
     cost_regular, cost_reduced = calculate_route_cost(segments)
     # Interpretation B for the same route: whole journey as one ticket.
@@ -1764,8 +1770,9 @@ _CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 #  v7: official straight-line tariff distance/pricing, billed_distance
 #  fields, corrected 4-ride enumeration;
 #  v8: ride fares resolved on stop-group centroids (search/display agree),
-#  min-ride fallback for 5+-ride pairs).
-_CACHE_ALGO_VERSION = 'v8'
+#  min-ride fallback for 5+-ride pairs;
+#  v9: single transfer entry after multi-hop walks, exact billed total).
+_CACHE_ALGO_VERSION = 'v9'
 
 _sqlite_conn = None
 _SQLITE_LOCK = threading.Lock()

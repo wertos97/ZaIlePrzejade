@@ -733,6 +733,50 @@ class TestExactSearchExactness(unittest.TestCase):
         pf._find_cache_bytes = 0
         return stops
 
+    def test_multi_hop_walk_transfer_is_single_entry(self):
+        """A route change after a multi-hop platform walk must produce ONE
+        transfer entry, not one per walk edge (UI shows one transfer per
+        segment boundary)."""
+        pf = self.pf
+        coords = {
+            'a': (50.000, 19.900), 'b': (50.010, 19.900),
+            'w1': (50.011, 19.900), 'w2': (50.012, 19.900),
+            'c': (50.020, 19.900),
+        }
+
+        def edge(to, route):
+            return {'to': to, 'route_id': route, 'distance': 1.0,
+                    'time': 60, 'mode': 'bus', 'headsign': 'T'}
+
+        pf.stop_coords = dict(coords)
+        pf.stops_by_id = {
+            sid: {'id': sid, 'name': sid, 'lat': lat, 'lon': lon,
+                  'code': '', 'mode': 'bus'}
+            for sid, (lat, lon) in coords.items()}
+        pf.stops_grouped = {
+            sid: {'id': sid, 'name': sid, 'lat': lat, 'lon': lon,
+                  'modes': ['bus'],
+                  'platforms': [{'id': sid, 'code': '', 'lat': lat,
+                                 'lon': lon, 'mode': 'bus'}]}
+            for sid, (lat, lon) in coords.items()}
+        pf.stop_to_group = {sid: sid for sid in coords}
+        pf.routes_by_id = {}
+        pf.route_shapes = {}
+        pf.stop_pair_routes = {}
+
+        path = [
+            ('a', None, None),
+            ('b', 'L1', edge('b', 'L1')),
+            ('w1', 'transfer', edge('w1', 'transfer')),
+            ('w2', 'transfer', edge('w2', 'transfer')),
+            ('c', 'L2', edge('c', 'L2')),
+        ]
+        result = pf._build_route_result(path)
+        self.assertEqual(len(result['segments']), 2)
+        self.assertEqual(len(result['transfers']), 1)
+        self.assertEqual(result['transfers'][0]['from_route'], 'L1')
+        self.assertEqual(result['transfers'][0]['to_route'], 'L2')
+
     def test_four_ride_route_is_found_by_enumeration(self):
         """The F2+B2 composition must cover genuine 4-ride routes (3
         distinct lines after the first two)."""
