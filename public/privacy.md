@@ -1,11 +1,13 @@
-# Prywatność
+# 🔒 Prywatność
 
-Bez kont, reklam i zewnętrznej analityki.
+Nie prowadzimy kont użytkowników, nie wyświetlamy reklam i nie korzystamy z zewnętrznych narzędzi analitycznych.
 
-- Stronę dostarcza Cloudflare jako CDN i tunel do serwera. Cloudflare widzi techniczne dane połączenia i może ustawić niezbędne ciasteczka bezpieczeństwa.
-- Nie zapisujemy surowych adresów IP. Do statystyk i limitów używamy solonego skrótu, którego nie da się przypisać do osoby.
-- Zapisujemy liczbę odwiedzin i wyszukiwań, czas obliczeń i wynik. Surowe zdarzenia usuwamy po 90 dniach, a dzienne podsumowania są bez identyfikatorów.
-- Mapę serwujemy z naszego serwera. Twoja przeglądarka nie łączy się bezpośrednio z dostawcą kafelków.
-- Nie używamy ciasteczek reklamowych ani analitycznych.
+## 🛡️ Najważniejsze
 
-Pytania? Napisz przez GitHub. Link jest w „Autor”.
+- Stronę udostępnia Cloudflare jako CDN oraz tunel do serwera. Cloudflare widzi techniczne dane połączenia i może ustawić niezbędne ciasteczka bezpieczeństwa.
+- Nie przechowujemy surowych adresów IP. W statystykach i limitach wykorzystujemy solony skrót, którego nie można przypisać do konkretnej osoby.
+- Gromadzimy liczbę odwiedzin i wyszukiwań, czas obliczeń oraz wynik. Surowe zdarzenia usuwamy po 90 dniach, a dzienne podsumowania pozostają bez identyfikatorów.
+- Mapę udostępniamy z własnego serwera, więc przeglądarka nie łączy się bezpośrednio z dostawcą kafelków.
+- Nie stosujemy ciasteczek reklamowych ani analitycznych.
+
+Pytania dotyczące prywatności można zgłaszać przez GitHub. Link znajduje się w sekcji „Autor”.

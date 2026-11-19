@@ -89,6 +89,15 @@ body {
     transition: background 0.2s;
     white-space: nowrap;
     line-height: 1.2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+}
+
+.btn-emoji {
+    font-size: 1.05em;
+    line-height: 1;
 }
 
 .btn-header:hover {
@@ -1221,6 +1230,7 @@ body.maintenance .btn-mode-sm {
         display: flex;
         align-items: center;
         justify-content: center;
+        gap: 4px;
     }
 
     .main-content {
@@ -1959,3 +1969,20 @@ button {
         100% { stroke-width: 2;  stroke-opacity: 1;  }
     }
 }
+
+@media (max-width: 360px) {
+    .btn-header .btn-text {
+        display: none;
+    }
+
+    .btn-header {
+        padding: 8px 0;
+        font-size: 1.05em;
+        gap: 0;
+    }
+
+    .btn-emoji {
+        font-size: 1.15em;
+    }
+}
+

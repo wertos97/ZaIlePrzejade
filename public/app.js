@@ -626,19 +626,19 @@ function setupEventListeners() {
 
     // Modal buttons
     document.getElementById('btn-info').addEventListener('click', function() {
-        showModal('O co chodzi?', 'info.md');
+        showModal('ℹ️ O taryfie odległościowej', 'info.md');
     });
 
     document.getElementById('btn-warning').addEventListener('click', function() {
-        showModal('Uwaga', 'warning.md');
+        showModal('⚠️ Zanim skorzystasz', 'warning.md');
     });
 
     document.getElementById('btn-privacy').addEventListener('click', function() {
-        showModal('Prywatność', 'privacy.md');
+        showModal('🔒 Prywatność', 'privacy.md');
     });
 
     document.getElementById('btn-author').addEventListener('click', function() {
-        showModal('Od autora', 'author.md');
+        showModal('✍️ O autorze', 'author.md');
     });
 
     // An extra shortcut lives on "Autor".

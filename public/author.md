@@ -1,11 +1,15 @@
-# O autorze
+# ✍️ O autorze
 
-Cześć, jestem wertos97. Zrobiłem ten kalkulator, żeby sprawdzić, jak może wyglądać planowana taryfa odległościowa w Krakowie.
+Cześć, jestem wertos97. Ten kalkulator powstał z ciekawości, jak w praktyce może wyglądać planowana taryfa odległościowa w Krakowie.
 
-Dane przystanków i linii pochodzą z rozkładów GTFS publikowanych przez ZTP. Cenę liczę w linii prostej A→B, zgodnie z pierwszym etapem oficjalnej taryfy.
+## 🧭 O projekcie
 
-- Kod: [github.com/wertos97/ZaIlePrzejade](https://github.com/wertos97/ZaIlePrzejade)
-- Mapa: [Leaflet](https://leafletjs.com/) i [OpenStreetMap](https://www.openstreetmap.org/); kafelki serwuje nasz serwer.
+Dane przystanków i linii pochodzą z rozkładów GTFS publikowanych przez ZTP. Cenę obliczam w linii prostej A→B, zgodnie z pierwszym etapem oficjalnej taryfy.
+
+## 🔗 Linki
+
+- Kod źródłowy: [github.com/wertos97/ZaIlePrzejade](https://github.com/wertos97/ZaIlePrzejade)
+- Mapa: [Leaflet](https://leafletjs.com/) i [OpenStreetMap](https://www.openstreetmap.org/); kafelki udostępnia nasz serwer.
 - Wsparcie: [ko-fi.com/wertos97](https://ko-fi.com/wertos97)
 
-Dzięki, że tu jesteś. Jeśli coś nie działa, napisz issue na GitHubie.
+Dziękuję za odwiedziny. Jeśli napotkasz problem, zgłoś go jako issue na GitHubie.
