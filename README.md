@@ -37,9 +37,9 @@ Aplikacja pokazuje połączenia pomiędzy dwoma wybranymi przystankami w **dwóc
 
 Aplikacja automatycznie generuje obrazki OG w sposób dynamiczny dla danej trasy.
 
-| Typowa cena | Cena na limicie 24-godzinnym |
+| Typowa cena | Dłuższa trasa |
 |---|---|
-| ![Typowa](previews/og-preview-typical.png) | ![Max](previews/og-preview-max.png) |
+| ![Typowa](previews/og-preview-typical.png) | ![Dłuższa](previews/og-preview-max.png) |
 
 ## Wyszukiwanie tras
 

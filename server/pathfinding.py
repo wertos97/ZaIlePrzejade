@@ -959,8 +959,12 @@ def _min_ride_route(start_ids, end_ids, max_rides=20):
 
     visited = set(frontier)
     for _level in range(max_rides):
+        if _check_cancelled():
+            return None
         next_frontier = []
         for arrival in frontier:
+            if _check_cancelled():
+                return None
             # Walks inside the stop group are free: every platform of the
             # component is a valid boarding point for the next ride.
             for board in _walk_platforms(arrival):
