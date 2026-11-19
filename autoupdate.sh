@@ -176,7 +176,7 @@ sync_with_git || {
     log "❌ Nie udało się zsynchronizować kodu. Przechodzę do restartu z obecnym kodem."
 }
 
-# Obsługa środowiska venv (opcjonalne - aplikacja używa tylko biblioteki standardowej)
+# Obsługa środowiska venv (Pillow opcjonalnie - bez niej działa fallback SVG)
 PYTHON_BIN="python3"
 if [ ! -f "$SCRIPT_DIR/venv/bin/activate" ]; then
     log "⚠️ Brak środowiska venv. Próbuję utworzyć (opcjonalne)..."
@@ -192,6 +192,17 @@ if [ -f "$SCRIPT_DIR/venv/bin/activate" ]; then
     # shellcheck disable=SC1091
     source "$SCRIPT_DIR/venv/bin/activate"
     PYTHON_BIN="$SCRIPT_DIR/venv/bin/python3"
+fi
+
+# Podglądy OG w PNG wymagają Pillow. Instaluj tylko, gdy go brakuje -
+# nie opóźniaj rutynowych aktualizacji, gdy środowisko jest już gotowe.
+if ! "$PYTHON_BIN" -c "import PIL" >> "$LOG_FILE" 2>&1; then
+    log "⚠️ Brak Pillow - instaluję requirements.txt..."
+    if "$PYTHON_BIN" -m pip install --disable-pip-version-check -r "$SCRIPT_DIR/requirements.txt" >> "$LOG_FILE" 2>&1; then
+        log "✅ Pillow zainstalowany."
+    else
+        log "⚠️ Instalacja Pillow nie powiodła się - podglądy OG będą w SVG."
+    fi
 fi
 
 # Restart serwera
