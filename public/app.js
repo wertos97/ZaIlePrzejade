@@ -151,6 +151,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initMap();
     setupEventListeners();
     pollMaintenance();
+    warmHelpCache();
     // Non-blocking health check — show banner if server is overloaded
     fetch('/api/health').then(function(r) {
         if (!r.ok) showBanner('Serwer chwilowo niedostępny. Odśwież stronę za chwilę.');
@@ -801,32 +802,86 @@ function parseMarkdown(md) {
 // ============================================================
 
 var lastModalFocus = null;
+var modalRequestSeq = 0;
+var helpCache = {};
+var helpRequests = {};
 
-async function showModal(title, file) {
-    try {
-        lastModalFocus = document.activeElement;
-        var response = await fetch('/' + file);
-        if (!response.ok) {
-            throw new Error('HTTP ' + response.status);
-        }
-        var text = await response.text();
-        document.getElementById('modal-title').textContent = title;
-        const modalBody = document.getElementById('modal-body');
-        modalBody.innerHTML = '';
-        modalBody.appendChild(createElementFromHtml(parseMarkdown(text)));
-        document.getElementById('modal-overlay').style.display = 'block';
-        document.getElementById('modal-overlay').classList.remove('hidden');
-        document.getElementById('modal').style.display = 'flex';
-        document.getElementById('modal').classList.remove('hidden');
-        document.getElementById('modal-close').focus();
-    } catch (error) {
-        console.error('Error loading modal content:', error);
+function loadHelpText(file) {
+    if (helpCache[file]) {
+        return Promise.resolve(helpCache[file]);
     }
+    if (!helpRequests[file]) {
+        helpRequests[file] = fetch('/' + file, { cache: 'no-cache' })
+            .then(function(response) {
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+                return response.text();
+            })
+            .then(function(text) {
+                var html = parseMarkdown(text);
+                helpCache[file] = html;
+                return html;
+            })
+            .catch(function(error) {
+                delete helpRequests[file];
+                throw error;
+            });
+    }
+    return helpRequests[file];
+}
+
+function warmHelpCache() {
+    ['info.md', 'warning.md', 'privacy.md', 'author.md'].forEach(function(file) {
+        loadHelpText(file).catch(function() {});
+    });
+}
+
+function showModal(title, file) {
+    lastModalFocus = document.activeElement;
+    var requestId = ++modalRequestSeq;
+    var modal = document.getElementById('modal');
+    var overlay = document.getElementById('modal-overlay');
+    var body = document.getElementById('modal-body');
+
+    document.getElementById('modal-title').textContent = title;
+    overlay.style.display = 'block';
+    overlay.classList.remove('hidden');
+    modal.style.display = 'flex';
+    modal.classList.remove('hidden');
+    document.getElementById('modal-close').focus();
+
+    if (helpCache[file]) {
+        body.innerHTML = helpCache[file];
+        body.removeAttribute('aria-busy');
+        return;
+    }
+
+    // Open immediately. The text arrives without a blank wait.
+    body.setAttribute('aria-busy', 'true');
+    body.innerHTML = '<div class="modal-loading" role="status"><span class="loading-spinner"></span><span>Wczytywanie tekstu...</span></div>';
+
+    loadHelpText(file).then(function(html) {
+        if (requestId !== modalRequestSeq) {
+            return;
+        }
+        body.innerHTML = html;
+        body.removeAttribute('aria-busy');
+    }).catch(function(error) {
+        if (requestId !== modalRequestSeq) {
+            return;
+        }
+        console.error('Error loading modal content:', error);
+        body.innerHTML = '<p>Nie udało się wczytać tekstu. Spróbuj ponownie.</p>';
+        body.removeAttribute('aria-busy');
+    });
 }
 
 function closeModal() {
+    modalRequestSeq++;
     document.getElementById('modal-overlay').classList.add('hidden');
     document.getElementById('modal').classList.add('hidden');
+    document.getElementById('modal-body').removeAttribute('aria-busy');
     if (lastModalFocus && typeof lastModalFocus.focus === 'function') {
         lastModalFocus.focus();
     }

@@ -898,6 +898,15 @@ body {
     font-size: 0.9em;
 }
 
+.modal-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 0;
+    color: #666;
+    font-size: 0.95em;
+}
+
 .modal-body h1 {
     font-size: 1.3em;
     color: #1a5276;
