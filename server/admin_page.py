@@ -115,12 +115,14 @@ PANEL_PAGE = """<!DOCTYPE html>
     <input type="date" id="date-from" class="date-inp hidden">
     <input type="date" id="date-to" class="date-inp hidden">
     <button id="date-apply" class="view-btn hidden">Pokaż</button>
+    <button class="view-btn" id="btn-op-toggle" title="Pokaż lub ukryj własny ruch operatora">Operator: ukryty</button>
   </div>
 
   <div class="cards" id="kpis"></div>
 
   <nav class="section-nav" id="section-nav" aria-label="Sekcje panelu">
     <a class="nav-pill" href="#sec-live" data-sec="sec-live">Na żywo</a>
+    <a class="nav-pill" href="#sec-operator" data-sec="sec-operator">Operator</a>
     <a class="nav-pill" href="#sec-searches" data-sec="sec-searches">Wyszukiwania</a>
     <a class="nav-pill" href="#sec-req" data-sec="sec-req">Wykresy</a>
     <a class="nav-pill" href="#sec-gtfs" data-sec="sec-gtfs">Dane</a>
@@ -137,12 +139,27 @@ PANEL_PAGE = """<!DOCTYPE html>
     <div id="live-box"><span class="mut">…</span></div>
   </div>
 
+  <div class="box" id="sec-operator">
+    <h2>Operator (to urządzenie)</h2>
+    <div id="operator-status"><span class="mut">…</span></div>
+    <div class="viewbar" style="margin:10px 0 0">
+      <button class="view-btn hidden" id="operator-btn-exclude">Oznacz to urządzenie</button>
+      <button class="view-btn hidden" id="operator-btn-include">Odznacz to urządzenie</button>
+    </div>
+    <div class="mut" style="margin-top:6px">Ruch operatora jest zapisywany z oznaczeniem i domyślnie
+      <b>ukryty</b> w statystykach (przełącznik „Operator" u góry). Przeglądarka
+      z otwartym panelem oznacza się sama. Przycisk oznacza też inne
+      przeglądarki / urządzenia (zapisuje tam ciasteczko
+      <span style="font-family:monospace">operator=1</span>).</div>
+  </div>
+
   <div class="box" id="sec-searches">
     <h2>Ostatnie wyszukiwania</h2>
     <div class="legend" id="anomaly-legend">
-      <span><i style="background:#e74c3c"></i>timeout</span>
+      <span><i style="background:#e74c3c"></i>timeout / tania droższa / wygodna z więcej przesiadek</span>
       <span><i style="background:#f39c12"></i>kolejka / wolne (&gt;15 s) / tryb timeout</span>
       <span><i style="background:#2A5BD5"></i>limit 20 zł / długa (&gt;15 km)</span>
+      <span><i style="background:#99a"></i>ja (ruch operatora)</span>
     </div>
     <div class="viewbar">
       <button class="view-btn active" id="flt-all">Wszystkie</button>
@@ -150,8 +167,8 @@ PANEL_PAGE = """<!DOCTYPE html>
       <span class="mut" id="searches-count"></span>
     </div>
     <div class="scrollbox" style="max-height:320px"><table>
-      <tr><th>kiedy</th><th>trasa</th><th>czas</th><th>dystans</th>
-          <th>cena N / U</th><th>wynik</th></tr>
+      <tr><th>kiedy</th><th>trasa</th><th>czas</th><th>tania</th>
+          <th>wygodna</th><th>wynik</th></tr>
       <tbody id="t-searches"></tbody>
     </table></div>
   </div>
@@ -273,6 +290,7 @@ async function showDash(){
   if (!view.from){ setView(30); } else { await loadStats(); }
   loadGtfs();
   loadLive();
+  loadOperator();
   clearInterval(refreshTimer);
   refreshTimer = setInterval(function(){ loadStats(); loadGtfs(); loadLive(); }, 60000);
 }
@@ -310,13 +328,19 @@ function rangeLabel(){
   if (view.to === today && view.from === shiftDays(29)) return '30 dni';
   return view.from + ' → ' + view.to;
 }
+let showOp = false;  // globalny przełącznik: pokazuj ruch operatora
 async function loadStats(){
   const q = '/api/admin/stats?from=' + encodeURIComponent(view.from)
-          + '&to=' + encodeURIComponent(view.to);
+          + '&to=' + encodeURIComponent(view.to)
+          + (showOp ? '&op=1' : '');
   let r = await fetch(q, {credentials:'same-origin'});
   if (r.status === 401){ location.reload(); return; }
   render(await r.json());
 }
+document.getElementById('btn-op-toggle').addEventListener('click', function(){
+  showOp = !showOp;
+  loadStats();
+});
 
 // ---- Stan na żywo (/api/status jest publiczny, tu wołamy z sesji) ----
 function fmtUptimeS(sec){
@@ -377,21 +401,49 @@ function fmtPrice(v){
   if (v == null) return '—';
   return v.toFixed(2).replace('.', ',') + ' zł';
 }
+function fmtTransfers(rides){
+  if (rides == null) return '—';
+  if (rides <= 0) return 'bez przejazdu';
+  const t = rides - 1;
+  return rides + ' prz.' + (t === 0 ? ' (bez przesiadek)'
+    : t === 1 ? ' (1 przesiadka)' : ' (' + t + ' przesiadki)');
+}
+function fmtModeCell(m){
+  // Compact per-mode cell: price N/U · dist · transfers ('—' when null).
+  if (!m) return '—';
+  return fmtPrice(m.reg) + ' / ' + fmtPrice(m.red) +
+    ' · ' + fmtKm(m.dist) + ' · ' + fmtTransfers(m.rides);
+}
 function searchAnomalies(s){
   // Zwraca listę [klasa, etykieta]; pusto = wszystko w normie.
-  // Dla wyniku 'ok' z jednym trybem pokazujemy dane tego trybu, a brak
-  // drugiego oznaczamy chipem (użytkownik widział wtedy toast o trybie).
+  // Dla wyniku 'ok' z jednym trybem brak drugiego oznaczamy chipem
+  // (użytkownik widział wtedy toast o trybie).
   const d = s.detail || {};
   const modes = d.modes || {};
+  const cheap = modes.cheap || null, conv = modes.convenient || null;
   const chips = [];
+  if (s.op) chips.push(['gray', 'ja']);
   if (s.outcome === 'timeout') chips.push(['red', 'timeout']);
   else if (s.outcome === 'busy') chips.push(['orange', 'kolejka']);
   if (d.from && d.to && d.from === d.to) chips.push(['gray', 'ta sama stacja']);
   if (s.outcome === 'ok') {
-    if (!modes.cheap && modes.convenient) chips.push(['orange', 'tania: timeout']);
-    else if (modes.cheap && !modes.convenient) chips.push(['orange', 'wygodna: timeout']);
+    if (!cheap && conv) chips.push(['orange', 'tania: timeout']);
+    else if (cheap && !conv) chips.push(['orange', 'wygodna: timeout']);
   }
-  const shown = modes.cheap || modes.convenient;
+  // Niezmienniki trybów (matematycznie zawsze prawdziwe — naruszenie
+  // to bug silnika, nie wolne liczenie):
+  //   tania musi być tańsza (fare optimum),
+  //   wygodna musi mieć mniej przejazdów (dowód przez karę za wsiadanie).
+  // Sprawdzane tylko, gdy oba tryby mają komplet danych (starsze wpisy
+  // bez 'rides' są pomijane, nie flagowane).
+  if (cheap && conv && cheap.reg != null && conv.reg != null &&
+      cheap.rides != null && conv.rides != null) {
+    if (cheap.reg > conv.reg + 1e-9)
+      chips.push(['red', 'tania droższa!']);
+    if (conv.rides > cheap.rides)
+      chips.push(['red', 'wygodna: więcej przejazdów!']);
+  }
+  const shown = cheap || conv;
   if (shown) {
     if (shown.dist != null && shown.dist > ANOM.LONG_KM) chips.push(['blue', 'długa']);
     if (shown.reg != null && shown.reg >= ANOM.CAP_REG) chips.push(['blue', 'limit']);
@@ -400,17 +452,16 @@ function searchAnomalies(s){
     chips.push(['orange', 'wolne']);
   return chips;
 }
-function searchDisplayMode(s){
-  const modes = (s.detail || {}).modes || {};
-  return modes.cheap || modes.convenient || {};
-}
 function renderSearches(list){
   lastSearches = list || [];
   const shown = searchFilter === 'anom'
     ? lastSearches.filter(s => searchAnomalies(s).length > 0)
     : lastSearches;
-  document.getElementById('searches-count').textContent =
-    'pokazano ' + shown.length + ' z ' + lastSearches.length + ' (ostatnie 100 w zakresie)';
+  let countTxt = 'pokazano ' + shown.length + ' z ' + lastSearches.length + ' (ostatnie 100 w zakresie)';
+  if (!showOp && lastOpHidden && (lastOpHidden.requests > 0 || lastOpHidden.visits > 0)) {
+    countTxt += ' · ukryto własne: ' + lastOpHidden.requests + ' wyszukiwań';
+  }
+  document.getElementById('searches-count').textContent = countTxt;
   document.getElementById('flt-all').classList.toggle('active', searchFilter === 'all');
   document.getElementById('flt-anom').classList.toggle('active', searchFilter === 'anom');
   const tb = document.getElementById('t-searches');
@@ -420,13 +471,14 @@ function renderSearches(list){
   }
   tb.innerHTML = shown.map(s => {
     const d = s.detail || {};
-    const m = searchDisplayMode(s);
+    const modes = d.modes || {};
     const route = (d.from_name || d.from || '?') + ' → ' + (d.to_name || d.to || '?');
     const chips = searchAnomalies(s).map(c =>
       '<span class="chip ' + c[0] + '">' + esc(c[1]) + '</span>').join('');
     return '<tr><td>' + fmtTs(s.ts) + '</td><td>' + esc(route) +
-      '</td><td>' + fmtMs(d.ms) + '</td><td>' + fmtKm(m.dist) +
-      '</td><td>' + fmtPrice(m.reg) + ' / ' + fmtPrice(m.red) +
+      '</td><td>' + fmtMs(d.ms) +
+      '</td><td>' + esc(fmtModeCell(modes.cheap)) +
+      '</td><td>' + esc(fmtModeCell(modes.convenient)) +
       '</td><td>' + (chips || '<span class="mut">ok</span>') + '</td></tr>';
   }).join('');
 }
@@ -446,7 +498,12 @@ document.querySelector('.view-btn[data-view="custom"]')
     document.getElementById('date-apply').classList.toggle('hidden');
   });
 document.getElementById('date-apply').addEventListener('click', setCustom);
+let lastOpHidden = {requests: 0, visits: 0};
 function render(s){
+  lastOpHidden = s.op_hidden || {requests: 0, visits: 0};
+  const opBtn = document.getElementById('btn-op-toggle');
+  opBtn.textContent = showOp ? 'Operator: pokazany' : 'Operator: ukryty';
+  opBtn.classList.toggle('active', showOp);
   const days = Object.keys(s.daily);
   barChart(document.getElementById('ch-vis'), [
     {name:'użytkownicy', values:days.map(d=>s.daily[d].visitors||0), color:'#2A5BD5', labels:days}
@@ -667,6 +724,50 @@ async function startGtfsCancel(){
 }
 document.getElementById('gtfs-btn-cancel').addEventListener('click', startGtfsCancel);
 
+// ---- Operator: wykluczanie własnego ruchu ze statystyk ----
+async function loadOperator(){
+  let r;
+  try {
+    r = await fetch('/api/admin/operator', {credentials:'same-origin'});
+  } catch(e){ return; }
+  if (r.status === 401){ location.reload(); return; }
+  if (!r.ok) return;
+  renderOperator(await r.json());
+}
+function renderOperator(s){
+  const status = document.getElementById('operator-status');
+  const btnEx = document.getElementById('operator-btn-exclude');
+  const btnIn = document.getElementById('operator-btn-include');
+  if (s.excluded) {
+    const why = [];
+    if (s.via_session) why.push('otwarty panel');
+    if (s.via_cookie) why.push('ciasteczko operatora');
+    status.innerHTML = '<span class="pill green">Oznaczone</span> ' +
+      '<span class="mut">ruch stąd jest zapisywany jako operatorski i domyślnie ukryty (' +
+      esc(why.join(' + ') || '—') + ')</span>';
+    btnEx.classList.add('hidden');
+    btnIn.classList.remove('hidden');
+  } else {
+    status.innerHTML = '<span class="pill gray">Zliczane</span> ' +
+      '<span class="mut">ruch z tego urządzenia trafia do statystyk</span>';
+    btnEx.classList.remove('hidden');
+    btnIn.classList.add('hidden');
+  }
+}
+async function setOperator(excluded){
+  let r;
+  try {
+    r = await fetch('/api/admin/operator', {method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({excluded:excluded})});
+  } catch(e){ return; }
+  if (r.status === 401){ location.reload(); return; }
+  if (!r.ok) return;
+  renderOperator(await r.json());
+  loadStats();  // odśwież widok po zmianie
+}
+document.getElementById('operator-btn-exclude').addEventListener('click', function(){ setOperator(true); });
+document.getElementById('operator-btn-include').addEventListener('click', function(){ setOperator(false); });
+
 async function startGtfsCheck(){
   let r;
   try {
@@ -700,7 +801,7 @@ function initSectionNav(){
       }
     });
   }, {rootMargin: '-30% 0px -60% 0px'});
-  ['sec-live', 'sec-searches', 'sec-req', 'sec-gtfs', 'sec-sys']
+  ['sec-live', 'sec-operator', 'sec-searches', 'sec-req', 'sec-gtfs', 'sec-sys']
     .forEach(function(id){
       const el = document.getElementById(id);
       if (el) obs.observe(el);

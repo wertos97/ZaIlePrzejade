@@ -173,6 +173,13 @@ def init(db_dir, retention_days=90):
                      'outcome TEXT, iph TEXT, extra TEXT)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_events_ts '
                      'ON events(ts)')
+        # Operator traffic marker (admin's own testing): recorded like
+        # everything else but hidden in the panel by default (toggleable).
+        try:
+            conn.execute('ALTER TABLE events ADD COLUMN op INTEGER '
+                         'NOT NULL DEFAULT 0')
+        except Exception:
+            pass  # column already there (SQLite has no ADD COLUMN IF NOT EXISTS)
         conn.execute('CREATE TABLE IF NOT EXISTS daily_rollup ('
                      'day TEXT PRIMARY KEY, '
                      'requests INTEGER NOT NULL DEFAULT 0, '
@@ -212,9 +219,11 @@ def rollup_complete_days():
     try:
         start = _today_start()
         with _lock:
+            # Operator traffic never enters the perpetual rollup — it stays
+            # visible only in retained raw events (toggleable in the panel).
             rows = _conn.execute(
                 'SELECT ts, kind, outcome, iph FROM events '
-                'WHERE ts < ?', (start,)).fetchall()
+                'WHERE ts < ? AND op = 0', (start,)).fetchall()
         per_day = {}
         for ts, kind, outcome, iph in rows:
             day = _day_key(ts, WARSAW)
@@ -282,24 +291,36 @@ def _ip_hash(ip):
         return ''
 
 
-def record_event(kind, outcome=None, ip=None, detail=None):
-    """Append one event row (best-effort, never raises)."""
+def record_event(kind, outcome=None, ip=None, detail=None, op=0):
+    """Append one event row (best-effort, never raises).
+
+    op=1 marks the operator's own traffic (recorded like everything
+    else, but hidden in the panel by default).
+    """
     if _conn is None:
         return
     try:
         prune_old_events()
         iph = _ip_hash(ip) if ip else None
         with _lock:
-            _conn.execute(
-                'INSERT INTO events(ts, kind, outcome, iph, extra) '
-                'VALUES (?, ?, ?, ?, ?)',
-                (time.time(), kind, outcome, iph, detail))
+            try:
+                _conn.execute(
+                    'INSERT INTO events(ts, kind, outcome, iph, extra, op) '
+                    'VALUES (?, ?, ?, ?, ?, ?)',
+                    (time.time(), kind, outcome, iph, detail, 1 if op else 0))
+            except Exception:
+                # Pre-migration database without the op column — fall back
+                # to the legacy shape rather than losing the event.
+                _conn.execute(
+                    'INSERT INTO events(ts, kind, outcome, iph, extra) '
+                    'VALUES (?, ?, ?, ?, ?)',
+                    (time.time(), kind, outcome, iph, detail))
             _conn.commit()
     except Exception:
         pass
 
 
-def record_request(outcome, ip, detail=None):
+def record_request(outcome, ip, detail=None, op=0):
     """Append a route-search event.
 
     detail (optional dict) carries non-personal search facts: from/to
@@ -311,11 +332,11 @@ def record_request(outcome, ip, detail=None):
             detail = json.dumps(detail, ensure_ascii=False)
         except (TypeError, ValueError):
             detail = None
-    record_event('request', outcome=outcome, ip=ip, detail=detail)
+    record_event('request', outcome=outcome, ip=ip, detail=detail, op=op)
 
 
-def record_visit(ip):
-    record_event('visit', ip=ip)
+def record_visit(ip, op=0):
+    record_event('visit', ip=ip, op=op)
 
 
 def record_restart(version, reason=None):
@@ -331,15 +352,23 @@ def _day_key(ts, tz):
 
 
 def daily_series(days=None, tz=ZoneInfo('Europe/Warsaw'),
-                 from_ts=None, to_ts=None):
+                 from_ts=None, to_ts=None, include_op=False):
     """Per-day buckets (Europe/Warsaw): requests (ok/timeout/busy) and
     unique visitors (distinct IP hashes). Zakres: from_ts/to_ts (epoch);
     bez nich — ostatnie `days` dni (domyślnie 30).
 
     Two-tier history: complete past days come from daily_rollup (kept
-    forever, no identifiers), today and not-yet-rolled days from raw
-    events — so the series spans the whole recording period. A day
-    present in the rollup is never double-counted from raw events.
+    forever, no identifiers, never contains operator traffic), today and
+    not-yet-rolled days from raw events — so the series spans the whole
+    recording period. A day present in the rollup is never double-counted
+    from raw events.
+
+    Operator traffic (op=1) is excluded unless include_op=True; for
+    already-rolled days it is back-filled from retained raw events (op
+    rows older than the retention window are unrecoverable, because the
+    rollup never stores them). Either way, meta['op_hidden'] reports how
+    much operator traffic the range holds ({requests, visits}), so the
+    panel can say what the toggle would reveal.
 
     Returns (days, unique_total, meta), where unique_total holds the
     distinct IP hashes found in RETAINED raw events only, and meta is
@@ -350,7 +379,8 @@ def daily_series(days=None, tz=ZoneInfo('Europe/Warsaw'),
     """
     out = {}
     unique_total = set()
-    meta = {'unique_exact': True, 'unique_since': None}
+    meta = {'unique_exact': True, 'unique_since': None,
+            'op_hidden': {'requests': 0, 'visits': 0}}
     if _conn is None:
         return out, unique_total, meta
     if from_ts is None or to_ts is None:
@@ -359,6 +389,7 @@ def daily_series(days=None, tz=ZoneInfo('Europe/Warsaw'),
         from_ts = to_ts - days * 86400
     from_day = _day_key(from_ts, tz)
     to_day = _day_key(to_ts, tz)
+    op_filter = '' if include_op else 'AND op = 0'
     try:
         with _lock:
             rollup_rows = _conn.execute(
@@ -367,10 +398,31 @@ def daily_series(days=None, tz=ZoneInfo('Europe/Warsaw'),
                 (from_day, to_day)).fetchall()
             raw_rows = _conn.execute(
                 'SELECT ts, kind, outcome, iph FROM events '
-                'WHERE ts >= ? AND ts <= ?', (from_ts, to_ts)).fetchall()
+                'WHERE ts >= ? AND ts <= ? ' + op_filter,
+                (from_ts, to_ts)).fetchall()
             oldest = _conn.execute(
                 "SELECT MIN(ts) FROM events "
                 "WHERE kind IN ('request', 'visit')").fetchone()
+            # Rollup never stores operator rows, so for already-rolled
+            # days a reveal must come from retained raw events; otherwise
+            # the toggle would show nothing for past days while op_hidden
+            # correctly reports them.
+            op_rolled_rows = []
+            if include_op:
+                op_rolled_rows = _conn.execute(
+                    'SELECT ts, kind, outcome, iph FROM events '
+                    'WHERE op = 1 AND ts >= ? AND ts <= ?',
+                    (from_ts, to_ts)).fetchall()
+            hid = _conn.execute(
+                'SELECT kind, COUNT(*) FROM events '
+                "WHERE op = 1 AND kind IN ('request', 'visit') "
+                'AND ts >= ? AND ts <= ? GROUP BY kind',
+                (from_ts, to_ts)).fetchall()
+            for kind, count in hid:
+                if kind == 'request':
+                    meta['op_hidden']['requests'] = count
+                elif kind == 'visit':
+                    meta['op_hidden']['visits'] = count
     except Exception:
         return out, unique_total, meta
     rolled = set()
@@ -392,6 +444,25 @@ def daily_series(days=None, tz=ZoneInfo('Europe/Warsaw'),
                 d[outcome] += 1
         if iph:
             d['visitors'].add(iph)
+    # Operator rows on rolled days are appended from retained raw events
+    # (non-rolled days already went through the loop above).
+    op_day_visitors = {}
+    for ts, kind, outcome, iph in op_rolled_rows:
+        day = _day_key(ts, tz)
+        if day not in rolled:
+            continue
+        d = out[day]
+        if kind == 'request':
+            d['requests'] += 1
+            if outcome in ('timeout', 'busy', 'ok'):
+                d[outcome] += 1
+        if iph:
+            op_day_visitors.setdefault(day, set()).add(iph)
+            unique_total.add(iph)
+    for day, ips in op_day_visitors.items():
+        # Rollup visitor counts never included operator hashes, so the
+        # two sets are disjoint; adding their sizes is exact here.
+        out[day]['visitors'] += len(ips)
     for d in out.values():
         if isinstance(d['visitors'], set):
             d['visitors'] = len(d['visitors'])
@@ -406,12 +477,14 @@ def daily_series(days=None, tz=ZoneInfo('Europe/Warsaw'),
     return dict(sorted(out.items())), unique_total, meta
 
 
-def recent_searches(limit=100, from_ts=None, to_ts=None):
+def recent_searches(limit=100, from_ts=None, to_ts=None,
+                    include_op=False):
     """Newest route-search events (for the admin "recent searches" box).
 
-    Returns [{ts, outcome, detail}] newest-first, where detail is the
+    Returns [{ts, outcome, detail, op}] newest-first, where detail is the
     parsed JSON recorded by record_request ({} when absent/unparseable).
-    Same retention as everything else (pruned request rows simply stop
+    Operator rows (op=1) are excluded unless include_op=True. Same
+    retention as everything else (pruned request rows simply stop
     appearing). Best-effort, never raises.
     """
     if _conn is None:
@@ -421,9 +494,11 @@ def recent_searches(limit=100, from_ts=None, to_ts=None):
     except (TypeError, ValueError):
         limit = 100
     try:
-        q = ('SELECT ts, outcome, extra FROM events '
+        q = ('SELECT ts, outcome, extra, op FROM events '
              "WHERE kind='request'")
         args = []
+        if not include_op:
+            q += ' AND op = 0'
         if from_ts is not None:
             q += ' AND ts >= ?'
             args.append(from_ts)
@@ -437,14 +512,15 @@ def recent_searches(limit=100, from_ts=None, to_ts=None):
     except Exception:
         return []
     out = []
-    for ts, outcome, extra in rows:
+    for ts, outcome, extra, op in rows:
         try:
             detail = json.loads(extra) if extra else {}
             if not isinstance(detail, dict):
                 detail = {}
         except (TypeError, ValueError):
             detail = {}
-        out.append({'ts': ts, 'outcome': outcome, 'detail': detail})
+        out.append({'ts': ts, 'outcome': outcome, 'detail': detail,
+                    'op': bool(op)})
     return out
 
 

@@ -7,10 +7,10 @@ Krótko: **nie musisz zakładać konta, nie ma tu reklam i nikt nie śledzi, co 
 - ❌ kont i logowania,
 - ❌ reklam,
 - ❌ narzędzi śledzących (takich jak Google Analytics),
-- ❌ ciasteczek — strona nic nie zapisuje na Twoim urządzeniu.
+- ❌ ciasteczek — strona nic nie zapisuje na Twoim urządzeniu (jedyny wyjątek: operator strony może na własnym urządzeniu włączyć opcjonalne ciasteczko `operator`, żeby jego testy nie zaburzały liczników — Ciebie to nie dotyczy).
 
 ## Co zapisujemy i po co
 
 - 🗺️ **Mapa:** obrazki mapy przesyłamy Ci z naszego serwera, więc firma dostarczająca mapę **nie widzi, że tu jesteś**.
-- 📊 **Liczniki odwiedzin:** zapisujemy, ile osób weszło na stronę i ile tras policzono — przy wyszukiwaniach także między którymi przystankami, ile trwało liczenie i ile wyszło (żeby wyłapywać błędy). Nie zapisujemy Twojego adresu internetowego — tylko jego zaszyfrowany skrót, po którym nie da się dojść, kto to był. Takie zapiski kasują się same **po 90 dniach**.
+- 📊 **Liczniki odwiedzin:** zapisujemy, ile osób weszło na stronę i ile tras policzono — przy wyszukiwaniach także między którymi przystankami, ile trwało liczenie i ile wyszło (żeby wyłapywać błędy). Nie zapisujemy Twojego adresu internetowego — tylko jego zaszyfrowany skrót, po którym nie da się dojść, kto to był. Takie zapiski kasują się same **po 90 dniach**. Własny ruch operatora strony jest zapisywany z oznaczeniem i domyślnie ukrywany w jego panelu (może go podejrzeć przełącznikiem) — Ciebie to nie dotyczy.
 - 🛡️ **Ochrona przed przeciążeniem:** żeby jedna osoba nie zapchała strony innym, serwer na chwilę zapamiętuje, skąd przyszło zapytanie — i zaraz o tym zapomina.

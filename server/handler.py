@@ -315,16 +315,50 @@ def _cleanup_stale_rate_limits():
             del _rate_limits[k]
 
 
+def _request_cookies(handler):
+    """Parse the Cookie header into a dict (best-effort, never raises)."""
+    try:
+        cookies = {}
+        for part in (handler.headers.get('Cookie', '') or '').split(';'):
+            if '=' in part:
+                k, v = part.split('=', 1)
+                cookies[k.strip()] = v.strip()
+        return cookies
+    except Exception:
+        return {}
+
+
+def _is_operator(handler):
+    """True when the request comes from the operator's own testing.
+
+    Two independent signals (either excludes the request from stats):
+      * a valid admin session cookie — testing in the browser where the
+        panel is open needs zero configuration;
+      * the opt-in `operator=1` cookie — set explicitly per device via
+        the panel ("Wyklucz to urządzenie"), covers other browsers.
+    Never raises; unknown → not operator (fail-open for stats).
+    """
+    try:
+        cookies = _request_cookies(handler)
+        if cookies.get('operator') == '1':
+            return True
+        return admin_stats.session_ok(cookies.get('admin_session'))
+    except Exception:
+        return False
+
+
 def _get_client_ip(handler):
     """Get real client IP for rate limiting.
 
-    When TRUST_PROXY_HEADERS is enabled, only X-Real-IP is trusted — it
-    must be set by the reverse proxy from $remote_addr and cannot be
-    influenced by the client.  X-Forwarded-For is deliberately NOT used
-    because the client can set it to an arbitrary value, rotating
-    rate-limit buckets on every request.
+    Behind Cloudflare, CF-Connecting-IP is set by the edge and cannot be
+    spoofed by the client. X-Real-IP remains a fallback for other proxies.
+    X-Forwarded-For is deliberately NOT used because the client can set it
+    to an arbitrary value, rotating rate-limit buckets on every request.
     """
     if TRUST_PROXY_HEADERS:
+        real = handler.headers.get('CF-Connecting-IP', '')
+        if real:
+            return real.strip()
         real = handler.headers.get('X-Real-IP', '')
         if real:
             return real.strip()
@@ -699,7 +733,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path in ('/api/admin/login', '/api/admin/logout',
                            '/api/admin/gtfs-check', '/api/admin/gtfs-cancel',
-                           '/api/admin/gtfs-update'):
+                           '/api/admin/gtfs-update', '/api/admin/operator'):
             self.handle_api(parsed.path, {})
             return
         self.send_error_page(405)
@@ -770,7 +804,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             return
 
         if path == '/':
-            admin_stats.record_visit(_get_client_ip(self))
+            # Operator traffic is RECORDED but flagged (op=1) — the panel
+            # hides it by default with a toggle to reveal. Rate limiting
+            # below still applies to everyone.
+            op = 1 if _is_operator(self) else 0
+            admin_stats.record_visit(_get_client_ip(self), op=op)
 
         # Serve favicon.svg
         if path == '/favicon.svg':
@@ -1026,8 +1064,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             # opcjonalny zakres dat (YYYY-MM-DD, Europe/Warsaw); bez niego
             # — ostatnie 30 dni. Historia sięga wstecz co najwyżej do okna
             # retencji (domyślnie 90 dni, potem zdarzenia są usuwane).
+            # op=1 dokleja ruch operatora (domyślnie ukryty).
             f_str = (query.get('from', [''])[0] or '')[:10]
             t_str = (query.get('to', [''])[0] or '')[:10]
+            include_op = (query.get('op', [''])[0] or '') == '1'
             try:
                 from_ts, to_ts = admin_stats.parse_warsaw_range(f_str, t_str)
                 f_str, t_str = min(f_str, t_str), max(f_str, t_str)
@@ -1039,9 +1079,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 f_str = (_dt.now(_W) - _td(days=29)).strftime('%Y-%m-%d')
                 from_ts = to_ts = None
             daily, unique_total, stats_meta = admin_stats.daily_series(
-                from_ts=from_ts, to_ts=to_ts)
+                from_ts=from_ts, to_ts=to_ts, include_op=include_op)
             searches = admin_stats.recent_searches(
-                limit=100, from_ts=from_ts, to_ts=to_ts)
+                limit=100, from_ts=from_ts, to_ts=to_ts,
+                include_op=include_op)
             for s in searches:
                 d = s.get('detail') or {}
                 for key in ('from', 'to'):
@@ -1053,6 +1094,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                 'unique_total': len(unique_total),
                 'unique_exact': stats_meta['unique_exact'],
                 'unique_since': stats_meta['unique_since'],
+                'op_included': include_op,
+                'op_hidden': stats_meta.get('op_hidden', {'requests': 0,
+                                                          'visits': 0}),
                 'searches': searches,
                 'range': {'from': f_str, 'to': t_str},
                 'restarts': admin_stats.restarts(from_ts=from_ts,
@@ -1102,6 +1146,53 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             else:
                 self.serve_json({'cancelled': False,
                                  'error': 'Brak zaplanowanej instalacji.'})
+            return
+
+        if path == '/api/admin/operator':
+            # Operator's own device: status + opt-in exclusion from stats.
+            # GET → {excluded, via_session, via_cookie}; POST {excluded}
+            # sets/clears the `operator=1` cookie (session-gated, so only
+            # the admin can arm it — and only ever for their own browser).
+            cookies = _request_cookies(self)
+            via_cookie = cookies.get('operator') == '1'
+            via_session = admin_stats.session_ok(
+                cookies.get('admin_session'))
+            if self.command == 'POST':
+                try:
+                    length = int(self.headers.get('Content-Length', '0') or 0)
+                    payload = json.loads(
+                        self.rfile.read(min(length, 4096)) or b'{}')
+                except Exception:
+                    payload = {}
+                want = bool(payload.get('excluded'))
+                host = (self.headers.get('Host') or '').split(':')[0]
+                if want:
+                    cookie = ('operator=1; Path=/; Max-Age=315360000; '
+                              'SameSite=Lax; HttpOnly')
+                    if not (host.startswith('localhost')
+                            or host.startswith('127.')):
+                        cookie += '; Secure'
+                else:
+                    cookie = ('operator=; Path=/; Max-Age=0; '
+                              'SameSite=Lax; HttpOnly')
+                self.send_response(200)
+                self.send_header('Content-Type',
+                                 'application/json; charset=utf-8')
+                self.send_header('Set-Cookie', cookie)
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                body = json.dumps(
+                    {'excluded': want or via_session,
+                     'via_session': via_session,
+                     'via_cookie': want},
+                    ensure_ascii=False).encode('utf-8')
+                self._send_body(body)
+                return
+            self.serve_json({
+                'excluded': via_cookie or via_session,
+                'via_session': via_session,
+                'via_cookie': via_cookie,
+            })
             return
 
         if path == '/api/admin/gtfs-update':
@@ -1401,6 +1492,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                     'dist': round(res.get('total_distance', 0.0), 2),
                     'reg': res.get('cost_regular'),
                     'red': res.get('cost_reduced'),
+                    # Ride count for the cheap-vs-convenient invariants
+                    # checked in the admin panel (cheap must not cost
+                    # more, convenient must not ride more).
+                    'rides': len(res.get('segments', [])),
                 }
             return {
                 'from': from_stop,
@@ -1424,6 +1519,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         )
         _search_ms = int((time.monotonic() - _search_t0) * 1000)
 
+        # Operator's own testing is recorded flagged (op=1), never
+        # skipped — the panel hides it by default with a toggle.
+        _is_op = 1 if _is_operator(self) else 0
+
         is_busy = (isinstance(result, tuple) and len(result) == 2
                    and result[0] == 'busy' and result[1] is None)
         is_pair = (isinstance(result, tuple) and len(result) == 2
@@ -1432,11 +1531,11 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             if is_busy:
                 admin_stats.record_request(
                     'busy', _get_client_ip(self),
-                    _search_detail(_search_ms))
+                    _search_detail(_search_ms), op=_is_op)
             elif not is_pair:
                 admin_stats.record_request(
                     'timeout', _get_client_ip(self),
-                    _search_detail(_search_ms))
+                    _search_detail(_search_ms), op=_is_op)
         except Exception:
             pass
         if is_busy:
@@ -1466,7 +1565,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             try:
                 admin_stats.record_request(
                     'timeout', _get_client_ip(self),
-                    _search_detail(_search_ms))
+                    _search_detail(_search_ms), op=_is_op)
             except Exception:
                 pass
             self.serve_json({'error': _user_facing_error(
@@ -1477,7 +1576,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         try:
             admin_stats.record_request(
                 'ok', _get_client_ip(self),
-                _search_detail(_search_ms, convenient_result, cheap_result))
+                _search_detail(_search_ms, convenient_result, cheap_result),
+                op=_is_op)
         except Exception:
             pass
 
