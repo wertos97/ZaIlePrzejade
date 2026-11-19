@@ -737,6 +737,9 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
     # TCP/thread per request. timeout closes idle keep-alive sockets.
     protocol_version = 'HTTP/1.1'
     timeout = 15
+    # Small responses (health, version) otherwise sit in Nagle/delayed-ACK
+    # for ~40 ms on a persistent connection.
+    disable_nagle_algorithm = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
