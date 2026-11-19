@@ -492,12 +492,12 @@ body {
 
 .price-max {
     font-weight: bold;
-    color: #e74c3c;
+    color: #b03a2e;
 }
 
 .price-daily {
     font-weight: bold;
-    color: #27ae60;
+    color: #1e7e34;
 }
 
 .price-note {
@@ -1526,6 +1526,10 @@ body.maintenance .btn-mode-sm {
         margin-bottom: 10px;
         padding-bottom: 10px;
         border-bottom: 1px solid #e0e0e0;
+    }
+
+    .btn {
+        min-height: 44px;
     }
 
     .btn-mode-sm {
