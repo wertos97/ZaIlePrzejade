@@ -2273,3 +2273,16 @@ def get_cached_route_result(from_group_id, to_group_id, mode):
     return _hydrate_result(one[0]), one[1]
 
 
+def get_cached_route_pair(from_group_id, to_group_id):
+    """Return the dual-mode cached pair without computing, or None.
+
+    The HTTP layer uses this to answer warm requests without submitting a
+    no-op job to the single pathfinding worker. A busy cold search must not
+    delay routes that are already cached.
+    """
+    cache_key = (from_group_id, to_group_id, 'both', _feed_version)
+    pair, _from_db = _read_cached_pair(
+        cache_key, 'both', from_group_id, to_group_id)
+    return pair
+
+

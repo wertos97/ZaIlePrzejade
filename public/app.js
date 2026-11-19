@@ -184,13 +184,14 @@ function restoreFromURL() {
             document.getElementById('from-search').value = fromGroup.name;
             document.getElementById('to-search').value = toGroup.name;
             if (mode === 'convenient' || mode === 'cheap') {
-                setRouteMode(mode);
+                setRouteMode(mode, true);
             } else {
-                setRouteMode('cheap');
+                setRouteMode('cheap', true);
             }
             updateSelectedStops();
             // Both stops and routes are already loaded (Promise.all above),
-            // so the route can be computed right away.
+            // so the route can be computed right away. setRouteMode above
+            // already skipped its own fetch to avoid a duplicate request.
             findRoute();
         }
     }
@@ -735,7 +736,7 @@ function clearRoute() {
     setTimeout(function() { state.map.invalidateSize(); }, 50);
 }
 
-function setRouteMode(mode) {
+function setRouteMode(mode, skipFind) {
     state.routeMode = mode;
     
     // Update desktop mode buttons
@@ -748,7 +749,7 @@ function setRouteMode(mode) {
         btn.classList.toggle('btn-mode-sm-active', btn.dataset.mode === mode);
     });
 
-    if (state.fromStop && state.toStop) {
+    if (!skipFind && state.fromStop && state.toStop) {
         findRoute();
     }
     updateURL();

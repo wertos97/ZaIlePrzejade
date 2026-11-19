@@ -57,7 +57,8 @@ Dwa tryby różnią się tylko tym, co liczą: **tania** minimalizuje samą tary
 Wyniki zapisują się w **dwóch miejscach** i żyją, dopóki nie zmienią się dane GTFS (wersja danych i algorytmu jest w nazwie pliku bazy):
 
 - **dysk (sqlite)** — `processed/route_cache_<feed>_<algo>.sqlite`; każda nowa trasa od razu zapisuje się na dysk, więc **przetrwa restart serwera** i czyszczenie pamięci,
-- **pamięć RAM** (25 MB) — najczęściej używane trasy; gdy trasy nie ma w pamięci, wraca z dysku w 1–4 ms.
+- **pamięć RAM** (25 MB) — najczęściej używane trasy; gdy trasy nie ma w pamięci, wraca z dysku w 1–4 ms,
+- **ścieżka HTTP** — ciepła trasa jest serwowana od razu z cache, bez kolejki jednego workera A*; `/api/stops` i `/api/routes` odpowiadają `304` na `If-None-Match`.
 
 ## Model cen (2027)
 
@@ -105,7 +106,7 @@ Dane GTFS przetwarza `process_gtfs.py` (surowe pliki zip w `data/` → `processe
 ## Testy
 
 ```bash
-python3 -m unittest discover -s tests     # 146 testów
+python3 -m unittest discover -s tests     # 148 testów
 ```
 
 W tym `TestExactSearchExactness` — na małym grafie testowym algorytm jest porównywany z metodą, która sprawdza wszystkie możliwe trasy. Wyniki muszą się zgadzać. Testy admina wymagają `init_pathfinding`; część testów pomija się, gdy brak danych GTFS.

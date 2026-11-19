@@ -1539,6 +1539,33 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         # On 1-core VPS a single worker avoids GIL contention entirely.
         # Outer 30s cap = the product's hard search-time promise; phase
         # budgets inside sum below it so it only fires as a safety net.
+
+        # Operator's own testing is recorded flagged (op=1), never
+        # skipped — the panel hides it by default with a toggle.
+        _is_op = 1 if _is_operator(self) else 0
+
+        # Warm hit: serve straight from the route cache. Submitting this to
+        # the single worker would make a cached route wait behind a cold A*
+        # search, even though there is nothing to compute.
+        _cache_t0 = time.monotonic()
+        cached_pair = pathfinding.get_cached_route_pair(from_stop, to_stop)
+        if cached_pair is not None:
+            convenient_result, _convenient_error = cached_pair[0]
+            cheap_result, _cheap_error = cached_pair[1]
+            _cache_ms = int((time.monotonic() - _cache_t0) * 1000)
+            try:
+                admin_stats.record_request(
+                    'ok', _get_client_ip(self),
+                    _search_detail(_cache_ms, convenient_result, cheap_result),
+                    op=_is_op)
+            except Exception:
+                pass
+            self.serve_json({
+                'convenient': convenient_result,
+                'cheap': cheap_result,
+            })
+            return
+
         _search_t0 = time.monotonic()
         result = run_pathfinding_with_timeout(
             pathfinding.find_route_between_groups,
@@ -1546,10 +1573,6 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             timeout=30.0
         )
         _search_ms = int((time.monotonic() - _search_t0) * 1000)
-
-        # Operator's own testing is recorded flagged (op=1), never
-        # skipped — the panel hides it by default with a toggle.
-        _is_op = 1 if _is_operator(self) else 0
 
         is_busy = (isinstance(result, tuple) and len(result) == 2
                    and result[0] == 'busy' and result[1] is None)
@@ -1881,11 +1904,24 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             return
 
         accept = self.headers.get('Accept-Encoding', '')
+        feed_version = (data.feed_metadata or {}).get('version', '')
+        etag = '"%s-%s"' % (
+            feed_version or APP_VERSION,
+            path.strip('/').replace('/', '-'))
+        if self.headers.get('If-None-Match', '').strip() in (etag, '*'):
+            self.send_response(304)
+            self.send_header('ETag', etag)
+            self.send_header('Cache-Control', 'public, max-age=3600')
+            self.send_header('Vary', 'Accept-Encoding')
+            self.end_headers()
+            return
+
         if 'gzip' in accept:
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Encoding', 'gzip')
             self.send_header('Vary', 'Accept-Encoding')
+            self.send_header('ETag', etag)
             self.send_header('Content-Length', str(len(body_gz)))
             self.send_header('Cache-Control', 'public, max-age=3600')
             self.end_headers()
@@ -1894,6 +1930,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Vary', 'Accept-Encoding')
+            self.send_header('ETag', etag)
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'public, max-age=3600')
             self.end_headers()

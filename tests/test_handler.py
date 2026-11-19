@@ -117,6 +117,21 @@ class TestHandlerEndpoints(unittest.TestCase):
         # and truncates to at most 50 entries.
         self.assertLessEqual(len(results), 50)
 
+    def test_stops_etag_revalidation(self):
+        """After the 1h cache window the browser revalidates for free."""
+        status, headers, _ = self._get('/api/stops')
+        self.assertEqual(status, 200)
+        etag = headers.get('ETag')
+        self.assertTrue(etag)
+        try:
+            status, headers, body = self._get(
+                '/api/stops', {'If-None-Match': etag})
+        except urllib.error.HTTPError as e:
+            status, headers, body = e.code, dict(e.headers), e.read()
+        self.assertEqual(status, 304)
+        self.assertEqual(body, b'')
+        self.assertEqual(headers.get('ETag'), etag)
+
     def test_og_image_returns_png(self):
         """Social crawlers reject SVG; the endpoint must serve a raster card."""
         status, headers, body = self._get(
@@ -242,6 +257,27 @@ class TestHandlerEndpoints(unittest.TestCase):
         self.assertIn('cheap', result)
         self.assertNotIn('short', result)
 
+    def test_cached_route_skips_pathfinding_executor(self):
+        """A warm pair must not queue a no-op job behind a cold search."""
+        from server import handler as handler_mod
+
+        # setUpClass already computed this pair; the request must come from
+        # the cache even when the executor is unavailable.
+        def fail(*_args, **_kwargs):
+            raise AssertionError('pathfinding executor used for cached route')
+
+        original = handler_mod.run_pathfinding_with_timeout
+        handler_mod.run_pathfinding_with_timeout = fail
+        try:
+            status, _, body = self._get(
+                f'/api/find-route?from={self.from_id}&to={self.to_id}')
+        finally:
+            handler_mod.run_pathfinding_with_timeout = original
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertIn('cheap', result)
+        self.assertIn('convenient', result)
+
     def test_find_route_cheap_not_more_expensive(self):
         """Exactness invariant: when both exact searches complete, the cheap
         fare can never exceed the convenient route's fare."""
@@ -310,6 +346,10 @@ class TestHandlerEndpoints(unittest.TestCase):
         release = threading.Event()
         blockers = [handler_mod._pathfinding_executor.submit(
             release.wait, 5) for _ in range(4)]
+        # This test is about the cold-request path; keep the warm-cache
+        # shortcut from answering before the shed check runs.
+        original_cached = handler_mod.pathfinding.get_cached_route_pair
+        handler_mod.pathfinding.get_cached_route_pair = lambda *_a: None
         # wait until the executor queue actually reaches the shed threshold
         shed_deadline = _time.monotonic() + 5
         while _time.monotonic() < shed_deadline:
@@ -331,6 +371,7 @@ class TestHandlerEndpoints(unittest.TestCase):
             self.assertIn('error', result)
             self.assertIn('przeciążony', result['error'])
         finally:
+            handler_mod.pathfinding.get_cached_route_pair = original_cached
             release.set()
             # wait for every blocker to actually finish — later tests must
             # start from a completely idle executor
