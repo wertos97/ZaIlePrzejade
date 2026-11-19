@@ -12,5 +12,6 @@
     "_source": "ZTP Kraków, komunikat 23.07.2026; Zarządzenie nr 425/2026 Prezydenta Miasta Krakowa",
     "_source_url": "https://ztp.krakow.pl/wszystkie-aktualnosci/kmk/ogloszenie-przetargu-na-wprowadzenie-odleglosciowej-taryfy-biletowej.html",
     "_valid_from": "2027-01-04",
-    "_note": "Oficjalne przedziały kilometrowe są liczone w linii prostej; kalkulator używa dystansu trasy GTFS, więc cena może być zawyżona."
+    "_distance_rule": "straight_line_per_ride",
+    "_note": "Oficjalne przedziały kilometrowe są liczone w linii prostej. Kalkulator stosuje tę samą zasadę: każdy przejazd jest wyceniany według linii prostej między przystankiem wsiadania i wysiadania. Dystans wzdłuż trasy GTFS jest pokazywany tylko informacyjnie."
 }

@@ -116,6 +116,14 @@ class TestCalculateRouteCost(unittest.TestCase):
         self.assertEqual(reg, 0.0)
         self.assertEqual(red, 0.0)
 
+    def test_prefers_official_billed_distance(self):
+        """Segments carrying the official straight-line distance must be
+        priced from it, not from the GTFS route distance."""
+        segments = [{'distance': 10.0, 'billed_distance': 2.0}]
+        reg, red = cost.calculate_route_cost(segments)
+        self.assertEqual(reg, 4.00)
+        self.assertEqual(red, 2.00)
+
     def test_returns_rounded_floats(self):
         """Results should be rounded to 2 decimal places."""
         segments = [{'distance': 3.7}]  # 4.00 + 1*0.50 = 4.50

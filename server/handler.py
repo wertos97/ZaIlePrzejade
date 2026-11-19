@@ -1291,6 +1291,7 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
                     'max_cost_reduced': cost.MAX_COST_REDUCED,
                     'max_daily_cost_regular': cost.MAX_DAILY_COST_REGULAR,
                     'max_daily_cost_reduced': cost.MAX_DAILY_COST_REDUCED,
+                    'distance_rule': 'straight_line_per_ride',
                 })
 
             elif path == '/api/shapes':

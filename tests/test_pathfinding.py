@@ -280,15 +280,18 @@ class TestPathfindingIntegration(unittest.TestCase):
                               f"stop {sid} missing from segment stop_positions")
 
     def test_segment_distance_follows_gtfs_edges(self):
-        """Regression: segment distance must equal the sum of the real GTFS
-        edge distances (shape_dist_traveled) along the path — NOT the
-        straight-line distance between platform coordinates."""
+        """The displayed route distance is the GTFS path length, while the
+        FARE uses the official straight-line distance between the ride's
+        boarding and alighting platforms."""
+        from server.cost import calculate_cost
+        from server.pathfinding import haversine_km
         conv_pair, _ = self.pf.find_route_between_groups(
             self.test_from, self.test_to, mode='both')
         result, error = conv_pair
         self.assertIsNotNone(result, error)
         adj = self.pf.adjacency
         total_from_edges = 0.0
+        total_billed = 0.0
         for seg in result['segments']:
             seg_edges = 0.0
             stops = seg['stops']
@@ -320,8 +323,24 @@ class TestPathfindingIntegration(unittest.TestCase):
             self.assertAlmostEqual(seg['distance'], round(seg_edges, 4), places=4,
                                    msg=f"segment {seg['route_id']} distance should follow GTFS edges")
             total_from_edges += seg_edges
+
+            first = self.pf.stops_grouped[
+                self.pf.stop_to_group[stops[0]]]
+            last = self.pf.stops_grouped[
+                self.pf.stop_to_group[stops[-1]]]
+            straight = haversine_km(first['lat'], first['lon'],
+                                    last['lat'], last['lon'])
+            self.assertAlmostEqual(seg['billed_distance'], round(straight, 4),
+                                   places=4,
+                                   msg='billed_distance must be the straight line')
+            expected_cost = calculate_cost(straight)[0]
+            self.assertEqual(seg['cost_regular'], expected_cost)
+            total_billed += straight
         self.assertAlmostEqual(result['total_distance'], round(total_from_edges, 4), places=4,
                                msg='total_distance should equal sum of real GTFS segment distances')
+        self.assertAlmostEqual(result['total_billed_distance'],
+                               round(total_billed, 4), places=4,
+                               msg='total_billed_distance should sum per-ride straight lines')
 
     def test_invalid_group_returns_error(self):
         """Invalid group ID should return an error."""
@@ -422,19 +441,19 @@ class TestRouteCacheSqlite(unittest.TestCase):
 
 
 class TestExactSearchExactness(unittest.TestCase):
-    """Exact-only product: the Pareto searches must return the TRUE optimum.
+    """Exact-only product: the searches must return the TRUE optimum.
 
     Runs find_cheapest_path / find_most_convenient_path on a tiny synthetic
     graph and compares against brute-force enumeration of all simple paths,
-    scored with the same ticket pricing rules (the oracle).
+    scored with the same OFFICIAL straight-line ticket pricing (the oracle).
 
-    Graph (edge labels = route, km):
-        s1 --A 8.5--> s3                fare 9.00, 1 boarding
-        s1 --B 3.5--> s2 --C 3.5--> s3  fare 8.00, 2 boardings
-        s1 --B 3.5--> s4 -t0.1-> s2 --C 3.5--> s3   fare 8.00, 2 boardings
+    Geometry (straight-line km between the stops):
+        s1 --A 5.0--> p --B 5.0--> t          fare 6.50+6.50 = 13.00, 2 rides
+        s1 --C 2.82--> m1 --D 2.83--> m2 --E 2.82--> t
+                                              fare 4+4+4 = 12.00, 3 rides
 
-    So: cheap optimum = 8.00 (two hops), convenient optimum (fare + 2 zł per
-    boarding) = 11.00 (direct A) — the two modes intentionally diverge.
+    So: cheap optimum = 12.00 (three short hops), convenient optimum
+    (fare + 2 zł per boarding) = 17.00 (two rides) — the modes diverge.
     """
 
     @classmethod
@@ -454,11 +473,17 @@ class TestExactSearchExactness(unittest.TestCase):
                  'stop_pair_routes')
         self._saved = {n: getattr(pf, n) for n in names}
 
+        # Straight-line geometry drives the fares (official tariff):
+        #   s1 -> p -> t   : 5.0 + 5.0 km  = 6.50 + 6.50 = 13.00 (2 rides)
+        #   s1 -> m1 -> m2 -> t : 2.82+2.83+2.82 km = 4+4+4 = 12.00 (3 rides)
+        # so cheap takes 3 rides (12.00) while convenient prefers 2 rides
+        # (13.00 + 2*2.00 = 17.00 vs 12.00 + 3*2.00 = 18.00).
         coords = {
-            's1': (50.000, 19.900),
-            's2': (50.027, 19.920),
-            's3': (50.054, 19.900),
-            's4': (50.027, 19.905),
+            's1': (50.0000, 19.9000),
+            'p':  (50.0380, 19.9594),
+            't':  (50.0760, 19.9000),
+            'm1': (50.0253, 19.9000),
+            'm2': (50.0507, 19.9000),
         }
 
         def edge(to, route, dist):
@@ -467,12 +492,11 @@ class TestExactSearchExactness(unittest.TestCase):
                     'headsign': 'Test'}
 
         adjacency = {
-            's1': [edge('s3', 'A', 8.5), edge('s2', 'B', 3.5),
-                   edge('s4', 'B', 3.5)],
-            's2': [edge('s1', 'B', 3.5), edge('s3', 'C', 3.5),
-                   edge('s4', 'transfer', 0.1)],
-            's3': [edge('s1', 'A', 8.5), edge('s2', 'C', 3.5)],
-            's4': [edge('s1', 'B', 3.5), edge('s2', 'transfer', 0.1)],
+            's1': [edge('p', 'A', 1.0), edge('m1', 'C', 1.0)],
+            'p':  [edge('s1', 'A', 1.0), edge('t', 'B', 1.0)],
+            't':  [edge('p', 'B', 1.0), edge('m2', 'E', 1.0)],
+            'm1': [edge('s1', 'C', 1.0), edge('m2', 'D', 1.0)],
+            'm2': [edge('m1', 'D', 1.0), edge('t', 'E', 1.0)],
         }
 
         pf.adjacency = adjacency
@@ -530,27 +554,29 @@ class TestExactSearchExactness(unittest.TestCase):
     def _score(self, path, penalty):
         """Score a path exactly like the search does (same ticket rules).
 
-        Ticket rules (matching the displayed-fare merge in
-        _build_route_result): a walk between platforms does NOT close the
-        ticket — re-boarding the SAME line continues the ride; boarding a
-        different line closes it and opens a new ticket.
+        Every ride is priced by the official straight-line distance between
+        its boarding and alighting platforms. A walk between platforms does
+        NOT close the ticket — re-boarding the SAME line continues the ride;
+        boarding a different line closes it and opens a new ticket.
         """
         pf = self.pf
-        closed, acc, boardings, cur = 0.0, 0.0, 0, None
-        for _u, _v, e in path:
-            rid, dist = e['route_id'], e['distance']
+        closed, boardings, cur = 0.0, 0, None
+        board = alight = None
+        for u, v, e in path:
+            rid = e['route_id']
             if rid == 'transfer':
-                continue  # ticket stays open, route/acc unchanged
+                continue  # ticket stays open, boarding/alighting unchanged
             elif cur is None or rid != cur:
-                closed += pf._ticket_price(acc)
-                acc = dist
+                if cur is not None:
+                    closed += pf._ride_fare(board, alight)
+                board, alight = u, v
                 boardings += 1
                 cur = rid
             else:
-                acc += dist
-            acc = min(acc, 8.5)
-            acc = round(acc * 10) / 10
-        return closed + pf._ticket_price(acc) + penalty * boardings
+                alight = v
+        if cur is not None:
+            closed += pf._ride_fare(board, alight)
+        return closed + penalty * boardings
 
     def _raw_fare(self, result):
         return sum(s.get('cost_regular', 0.0)
@@ -561,18 +587,18 @@ class TestExactSearchExactness(unittest.TestCase):
     # ------------------------------------------------------------
     def test_cheap_finds_true_minimum_fare(self):
         oracle = min(self._score(p, 0.0)
-                     for p in self._all_simple_paths('s1', 's3'))
-        self.assertEqual(oracle, 8.0)
-        result, err = self.pf.find_cheapest_path(['s1'], ['s3'])
+                     for p in self._all_simple_paths('s1', 't'))
+        self.assertEqual(oracle, 12.0)
+        result, err = self.pf.find_cheapest_path(['s1'], ['t'])
         self.assertIsNotNone(result, err)
         self.assertAlmostEqual(self._raw_fare(result), oracle, places=6)
 
     def test_convenient_finds_true_penalty_optimum(self):
         penalty = self.pf._BOARDING_PENALTY
         oracle = min(self._score(p, penalty)
-                     for p in self._all_simple_paths('s1', 's3'))
-        self.assertEqual(oracle, 11.0)  # direct A: 9.00 fare + 2.00 boarding
-        result, err = self.pf.find_most_convenient_path(['s1'], ['s3'])
+                     for p in self._all_simple_paths('s1', 't'))
+        self.assertEqual(oracle, 17.0)  # 13.00 fare + 2 x 2.00 boarding
+        result, err = self.pf.find_most_convenient_path(['s1'], ['t'])
         self.assertIsNotNone(result, err)
         scalar = (self._raw_fare(result)
                   + penalty * len(result.get('segments', [])))
@@ -580,41 +606,42 @@ class TestExactSearchExactness(unittest.TestCase):
 
     def test_modes_diverge_on_this_graph(self):
         """Sanity: the two exact objectives pick DIFFERENT routes here —
-        cheap takes two hops (8 zł), convenient goes direct (9 zł + 2)."""
-        cheap, err1 = self.pf.find_cheapest_path(['s1'], ['s3'])
-        conv, err2 = self.pf.find_most_convenient_path(['s1'], ['s3'])
+        cheap takes three short hops (12 zł), convenient takes two rides
+        (13 zł + 2 x 2 zł)."""
+        cheap, err1 = self.pf.find_cheapest_path(['s1'], ['t'])
+        conv, err2 = self.pf.find_most_convenient_path(['s1'], ['t'])
         self.assertIsNotNone(cheap, err1)
         self.assertIsNotNone(conv, err2)
-        self.assertEqual(len(cheap['segments']), 2)
-        self.assertEqual(len(conv['segments']), 1)
+        self.assertEqual(len(cheap['segments']), 3)
+        self.assertEqual(len(conv['segments']), 2)
 
     def test_upper_bound_pruning_stays_exact(self):
         """Pruning by a bound must never lose the optimum (tested directly
-        on the capped A*: with a bound well below the optimum it must report
-        'no route', with the exact optimum as the bound it must find it).
-        The top-level driver treats the bound as a hint only — the ride
+        on the exact fare search: with a bound below the optimum it must
+        report 'no route', with the exact optimum as the bound it must find
+        it). The top-level driver treats the bound as a hint only — the ride
         enumeration returns the proven optimum regardless."""
         result, err = self.pf._find_exact_fare_route_capped(
-            ['s1'], ['s3'], upper_bound=7.0, boarding_penalty_zl=0.0,
-            max_boardings=2, max_seconds=5)
+            ['s1'], ['t'], upper_bound=11.0, boarding_penalty_zl=0.0,
+            max_boardings=3, max_seconds=5)
         self.assertIsNone(result)
         self.assertIn('Nie znaleziono', err)
         result, err = self.pf._find_exact_fare_route_capped(
-            ['s1'], ['s3'], upper_bound=8.0, boarding_penalty_zl=0.0,
-            max_boardings=2, max_seconds=5)
+            ['s1'], ['t'], upper_bound=12.0, boarding_penalty_zl=0.0,
+            max_boardings=3, max_seconds=5)
         self.assertIsNotNone(result, err)
-        self.assertAlmostEqual(self._raw_fare(result), 8.0, places=6)
+        self.assertAlmostEqual(self._raw_fare(result), 12.0, places=6)
 
         conv, cerr = self.pf._find_exact_fare_route_capped(
-            ['s1'], ['s3'], upper_bound=10.5, boarding_penalty_zl=2.0,
-            max_boardings=1, max_seconds=5)
+            ['s1'], ['t'], upper_bound=16.5, boarding_penalty_zl=2.0,
+            max_boardings=2, max_seconds=5)
         self.assertIsNone(conv)
         self.assertIn('Nie znaleziono', cerr)
         conv, cerr = self.pf._find_exact_fare_route_capped(
-            ['s1'], ['s3'], upper_bound=11.0, boarding_penalty_zl=2.0,
-            max_boardings=1, max_seconds=5)
+            ['s1'], ['t'], upper_bound=17.0, boarding_penalty_zl=2.0,
+            max_boardings=2, max_seconds=5)
         self.assertIsNotNone(conv, cerr)
-        self.assertAlmostEqual(self._raw_fare(conv), 9.0, places=6)
+        self.assertAlmostEqual(self._raw_fare(conv), 13.0, places=6)
 
     def test_same_line_across_platform_walk_is_one_ticket(self):
         """Regression for ticket semantics: walking between platforms of the
@@ -638,9 +665,9 @@ class TestExactSearchExactness(unittest.TestCase):
             'm5': [edge('m1', 'X', 3.5), edge('m4', 'Y', 3.5)],
         }
         coords = {
-            'm1': (50.000, 19.900), 'm2': (50.032, 19.900),
-            'm3': (50.033, 19.901), 'm4': (50.065, 19.901),
-            'm5': (50.000, 19.935),
+            'm1': (50.0000, 19.9000), 'm2': (50.0314, 19.9000),
+            'm3': (50.03145, 19.9000), 'm4': (50.0628, 19.9000),
+            'm5': (50.0314, 19.9000),
         }
         pf.stop_coords = dict(coords)
         pf.stops_by_id = {
@@ -669,6 +696,99 @@ class TestExactSearchExactness(unittest.TestCase):
         # convenient: 7.50 + 1 boarding (2.00) = 9.50 beats X+Y (8+4=12).
         self.assertAlmostEqual(
             self._raw_fare(conv) + 2.0 * len(conv['segments']), 9.5, places=6)
+
+    def _install_chain(self, legs):
+        """Install a linear chain of `legs` stops/lines, ~2.8 km per leg."""
+        pf = self.pf
+        stops = [f'n{i}' for i in range(legs + 1)]
+        coords = {sid: (50.0 + i * 0.0253, 19.9) for i, sid in enumerate(stops)}
+
+        def edge(to, route):
+            return {'to': to, 'route_id': route, 'distance': 2.8,
+                    'time': 300, 'mode': 'bus', 'headsign': 'Chain'}
+
+        adjacency = {}
+        for i in range(legs):
+            a, b, line = stops[i], stops[i + 1], f'L{i + 1}'
+            adjacency.setdefault(a, []).append(edge(b, line))
+            adjacency.setdefault(b, []).append(edge(a, line))
+        pf.adjacency = adjacency
+        pf.route_shapes = {}
+        pf.routes_by_id = {}
+        pf.stop_pair_routes = {}
+        pf.stop_coords = dict(coords)
+        pf.stops_by_id = {
+            sid: {'id': sid, 'name': sid, 'lat': lat, 'lon': lon,
+                  'code': '', 'mode': 'bus'}
+            for sid, (lat, lon) in coords.items()}
+        pf.stops_grouped = {
+            sid: {'id': sid, 'name': sid, 'lat': lat, 'lon': lon,
+                  'modes': ['bus'],
+                  'platforms': [{'id': sid, 'code': '', 'lat': lat,
+                                 'lon': lon, 'mode': 'bus'}]}
+            for sid, (lat, lon) in coords.items()}
+        pf.stop_to_group = {sid: sid for sid in coords}
+        pf._rebuild_line_index()
+        pf._find_cache.clear()
+        pf._find_cache_bytes = 0
+        return stops
+
+    def test_four_ride_route_is_found_by_enumeration(self):
+        """The F2+B2 composition must cover genuine 4-ride routes (3
+        distinct lines after the first two)."""
+        stops = self._install_chain(4)
+        result, err = self.pf.find_cheapest_path([stops[0]], [stops[-1]])
+        self.assertIsNotNone(result, err)
+        self.assertEqual(len(result['segments']), 4)
+        self.assertAlmostEqual(self._raw_fare(result), 16.0, places=6)
+
+        conv, cerr = self.pf.find_most_convenient_path([stops[0]], [stops[-1]])
+        self.assertIsNotNone(conv, cerr)
+        self.assertAlmostEqual(
+            self._raw_fare(conv) + 2.0 * len(conv['segments']), 24.0,
+            places=6)
+
+    def test_five_ride_route_exact_fallback(self):
+        """A 5-ride-only chain must be handled by the exact fare search
+        (the enumeration covers at most 4 rides and returns nothing)."""
+        import time as _time
+        stops = self._install_chain(5)
+        from_ids = [stops[0]]
+        to_ids = [stops[-1]]
+        frag, _scalar, completed = self.pf._enumerate_ride_bound(
+            from_ids, to_ids, 0.0, _time.monotonic() + 5.0)
+        self.assertIsNone(frag)
+        self.assertTrue(completed)
+
+        result, err = self.pf._find_exact_fare_route_capped(
+            from_ids, to_ids, upper_bound=20.0, boarding_penalty_zl=0.0,
+            max_boardings=5, max_seconds=5)
+        self.assertIsNotNone(result, err)
+        self.assertEqual(len(result['segments']), 5)
+        self.assertAlmostEqual(self._raw_fare(result), 20.0, places=6)
+
+        conv, cerr = self.pf._find_exact_fare_route_capped(
+            from_ids, to_ids, upper_bound=30.0, boarding_penalty_zl=2.0,
+            max_boardings=5, max_seconds=5)
+        self.assertIsNotNone(conv, cerr)
+        self.assertEqual(len(conv['segments']), 5)
+        self.assertAlmostEqual(
+            self._raw_fare(conv) + 2.0 * len(conv['segments']), 30.0,
+            places=6)
+
+        # The driver must use the minimum-ride fallback (not the A*): both
+        # objectives are optimal on the same 5-ride route.
+        cheap, err = self.pf.find_cheapest_path(from_ids, to_ids)
+        self.assertIsNotNone(cheap, err)
+        self.assertEqual(len(cheap['segments']), 5)
+        self.assertAlmostEqual(self._raw_fare(cheap), 20.0, places=6)
+
+        conv, err = self.pf.find_most_convenient_path(from_ids, to_ids)
+        self.assertIsNotNone(conv, err)
+        self.assertEqual(len(conv['segments']), 5)
+        self.assertAlmostEqual(
+            self._raw_fare(conv) + 2.0 * len(conv['segments']), 30.0,
+            places=6)
 
 
 if __name__ == '__main__':

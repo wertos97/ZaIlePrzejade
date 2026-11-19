@@ -189,7 +189,8 @@ function updateEqualityIndicators(cheapResult, convenientResult) {
     }
 
     const equal = (
-        Math.abs(cheapResult.total_distance - convenientResult.total_distance) < 0.001 &&
+        Math.abs((cheapResult.total_billed_distance ?? cheapResult.total_distance) -
+                 (convenientResult.total_billed_distance ?? convenientResult.total_distance)) < 0.001 &&
         (cheapResult.transfers || []).length === (convenientResult.transfers || []).length
     );
 
@@ -460,7 +461,8 @@ function drawRouteOnMap(result) {
             const lastCoord = coordLookup[lastId];
             if (!lastCoord) return;
 
-            const distKm = seg.distance ? seg.distance.toFixed(1) : '0.0';
+            const distKm = (seg.billed_distance ?? seg.distance)
+                ? (seg.billed_distance ?? seg.distance).toFixed(1) : '0.0';
             const costText = seg.cost_regular !== undefined ? `${seg.cost_regular.toFixed(2)} zł` : '? zł';
 
             const icon = L.divIcon({
@@ -566,8 +568,11 @@ function bindStepMapInterplay() {
 }
 
 function displayResult(result) {
+    const billedDistance = result.total_billed_distance ?? result.total_distance;
     document.getElementById('result-distance').textContent =
         `${result.total_distance.toFixed(2)} km`;
+    document.getElementById('result-billed-distance').textContent =
+        `${billedDistance.toFixed(2)} km`;
     const totalTimeText = formatDuration(result.total_time);
     const timeEl = document.getElementById('result-time');
     if (timeEl) {
@@ -585,6 +590,8 @@ function displayResult(result) {
 
     document.getElementById('mobile-result-distance').textContent =
         `${result.total_distance.toFixed(2)} km`;
+    document.getElementById('mobile-result-billed-distance').textContent =
+        `${billedDistance.toFixed(2)} km`;
     const mobileTimeEl = document.getElementById('mobile-result-time');
     if (mobileTimeEl) {
         mobileTimeEl.textContent = totalTimeText ? `· ${totalTimeText}` : '';
@@ -646,18 +653,19 @@ function buildStepsHtml(result) {
             const segCost = segment.cost_regular !== undefined ? segment.cost_regular.toFixed(2) : '?';
             const segTime = formatDuration(segment.time);
             const segTimeText = segTime ? ` · ${segTime}` : '';
+            const billedKm = segment.billed_distance ?? segment.distance;
             html += `
                 <div class="route-step" data-seg-index="${index}">
                     <div class="step-header">
                         <span class="step-title">${modeIcon} Przejazd</span>
-                        <span class="step-distance">${segment.distance.toFixed(2)} km${segTimeText} · ${segCost} zł</span>
+                        <span class="step-distance">${billedKm.toFixed(2)} km${segTimeText} · ${segCost} zł</span>
                     </div>
                     <div class="step-routes">Linie: ${escapeHtml(routeLabel)}</div>
                     <div class="step-detail">
                         ${escapeHtml(firstStopName)} → ${escapeHtml(lastStopName)}
                     </div>
                     <div class="step-detail" style="margin-top: 2px; color: #999;">
-                        ${segment.stops.length} przystanków
+                        ${segment.stops.length} przystanków · trasa ${(segment.distance ?? 0).toFixed(2)} km
                     </div>
                 </div>
             `;

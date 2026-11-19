@@ -10,7 +10,7 @@ Kraków planuje uruchomić **opcjonalną taryfę odległościową** (wcześniej 
 
 👉 **Opłata zależy od odległości.** Zgodnie z tabelą w załączniku do uchwały/Zarządzenia 425/2026 przedziały kilometrowe są liczone **w linii prostej**. Cena przejazdu między tymi samymi przystankami ma być stała, niezależnie od objazdu czy korków. ([ZTP, 23.07.2026](https://ztp.krakow.pl/wszystkie-aktualnosci/kmk/ogloszenie-przetargu-na-wprowadzenie-odleglosciowej-taryfy-biletowej.html); [Głos24, 19.10.2026](https://glos24.pl/bilet-za-kilometry-w-krakowie-ztp-wyjasnia-jak-to-ma-dzialac))
 
-👉 **Kalkulator liczy dystans wzdłuż trasy GTFS** (`shape_dist_traveled`), a nie w linii prostej. To przybliżenie: trasa bywa dłuższa od linii prostej, więc pokazana cena może być **zawyżona** względem oficjalnego systemu. Ceny traktuj jako poglądowe.
+👉 **Kalkulator liczy dystans tak jak oficjalna taryfa — w linii prostej.** Dla każdego przejazdu bierzemy odległość między przystankiem wsiadania i wysiadania, więc cena nie zależy od objazdu ani korków. Dystans wzdłuż trasy GTFS pokazujemy osobno jako informację. To nadal model: oficjalny system może zaokrąglać odległość w inny sposób, dlatego ceny traktuj jako szacunek.
 
 ## Nowy cennik
 
@@ -26,9 +26,9 @@ Kraków planuje uruchomić **opcjonalną taryfę odległościową** (wcześniej 
 **Kalkulator pokazuje dwie interpretacje:**
 
 - **A** — każdy przejazd pojazdem to osobny bilet liczony od zera. To odpowiada **podstawowej wersji** systemu (pierwsze miesiące).
-- **B** — cała podróż jako jeden bilet za łączny dystans. To **hipotetyczna interpretacja przyszłej wersji** z łączeniem przesiadek; szczegóły nie są znane.
+- **B** — cała podróż jako jeden bilet za odległość w linii prostej od pierwszego do ostatniego przystanku. To **hipotetyczna interpretacja przyszłej wersji** z łączeniem przesiadek; szczegóły nie są znane.
 
-Przykład: 2 km tramwajem (4 zł) + 1 km autobusem (4 zł) = **8 zł** w A; w B 3 km = 4 zł. Trasy są wyszukiwane pod A; B liczone dla tej samej trasy.
+Przykład: 2 km tramwajem (4 zł) + 1 km autobusem (4 zł) = **8 zł** w A. W B liczy się linia prosta od pierwszego do ostatniego przystanku — jeśli wynosi 3 km, bilet kosztuje 4 zł. Trasy są wyszukiwane pod A; B liczone dla tej samej trasy.
 
 ## Jak ma działać oficjalny system
 
@@ -51,7 +51,7 @@ Aplikacja pokazuje **dwie trasy** i obie mają **gwarancję najniższej możliwe
 - 💰 **Tania trasa** — najtańsze łączne bilety,
 - 🛋️ **Wygodna trasa** — mniej przesiadek (każde wsiadanie „kosztuje" w cenniku algorytmu 2 zł, więc algorytm balansuje cenę i wygodę).
 
-Gwarancja dotyczy modelu kalkulatora (dystans trasy GTFS, A), nie oficjalnego systemu — ten ma liczyć linię prostą i przez pierwsze miesiące osobno za każdy pojazd.
+Gwarancja dotyczy modelu kalkulatora (oficjalna linia prosta za każdy przejazd, Interpretacja A), nie oficjalnego systemu — ten może stosować inne zaokrąglenia i przez pierwsze miesiące rozlicza osobno każdy pojazd.
 
 ---
 

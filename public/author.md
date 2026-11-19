@@ -6,6 +6,8 @@ Aplikacja została stworzona w celu obliczania szacunkowych kosztów podróży k
 
 Dane linii i przystanków pochodzą z ogólnodostępnych rozkładów GTFS publikowanych przez ZTP Kraków (wersja {{GTFS_VERSION}} — po publikacji nowego rozkładu dane są odświeżane).
 
+Przy wycenie stosuję oficjalną zasadę taryfy: odległość w linii prostej między przystankiem wsiadania i wysiadania każdego przejazdu. Dystans wzdłuż rozkładowej trasy pokazuję dodatkowo jako informację.
+
 ---
 
 - **Kod źródłowy:** [github.com/wertos97/ZaIlePrzejade](https://github.com/wertos97/ZaIlePrzejade)

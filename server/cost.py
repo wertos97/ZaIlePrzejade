@@ -76,7 +76,11 @@ def calculate_route_cost(segments: list[dict]) -> tuple[float, float]:
     total_regular = 0.0
     total_reduced = 0.0
     for seg in segments:
-        reg, red = calculate_cost(seg.get('distance', 0.0))
+        # Prefer the OFFICIAL tariff distance (straight line between the
+        # ride's boarding and alighting platforms) when the segment carries
+        # it; fall back to the GTFS distance for legacy callers/tests.
+        distance = seg.get('billed_distance', seg.get('distance', 0.0))
+        reg, red = calculate_cost(distance)
         total_regular += reg
         total_reduced += red
     # Apply daily limit

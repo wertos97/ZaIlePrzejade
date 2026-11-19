@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Za Ile Przejadę? - Kalkulator planowanej taryfy odległościowej w Krakowie (2027)</title>
-    <meta name="description" content="Kalkulator planowanej, opcjonalnej taryfy odległościowej w Krakowie (2027). Sprawdź szacunkowy koszt przejazdu tramwajem lub autobusem według cennika ZTP. Oficjalny dystans liczony jest w linii prostej; kalkulator używa trasy GTFS, więc cena jest poglądowa.">
+    <meta name="description" content="Kalkulator planowanej, opcjonalnej taryfy odległościowej w Krakowie (2027). Sprawdź szacunkowy koszt przejazdu tramwajem lub autobusem według cennika ZTP. Cena liczona w linii prostej między przystankami — zgodnie z oficjalną zasadą taryfy.">
     <meta name="theme-color" content="#1a5276">
     <!-- iOS PWA support -->
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -40,7 +40,7 @@
         "@type": "WebApplication",
         "name": "Za Ile Przejadę?",
         "url": "https://zaileprzeja.de/",
-        "description": "Kalkulator planowanej, opcjonalnej taryfy odległościowej w Krakowie (2027). Szacunkowy koszt przejazdu według cennika ZTP; oficjalny dystans w linii prostej, kalkulator używa trasy GTFS.",
+        "description": "Kalkulator planowanej, opcjonalnej taryfy odległościowej w Krakowie (2027). Szacunkowy koszt przejazdu według cennika ZTP; dystans liczony w linii prostej, zgodnie z oficjalną zasadą taryfy.",
         "dateModified": "2026-11-19",
         "applicationCategory": "TravelApplication",
         "operatingSystem": "Any",
@@ -148,7 +148,7 @@
                     <span id="price-daily">20,00 zł / 10,00 zł</span>
                 </div>
                 <div class="price-note">
-                    Założenie kalkulatora: w podstawowej wersji systemu każdy przejazd (między przesiadkami) to osobny bilet liczony od zera — tak ma działać przez pierwsze miesiące. Łączenie przesiadek ma wejść później. Dystans: trasa GTFS; oficjalna taryfa liczy linię prostą, więc cena może być zawyżona.
+                    Założenie kalkulatora: w podstawowej wersji systemu każdy przejazd (między przesiadkami) to osobny bilet liczony od zera — tak ma działać przez pierwsze miesiące. Łączenie przesiadek ma wejść później. Dystans liczymy w linii prostej między przystankiem wsiadania i wysiadania — zgodnie z oficjalną taryfą.
                 </div>
             </div>
         </div>
@@ -170,8 +170,12 @@
             <div id="route-result">
                 <div class="result-summary">
                     <div class="result-row">
-                        <span>Dystans:</span>
+                        <span>Dystans trasy:</span>
                         <span id="result-distance">--</span>
+                    </div>
+                    <div class="result-row">
+                        <span>Dystans taryfy:</span>
+                        <span id="result-billed-distance">--</span>
                     </div>
                     <div class="result-row">
                         <span>Czas przejazdu:</span>
@@ -181,13 +185,13 @@
                         <div class="fare-title"><span>Cena</span><span class="fare-title-sub">normalny / ulgowy</span></div>
                         <div class="fare-row">
                             <span class="fare-label">Interpretacja A
-                                <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera — tak ma działać podstawowa wersja systemu przez pierwsze miesiące. Cena to suma przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod tę interpretację. Dystans to trasa GTFS, nie linia prosta.">ⓘ</span>
+                                <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera — tak ma działać podstawowa wersja systemu przez pierwsze miesiące. Cena to suma przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod tę interpretację. Dystans każdego przejazdu liczymy w linii prostej — zgodnie z oficjalną taryfą.">ⓘ</span>
                             </span>
                             <span class="fare-values" id="result-fare-a">--</span>
                         </div>
                         <div class="fare-row">
                             <span class="fare-label">Interpretacja B
-                                <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za łączny dystans trasy. To hipotetyczna wersja przyszłej taryfy z łączeniem przesiadek; szczegóły nie są opublikowane. Dystans to trasa GTFS, nie linia prosta.">ⓘ</span>
+                                <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za odległość w linii prostej od pierwszego do ostatniego przystanku. To hipotetyczna wersja przyszłej taryfy z łączeniem przesiadek; szczegóły nie są opublikowane.">ⓘ</span>
                             </span>
                             <span class="fare-values" id="result-fare-b">--</span>
                         </div>
@@ -229,8 +233,12 @@
         </div>
         <div class="result-summary">
             <div class="result-row">
-                <span>Dystans</span>
+                <span>Dystans trasy</span>
                 <span id="mobile-result-distance">--</span>
+            </div>
+            <div class="result-row">
+                <span>Dystans taryfy</span>
+                <span id="mobile-result-billed-distance">--</span>
             </div>
             <div class="result-row">
                 <span>Czas przejazdu</span>
@@ -240,13 +248,13 @@
                 <div class="fare-title"><span>Cena</span><span class="fare-title-sub">normalny / ulgowy</span></div>
                 <div class="fare-row">
                     <span class="fare-label">Interpretacja A
-                        <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera — tak ma działać podstawowa wersja systemu przez pierwsze miesiące. Cena to suma przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod tę interpretację. Dystans to trasa GTFS, nie linia prosta.">ⓘ</span>
+                        <span class="interp-info" tabindex="0" data-tip="Interpretacja A: każdy przejazd między przesiadkami to osobny bilet liczony od zera — tak ma działać podstawowa wersja systemu przez pierwsze miesiące. Cena to suma przejazdów (z limitem 24-godzinnym). Trasy są wyszukiwane pod tę interpretację. Dystans każdego przejazdu liczymy w linii prostej — zgodnie z oficjalną taryfą.">ⓘ</span>
                     </span>
                     <span class="fare-values" id="mobile-result-fare-a">--</span>
                 </div>
                 <div class="fare-row">
                     <span class="fare-label">Interpretacja B
-                        <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za łączny dystans trasy. To hipotetyczna wersja przyszłej taryfy z łączeniem przesiadek; szczegóły nie są opublikowane. Dystans to trasa GTFS, nie linia prosta.">ⓘ</span>
+                        <span class="interp-info" tabindex="0" data-tip="Interpretacja B: cała podróż jako jeden bilet — cena za odległość w linii prostej od pierwszego do ostatniego przystanku. To hipotetyczna wersja przyszłej taryfy z łączeniem przesiadek; szczegóły nie są opublikowane.">ⓘ</span>
                     </span>
                     <span class="fare-values" id="mobile-result-fare-b">--</span>
                 </div>

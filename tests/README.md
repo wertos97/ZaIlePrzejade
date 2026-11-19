@@ -1,6 +1,6 @@
 # Testy
 
-Testy weryfikują logikę wyliczania cen oraz wyszukiwania tras (algorytm A*) i działanie endpointów HTTP.
+Testy weryfikują logikę wyliczania cen oraz wyszukiwania tras (dokładne enumeracje, awaryjne przeszukiwanie i fallback minimalnej liczby przejazdów) oraz działanie endpointów HTTP.
 
 ## Uruchamianie
 
@@ -22,19 +22,22 @@ Wymagania:
     limit pojedynczego biletu 9/4,50 zł, zaokrąglanie w górę częściowego segmentu,
     dystans ≤ 0 → 0).
   - `calculate_route_cost(segments)` — suma kosztów segmentów z limitem dziennym
-    20/10 zł; pusty zestaw lub brak `distance` → 0.
+    20/10 zł; segment z `billed_distance` jest wyceniany z niego (oficjalna linia
+    prosta), inaczej z `distance`; pusty zestaw lub brak dystansu → 0.
 
 - `test_pathfinding.py` — jednostkowe (haversine) i integracyjne testy `server.pathfinding`:
   - poprawność i symetria `haversine_km`;
   - `find_shortest_path` zwraca `(result, error)`;
-  - `find_route_between_groups` zwraca trójkę `(short, convenient, cheap)` dla
-    `mode='both'` i parę dla pojedynczego trybu;
-  - **tania trasa nigdy nie jest droższa niż krótka**
-    (`cheap.cost_regular <= short.cost_regular`);
+  - `find_route_between_groups` zwraca parę `(convenient, cheap)` dla
+    `mode='both'` i pojedynczą parę dla wybranego trybu;
+  - dokładność obu trybów względem brute-force oracle liczonego **w linii
+    prostej** (w tym trasy 4-przejazdowe i fallback 5+ przejazdów);
   - trasa do tego samego przystanka → dystans 0;
   - **unikalność grup przystanków** na trasie i pozycje rzeczywistych peronów;
-  - każdy segment niesie `stop_positions`, a dystans segmentu = suma rzeczywistych
-    krawędzi GTFS;
+  - każdy segment niesie `stop_positions`, `distance` = suma rzeczywistych
+    krawędzi GTFS, a `billed_distance`/`cost_regular` = oficjalna linia prosta
+    między grupami przystanków;
+  - cache sqlite: round-trip, odchudzony payload (bez `stop_positions`);
   - nieistniejąca grupa → błąd.
 
 - `test_handler.py` — end-to-end HTTP: podnosi prawdziwy `ThreadedHTTPServer` na

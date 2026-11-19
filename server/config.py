@@ -78,10 +78,6 @@ MAX_PLATFORMS_TO_TRY_PER_GROUP = 2
 # Transfer time (5 minutes in seconds)
 TRANSFER_TIME_SECONDS = 300
 
-# Price calculation constants (also in pricing.json)
-ACC_CAP_KM = 8.5  # beyond this distance, riding is free (daily cap)
-PRICE_LOOKUP_MAX_KM = 20.0
-
 # ============================================================
 # Tile Proxy (privacy)
 # ============================================================
@@ -187,4 +183,4 @@ PRICING_PATH = os.path.join(BASE_DIR, 'pricing.json')
 # ============================================================
 # Application Version
 # ============================================================
-APP_VERSION = "1.8.1"
+APP_VERSION = "1.9.0"
