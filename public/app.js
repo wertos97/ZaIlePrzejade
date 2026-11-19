@@ -88,7 +88,7 @@ function updateMaintenanceBanner(active, progress, phase) {
         banner.setAttribute('role', 'status');
         document.body.appendChild(banner);
     }
-    var label = 'Dane są obecnie aktualizowane — wyszukiwanie tras jest niedostępne.';
+    var label = 'Dane są obecnie aktualizowane, wyszukiwanie tras jest niedostępne.';
     if (phase) label += ' ' + phase + '.';
     var pct = Math.max(0, Math.min(100, Math.round(progress || 0)));
     banner.innerHTML = '';
@@ -777,6 +777,10 @@ function parseMarkdown(md) {
     html = html.replace(/\n\n/g, '</p><p>');
     // Single newline to <br>
     html = html.replace(/\n/g, '<br>');
+    // Remove <br> that only separates list items or sits at list edges.
+    html = html.replace(/<\/li><br>\s*<li>/g, '</li><li>');
+    html = html.replace(/<ul><br>/g, '<ul>');
+    html = html.replace(/<br><\/ul>/g, '</ul>');
     // Wrap in paragraph
     html = '<p>' + html + '</p>';
     // Clean up empty paragraphs
@@ -796,8 +800,11 @@ function parseMarkdown(md) {
 // Modal
 // ============================================================
 
+var lastModalFocus = null;
+
 async function showModal(title, file) {
     try {
+        lastModalFocus = document.activeElement;
         var response = await fetch('/' + file);
         if (!response.ok) {
             throw new Error('HTTP ' + response.status);
@@ -811,6 +818,7 @@ async function showModal(title, file) {
         document.getElementById('modal-overlay').classList.remove('hidden');
         document.getElementById('modal').style.display = 'flex';
         document.getElementById('modal').classList.remove('hidden');
+        document.getElementById('modal-close').focus();
     } catch (error) {
         console.error('Error loading modal content:', error);
     }
@@ -819,6 +827,9 @@ async function showModal(title, file) {
 function closeModal() {
     document.getElementById('modal-overlay').classList.add('hidden');
     document.getElementById('modal').classList.add('hidden');
+    if (lastModalFocus && typeof lastModalFocus.focus === 'function') {
+        lastModalFocus.focus();
+    }
 }
 
 // ============================================================

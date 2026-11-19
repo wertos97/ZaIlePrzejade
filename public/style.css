@@ -5,6 +5,10 @@
     box-sizing: border-box;
 }
 
+:root {
+    --header-h: 52px;
+}
+
 .hidden {
     display: none !important;
 }
@@ -27,8 +31,8 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    height: 52px;
-    min-height: 52px;
+    height: var(--header-h);
+    min-height: var(--header-h);
 }
 
 .header-left {
@@ -75,9 +79,9 @@ body {
 }
 
 .btn-header {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.18);
     color: white;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.35);
     border-radius: 6px;
     padding: 6px 12px;
     font-size: 0.8em;
@@ -88,13 +92,18 @@ body {
 }
 
 .btn-header:hover {
-    background: rgba(255, 255, 255, 0.25);
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.btn-header:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
 }
 
 .sidebar {
     position: fixed;
     left: 0;
-    top: 52px;
+    top: var(--header-h);
     bottom: 0;
     width: 340px;
     background: white;
@@ -109,7 +118,7 @@ body {
 .main-content {
     position: fixed;
     left: 340px;
-    top: 52px;
+    top: var(--header-h);
     right: 0;
     bottom: 0;
     z-index: 800;
@@ -129,7 +138,7 @@ body {
 .right-panel {
     position: fixed;
     right: 0;
-    top: 52px;
+    top: var(--header-h);
     bottom: 0;
     width: 340px;
     background: white;
@@ -330,7 +339,7 @@ body {
 
 .btn-mode .mode-desc {
     font-size: 0.7em;
-    color: #888;
+    color: #666;
     margin-top: 2px;
 }
 
@@ -542,7 +551,7 @@ body {
     font-weight: 400;
     text-transform: none;
     letter-spacing: 0;
-    color: #999;
+    color: #666;
 }
 
 .fare-row {
@@ -785,7 +794,7 @@ body {
 }
 
 .route-step .step-header .step-distance {
-    color: #888;
+    color: #555;
     font-size: 0.8em;
     font-weight: 500;
 }
@@ -843,6 +852,11 @@ body {
     font-size: 1.1em;
     font-weight: 600;
     color: #1a5276;
+    margin: 0;
+}
+
+.modal-body h1 {
+    display: none;
 }
 
 .modal-close {
@@ -850,10 +864,17 @@ body {
     border: none;
     font-size: 1.2em;
     cursor: pointer;
-    color: #888;
+    color: #666;
     padding: 4px 8px;
+    min-width: 44px;
+    min-height: 44px;
     border-radius: 4px;
     transition: background 0.2s;
+}
+
+.modal-close:focus-visible {
+    outline: 2px solid #2874a6;
+    outline-offset: 2px;
 }
 
 .modal-close:hover {
@@ -1073,7 +1094,7 @@ body {
 
 .server-banner {
     position: fixed;
-    top: 52px;
+    top: var(--header-h);
     left: 0;
     right: 0;
     background: #e74c3c;
@@ -1106,7 +1127,7 @@ body {
 /* Maintenance mode: persistent, non-closable banner with progress */
 .maintenance-banner {
     position: fixed;
-    top: 52px;
+    top: var(--header-h);
     left: 0;
     right: 0;
     background: #7d5a00;
@@ -1154,13 +1175,17 @@ body.maintenance .btn-mode-sm {
    Mobile Responsive
    ============================================================ */
 @media (max-width: 768px) {
+    :root {
+        --header-h: 96px;
+    }
+
     .header {
         position: fixed;
         top: 0;
         left: 0;
         right: 0;
-        height: calc(72px + env(safe-area-inset-top));
-        min-height: calc(72px + env(safe-area-inset-top));
+        height: calc(var(--header-h) + env(safe-area-inset-top));
+        min-height: calc(var(--header-h) + env(safe-area-inset-top));
         padding: calc(8px + env(safe-area-inset-top)) 10px 6px;
         flex-direction: column;
         gap: 4px;
@@ -1188,10 +1213,14 @@ body.maintenance .btn-mode-sm {
 
     .btn-header {
         flex: 1;
-        padding: 5px 4px;
-        font-size: 0.65em;
+        min-height: 44px;
+        padding: 8px 2px;
+        font-size: 0.7em;
         text-align: center;
         border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .main-content {
@@ -1204,7 +1233,7 @@ body.maintenance .btn-mode-sm {
 
     #map {
         position: absolute;
-        top: calc(72px + env(safe-area-inset-top));
+        top: calc(var(--header-h) + env(safe-area-inset-top));
         left: 0;
         right: 0;
         bottom: 0;
@@ -1233,11 +1262,12 @@ body.maintenance .btn-mode-sm {
         align-items: center;
         justify-content: center;
         width: 100%;
+        min-height: 44px;
         padding: 10px 0;
         background: white;
         border: none;
         cursor: pointer;
-        color: #999;
+        color: #666;
         transition: color 0.2s;
         flex-shrink: 0;
         position: sticky;
@@ -1268,7 +1298,7 @@ body.maintenance .btn-mode-sm {
     }
 
     .sidebar.expanded {
-        top: calc(72px + env(safe-area-inset-top));
+        top: calc(var(--header-h) + env(safe-area-inset-top));
         max-height: 2000px;
     }
 
@@ -1294,6 +1324,7 @@ body.maintenance .btn-mode-sm {
     .search-box input {
         padding: 6px 8px;
         font-size: 0.85em;
+        min-height: 44px;
     }
 
     .search-results {
@@ -1301,8 +1332,8 @@ body.maintenance .btn-mode-sm {
     }
 
     .btn-swap {
-        width: 28px;
-        height: 28px;
+        width: 44px;
+        height: 44px;
         font-size: 0.95em;
     }
 
@@ -1341,6 +1372,7 @@ body.maintenance .btn-mode-sm {
     .btn-clear {
         padding: 8px;
         font-size: 0.85em;
+        min-height: 44px;
     }
 
     .loading-indicator {
@@ -1371,7 +1403,7 @@ body.maintenance .btn-mode-sm {
     }
 
     .mobile-result.expanded {
-        top: calc(72px + env(safe-area-inset-top));
+        top: calc(var(--header-h) + env(safe-area-inset-top));
         max-height: 2000px;
     }
 
@@ -1388,11 +1420,12 @@ body.maintenance .btn-mode-sm {
         align-items: center;
         justify-content: center;
         width: 100%;
+        min-height: 44px;
         padding: 10px 0;
         background: white;
         border: none;
         cursor: pointer;
-        color: #999;
+        color: #666;
         transition: color 0.2s;
         flex-shrink: 0;
         -webkit-tap-highlight-color: transparent;
@@ -1423,6 +1456,17 @@ body.maintenance .btn-mode-sm {
         grid-template-columns: 1fr 1fr;
         gap: 6px;
         margin-bottom: 10px;
+        align-items: stretch;
+    }
+
+    .mobile-result .result-fares {
+        order: -1;
+        grid-column: 1 / -1;
+        margin: 0 0 6px;
+    }
+
+    .mobile-result .result-fares .fare-row {
+        flex-wrap: wrap;
     }
 
     .mobile-result .result-row {
@@ -1434,16 +1478,18 @@ body.maintenance .btn-mode-sm {
         flex-direction: column;
         align-items: flex-start;
         gap: 2px;
+        min-width: 0;
     }
 
     .mobile-result .result-row span:first-child {
         font-size: 0.75em;
-        color: #888;
+        color: #666;
     }
 
     .mobile-result .result-row span:last-child {
         font-size: 1.1em;
         font-weight: 600;
+        overflow-wrap: anywhere;
     }
 
     .mobile-result .route-steps {
@@ -1485,6 +1531,7 @@ body.maintenance .btn-mode-sm {
     .btn-mode-sm {
         flex: 1;
         padding: 8px 6px;
+        min-height: 44px;
         border: 2px solid #ddd;
         border-radius: 8px;
         background: #fafafa;
@@ -1525,8 +1572,8 @@ body.maintenance .btn-mode-sm {
     }
 
     .btn-mode-sm-close {
-        width: 30px;
-        height: 30px;
+        width: 44px;
+        height: 44px;
         border: 2px solid #e74c3c;
         border-radius: 8px;
         background: #fef2f2;
@@ -1569,7 +1616,7 @@ body.maintenance .btn-mode-sm {
     .loading-overlay {
         display: none;
         position: fixed;
-        top: calc(72px + env(safe-area-inset-top));
+        top: calc(var(--header-h) + env(safe-area-inset-top));
         left: 0;
         right: 0;
         bottom: 0;

@@ -152,7 +152,7 @@ async function findRoute() {
             if (result[otherMode]) {
                 const names = { cheap: 'Tania', convenient: 'Wygodna' };
                 showToast('Tryb "' + names[state.routeMode] + '" przekroczył '
-                    + 'czas wyszukiwania (30 s) — pokazuję trasę "'
+                    + 'czas wyszukiwania (30 s), pokazuję trasę "'
                     + names[otherMode] + '".', 6000, 'warning');
                 setRouteMode(otherMode);
                 return;
@@ -576,7 +576,7 @@ function displayResult(result) {
     const totalTimeText = formatDuration(result.total_time);
     const timeEl = document.getElementById('result-time');
     if (timeEl) {
-        timeEl.textContent = totalTimeText ? `· ${totalTimeText}` : '';
+        timeEl.textContent = totalTimeText || '';
     }
     // Official first-phase fare: each ride is a separate ticket.
     const farePair = (reg, red) =>
@@ -591,7 +591,7 @@ function displayResult(result) {
         `${billedDistance.toFixed(2)} km`;
     const mobileTimeEl = document.getElementById('mobile-result-time');
     if (mobileTimeEl) {
-        mobileTimeEl.textContent = totalTimeText ? `· ${totalTimeText}` : '';
+        mobileTimeEl.textContent = totalTimeText || '';
     }
     document.getElementById('mobile-result-fare').textContent = fareA;
 
@@ -660,7 +660,7 @@ function buildStepsHtml(result) {
                     <div class="step-detail">
                         ${escapeHtml(firstStopName)} → ${escapeHtml(lastStopName)}
                     </div>
-                    <div class="step-detail" style="margin-top: 2px; color: #999;">
+                    <div class="step-detail" style="margin-top: 2px; color: #666;">
                         ${segment.stops.length} przystanków · trasa ${(segment.distance ?? 0).toFixed(2)} km
                     </div>
                 </div>

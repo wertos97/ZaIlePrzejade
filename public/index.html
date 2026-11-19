@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Za Ile Przejadę? - Kalkulator planowanej taryfy odległościowej w Krakowie (2027)</title>
-    <meta name="description" content="Kalkulator planowanej, opcjonalnej taryfy odległościowej w Krakowie (2027). Sprawdź szacunkowy koszt przejazdu tramwajem lub autobusem według cennika ZTP. Cena liczona w linii prostej między przystankami — zgodnie z oficjalną zasadą taryfy.">
+    <meta name="description" content="Kalkulator planowanej, opcjonalnej taryfy odległościowej w Krakowie (2027). Sprawdź szacunkowy koszt przejazdu tramwajem lub autobusem według cennika ZTP. Cena liczona w linii prostej A→B między przystankami, zgodnie z oficjalną zasadą taryfy.">
     <meta name="theme-color" content="#1a5276">
     <!-- iOS PWA support -->
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -14,7 +14,7 @@
     <link rel="canonical" href="https://zaileprzeja.de/">
     <!-- Open Graph -->
     <meta property="og:title" content="Za Ile Przejadę? - Kalkulator planowanej taryfy odległościowej w Krakowie (2027)">
-    <meta property="og:description" content="Kalkulator planowanej taryfy odległościowej w Krakowie (2027) — szacunkowy koszt przejazdu, cennik ZTP, dystans A→B w linii prostej.">
+    <meta property="og:description" content="Kalkulator planowanej taryfy odległościowej w Krakowie (2027). Szacunkowy koszt przejazdu, cennik ZTP, dystans A→B w linii prostej.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://zaileprzeja.de/">
     <meta property="og:image" content="https://zaileprzeja.de/og-image.svg">
@@ -25,7 +25,7 @@
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Za Ile Przejadę? - Kalkulator planowanej taryfy odległościowej w Krakowie (2027)">
-    <meta name="twitter:description" content="Kalkulator planowanej taryfy odległościowej w Krakowie (2027) — szacunkowy koszt przejazdu, cennik ZTP, dystans A→B w linii prostej.">
+    <meta name="twitter:description" content="Kalkulator planowanej taryfy odległościowej w Krakowie (2027). Szacunkowy koszt przejazdu, cennik ZTP, dystans A→B w linii prostej.">
     <meta name="twitter:image" content="https://zaileprzeja.de/og-image.svg">
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -65,15 +65,15 @@
                 <img src="/logo.svg" alt="Logo" class="header-logo">
                 <div>
                     <h1>Za Ile Przejadę?</h1>
-                    <p class="subtitle">Kalkulator planowanej taryfy odległościowej — Kraków 2027</p>
+                    <p class="subtitle">Kalkulator planowanej taryfy odległościowej, Kraków 2027</p>
                 </div>
             </div>
         </div>
         <div class="header-right">
-            <button class="btn-header" id="btn-info" aria-label="Informacja o aplikacji">ℹ️ Info</button>
-            <button class="btn-header" id="btn-warning" aria-label="Ważna uwaga o aplikacji">⚠️ Uwaga</button>
-            <button class="btn-header" id="btn-privacy" aria-label="Prywatność">🔒 Prywatność</button>
-            <button class="btn-header" id="btn-author" aria-label="Informacje o autorze">✍️ Autor</button>
+            <button class="btn-header" id="btn-info" aria-label="Informacja o aplikacji">Info</button>
+            <button class="btn-header" id="btn-warning" aria-label="Ważna uwaga o aplikacji">Uwaga</button>
+            <button class="btn-header" id="btn-privacy" aria-label="Prywatność">Prywatność</button>
+            <button class="btn-header" id="btn-author" aria-label="Informacje o autorze">Autor</button>
         </div>
     </header>
 
@@ -103,7 +103,7 @@
                 </div>
             </div>
             <div class="mode-selector">
-                <label>Tryb nawigacji:</label>
+                <label>Wariant trasy:</label>
                 <div class="mode-buttons">
                     <button class="btn-mode btn-mode-active" id="mode-cheap" data-mode="cheap">
                         <span class="mode-icon">💸</span>
@@ -129,7 +129,7 @@
 
         <!-- Pricing Info Panel -->
         <div class="panel pricing-panel">
-            <h2>Cennik (nowy system)</h2>
+            <h2>Cennik</h2>
             <div class="pricing-info">
                 <div class="price-row">
                     <span>Do 3,5 km</span>
@@ -148,7 +148,7 @@
                     <span id="price-daily">20,00 zł / 10,00 zł</span>
                 </div>
                 <div class="price-note">
-                    Oficjalny model (pierwszy etap): każdy pojazd to osobny bilet liczony od zera. Dystans każdego przejazdu liczymy w linii prostej A→B między przystankiem wsiadania i wysiadania — zgodnie z oficjalną taryfą. Łączenie przesiadek ma wejść później; szczegóły nie są opublikowane.
+                    Pierwszy etap: każdy pojazd to osobny bilet. Dystans A→B w linii prostej, zgodnie z oficjalną taryfą. Przesiadki mają być łączone później.
                 </div>
             </div>
         </div>
@@ -185,7 +185,7 @@
                         <div class="fare-title"><span>Cena</span><span class="fare-title-sub">normalny / ulgowy</span></div>
                         <div class="fare-row">
                             <span class="fare-label">Taryfa odległościowa
-                                <span class="interp-info" tabindex="0" data-tip="Oficjalny pierwszy etap: każdy przejazd między przesiadkami to osobny bilet liczony od zera. Cena to suma przejazdów (z limitem 24-godzinnym). Dystans każdego przejazdu liczymy w linii prostej A→B między przystankiem wsiadania i wysiadania — zgodnie z oficjalną taryfą. Łączenie przesiadek ma wejść później; szczegóły nie są opublikowane.">ⓘ</span>
+                                <span class="interp-info" tabindex="0" data-tip="Pierwszy etap: każdy przejazd to osobny bilet. Cenę liczymy z odległości A→B w linii prostej. Przesiadki mają być łączone później; szczegóły nie są znane.">ⓘ</span>
                             </span>
                             <span class="fare-values" id="result-fare">--</span>
                         </div>
@@ -242,7 +242,7 @@
                 <div class="fare-title"><span>Cena</span><span class="fare-title-sub">normalny / ulgowy</span></div>
                 <div class="fare-row">
                     <span class="fare-label">Taryfa odległościowa
-                        <span class="interp-info" tabindex="0" data-tip="Oficjalny pierwszy etap: każdy przejazd między przesiadkami to osobny bilet liczony od zera. Cena to suma przejazdów (z limitem 24-godzinnym). Dystans każdego przejazdu liczymy w linii prostej A→B między przystankiem wsiadania i wysiadania — zgodnie z oficjalną taryfą. Łączenie przesiadek ma wejść później; szczegóły nie są opublikowane.">ⓘ</span>
+                        <span class="interp-info" tabindex="0" data-tip="Pierwszy etap: każdy przejazd to osobny bilet. Cenę liczymy z odległości A→B w linii prostej. Przesiadki mają być łączone później; szczegóły nie są znane.">ⓘ</span>
                     </span>
                     <span class="fare-values" id="mobile-result-fare">--</span>
                 </div>
@@ -279,10 +279,10 @@
 
     <!-- Modal overlay -->
     <div class="modal-overlay hidden" id="modal-overlay"></div>
-    <div class="modal hidden" id="modal">
+    <div class="modal hidden" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div class="modal-header">
-            <span class="modal-title" id="modal-title"></span>
-            <button class="modal-close" id="modal-close">✕</button>
+            <h2 class="modal-title" id="modal-title"></h2>
+            <button class="modal-close" id="modal-close" aria-label="Zamknij">✕</button>
         </div>
         <div class="modal-body" id="modal-body"></div>
     </div>
