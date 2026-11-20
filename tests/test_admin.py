@@ -110,6 +110,19 @@ class TestAdminPanel(unittest.TestCase):
         status, _ = self._login('definitely-wrong')
         self.assertEqual(status, 401)
 
+    def test_panel_uses_csp_safe_controls(self):
+        """Inline onclick handlers are blocked by the panel's nonce CSP."""
+        status, _, body = self._get('/panel')
+        self.assertEqual(status, 200)
+        html = body.decode('utf-8')
+        self.assertNotIn('onclick=', html)
+        self.assertNotIn('doLogin', html)
+        self.assertIn('id="login-form"', html)
+        self.assertIn('id="login-btn"', html)
+        self.assertIn("getElementById('login-form').addEventListener", html)
+        self.assertIn("getElementById('logout').addEventListener", html)
+        self.assertIn('aria-live="polite"', html)
+
     def test_login_correct_then_stats(self):
         status, headers = self._login('test-pass-123')
         self.assertEqual(status, 200)

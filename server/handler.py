@@ -1779,6 +1779,8 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
         rc_count, rc_max, rc_bytes, rc_max_bytes = pathfinding.route_cache_info()
         cheap_searches, cheap_timeouts = pathfinding.cheap_search_info()
         rc_disk, rc_computed = pathfinding.route_cache_origin_info()
+        with _route_json_lock:
+            route_json_entries = len(_route_json_cache)
         active = 0
         server = getattr(self, 'server', None)
         if server is not None:
@@ -1801,6 +1803,10 @@ class MPKRequestHandler(SimpleHTTPRequestHandler):
             'route_busy': _route_busy,
             'routes_from_disk': rc_disk,
             'routes_computed': rc_computed,
+            'route_json_cache': {
+                'entries': route_json_entries,
+                'max': _ROUTE_JSON_CACHE_MAX,
+            },
             'memory_limit_mb': MEMORY_LIMIT_MB,
             'cache_db_bytes': pathfinding.cache_db_size(),
             'sweep_lru': pathfinding.sweep_cache_info(),

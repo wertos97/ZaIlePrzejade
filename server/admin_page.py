@@ -71,13 +71,24 @@ PANEL_PAGE = """<!DOCTYPE html>
   .pill.amber { background: #fef3e2; color: #b26a00; }
   .pill.red { background: #fdecea; color: #c0392b; }
   .pill.gray { background: #eef1f4; color: #667; }
-  .scrollbox { max-height: 260px; overflow-y: auto; }
+  .scrollbox { max-height: 260px; overflow: auto; }
   details { margin: 4px 0; }
   summary { cursor: pointer; color: #2A5BD5; font-size: .85rem;
             padding: 4px 0; user-select: none; }
-  #logout { background: none; border: 1px solid #ccd; color: #567;
+  #logout, #refresh { background: none; border: 1px solid #ccd; color: #567;
             border-radius: 8px; padding: 6px 12px; cursor: pointer;
             font-size: .8rem; }
+  .sub button { margin-left: 6px; }
+  .sub-actions { display: inline-flex; gap: 6px; margin-left: 6px;
+                 vertical-align: middle; }
+  .sub-actions button { margin-left: 0; }
+  a:focus-visible, button:focus-visible, input:focus-visible,
+  summary:focus-visible { outline: 3px solid #2A5BD5; outline-offset: 2px; }
+  button:disabled { opacity: .55; cursor: wait; }
+  .error-banner { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0;
+                  border-radius: 8px; padding: 10px 12px; margin-bottom: 16px;
+                  font-size: .85rem; }
+  #refresh-note { white-space: nowrap; }
   html { scroll-behavior: smooth; }
   .box { scroll-margin-top: 110px; }
   .section-nav { position: sticky; top: 0; z-index: 50;
@@ -89,6 +100,19 @@ PANEL_PAGE = """<!DOCTYPE html>
   .nav-pill.active { background: #2A5BD5; color: #fff; border-color: #2A5BD5; }
   .card.clickable { cursor: pointer; }
   .card.clickable:hover { border-color: #2A5BD5; }
+  @media (max-width: 640px) {
+    body { padding: 12px; }
+    h1 { font-size: 1.15rem; }
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .card { padding: 10px 12px; }
+    .card .v { font-size: 1.35rem; }
+    .box { padding: 12px; }
+    .section-nav { gap: 6px; padding: 8px 0; }
+    .nav-pill { padding: 5px 10px; font-size: .76rem; }
+    table { font-size: .78rem; }
+    th, td { padding: 5px 6px; }
+    #login { margin-top: 8vh; }
+  }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
   }
@@ -98,15 +122,22 @@ PANEL_PAGE = """<!DOCTYPE html>
 <div id="login" class="wrap">
   <h1>🔐 Panel operatora</h1>
   <div class="sub">zaileprzeja.de</div>
-  <input type="password" id="pw" placeholder="Hasło" autocomplete="current-password">
-  <div class="err" id="err"></div>
-  <button onclick="doLogin()">Wejdź</button>
+  <form id="login-form">
+    <input type="password" id="pw" placeholder="Hasło"
+           autocomplete="current-password" aria-label="Hasło">
+    <div class="err" id="err" role="status" aria-live="polite"></div>
+    <button type="submit" id="login-btn">Wejdź</button>
+  </form>
 </div>
 
 <div id="dash" class="wrap" style="display:none">
   <h1>Statystyki <span id="ver" style="color:#2A5BD5"></span></h1>
-  <div class="sub">Czas Europe/Warsaw · odświeżanie co 60 s
-      <button id="logout" onclick="logout()">Wyloguj</button></div>
+  <div class="sub">Czas Europe/Warsaw · <span id="refresh-note">odświeżanie co 60 s</span>
+      <span class="sub-actions">
+        <button id="refresh" type="button">Odśwież</button>
+        <button id="logout" type="button">Wyloguj</button>
+      </span></div>
+  <div id="dash-error" class="error-banner hidden" role="status" aria-live="polite"></div>
 
   <div class="viewbar">
     <button class="view-btn active" data-days="7">7 dni</button>
@@ -125,6 +156,7 @@ PANEL_PAGE = """<!DOCTYPE html>
     <a class="nav-pill" href="#sec-operator" data-sec="sec-operator">Operator</a>
     <a class="nav-pill" href="#sec-searches" data-sec="sec-searches">Wyszukiwania</a>
     <a class="nav-pill" href="#sec-req" data-sec="sec-req">Wykresy</a>
+    <a class="nav-pill" href="#sec-vis" data-sec="sec-vis">Użytkownicy</a>
     <a class="nav-pill" href="#sec-gtfs" data-sec="sec-gtfs">Dane</a>
     <a class="nav-pill" href="#sec-sys" data-sec="sec-sys">System</a>
   </nav>
@@ -167,8 +199,8 @@ PANEL_PAGE = """<!DOCTYPE html>
       <span class="mut" id="searches-count"></span>
     </div>
     <div class="scrollbox" style="max-height:320px"><table>
-      <tr><th>kiedy</th><th>trasa</th><th>czas</th><th>tania</th>
-          <th>wygodna</th><th>wynik</th></tr>
+      <tr><th scope="col">kiedy</th><th scope="col">trasa</th><th scope="col">czas</th>
+          <th scope="col">tania</th><th scope="col">wygodna</th><th scope="col">wynik</th></tr>
       <tbody id="t-searches"></tbody>
     </table></div>
   </div>
@@ -225,22 +257,31 @@ PANEL_PAGE = """<!DOCTYPE html>
 function esc(s){const d=document.createElement('i');d.textContent=s==null?'':s;return d.innerHTML;}
 function fmtTs(ts){const d=new Date(ts*1000);return d.toLocaleString('pl-PL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});}
 
-async function api(path, opts){
-  const r = await fetch(path, Object.assign({credentials:'same-origin'}, opts||{}));
-  if (r.status === 401) throw {auth:true};
-  if (!r.ok) throw new Error('HTTP '+r.status);
-  return r.json();
-}
-
 function login(){
+  const pw = document.getElementById('pw');
+  const err = document.getElementById('err');
+  const btn = document.getElementById('login-btn');
+  if (btn.disabled) return;
+  err.textContent = '';
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = 'Logowanie…';
   fetch('/api/admin/login', {method:'POST', credentials:'same-origin',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({password:document.getElementById('pw').value})})
-  .then(r => { if(r.ok){showDash();} else {document.getElementById('err').textContent='Błędne hasło';} })
-  .catch(()=>{document.getElementById('err').textContent='Błąd połączenia';});
+    body:JSON.stringify({password:pw.value})})
+  .then(r => {
+    if (r.ok) { pw.value = ''; return showDash(); }
+    err.textContent = 'Błędne hasło';
+    pw.select();
+  })
+  .catch(()=>{ err.textContent = 'Błąd połączenia'; })
+  .finally(()=>{ btn.disabled = false; btn.textContent = label; });
   return false;
 }
-function logout(){ fetch('/api/admin/logout',{method:'POST',credentials:'same-origin'}); location.reload(); }
+function logout(){
+  fetch('/api/admin/logout',{method:'POST',credentials:'same-origin'})
+    .finally(()=>{ location.reload(); });
+}
 
 function barChart(el, series){
   // series: [{name, color, values:[..]}, ...] — stacked; labels z serii 0
@@ -274,15 +315,24 @@ function barChart(el, series){
       x += '<text x="'+(padL+i*((W-padL-8)/n)+bw/2)+'" y="'+(H-6)+'" font-size="10" fill="#99a" text-anchor="middle">'+esc(String(lab).slice(5))+'</text>';
   });
   x += '</svg>';
+  const totals = series.map(function(s){
+    return s.name + ': ' + s.values.reduce(function(a,b){ return a + b; }, 0);
+  }).join(', ');
+  el.setAttribute('role', 'img');
+  el.setAttribute('aria-label', 'Wykres słupkowy. ' + totals);
   el.innerHTML = x;
 }
 
 let refreshTimer = null;
 const view = { from: null, to: null };   // 'YYYY-MM-DD' × 2
+function ymd(d){
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
 function shiftDays(days){
   const d = new Date();
   d.setDate(d.getDate() - (days - 1));
-  return d.toISOString().slice(0, 10);
+  return ymd(d);
 }
 async function showDash(){
   document.getElementById('login').style.display='none';
@@ -292,7 +342,10 @@ async function showDash(){
   loadLive();
   loadOperator();
   clearInterval(refreshTimer);
-  refreshTimer = setInterval(function(){ loadStats(); loadGtfs(); loadLive(); }, 60000);
+  refreshTimer = setInterval(function(){
+    if (document.hidden) return;  // nie budź serwera, gdy karta jest w tle
+    loadStats(); loadGtfs(); loadLive();
+  }, 60000);
 }
 function setView(days){
   view.from = shiftDays(days); view.to = shiftDays(1);
@@ -304,6 +357,10 @@ function setCustom(){
   view.from = document.getElementById('date-from').value;
   view.to = document.getElementById('date-to').value;
   if (!view.from || !view.to) return;
+  if (view.from > view.to) {
+    const tmp = view.from; view.from = view.to; view.to = tmp;
+    syncInputs();
+  }
   setActiveBtn('custom');
   loadStats();
 }
@@ -324,18 +381,39 @@ function setActiveBtn(v){
 }
 function rangeLabel(){
   const today = shiftDays(1);
-  if (view.to === today && view.from === shiftDays(6)) return '7 dni';
-  if (view.to === today && view.from === shiftDays(29)) return '30 dni';
+  if (view.to === today && view.from === shiftDays(7)) return '7 dni';
+  if (view.to === today && view.from === shiftDays(30)) return '30 dni';
   return view.from + ' → ' + view.to;
 }
 let showOp = false;  // globalny przełącznik: pokazuj ruch operatora
+function showDashError(msg){
+  const el = document.getElementById('dash-error');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+function clearDashError(){
+  document.getElementById('dash-error').classList.add('hidden');
+}
+function setRefreshNote(){
+  const el = document.getElementById('refresh-note');
+  const t = new Date().toLocaleTimeString('pl-PL',
+    {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  el.textContent = 'zaktualizowano ' + t + ' · odświeżanie co 60 s';
+}
 async function loadStats(){
   const q = '/api/admin/stats?from=' + encodeURIComponent(view.from)
           + '&to=' + encodeURIComponent(view.to)
           + (showOp ? '&op=1' : '');
-  let r = await fetch(q, {credentials:'same-origin'});
-  if (r.status === 401){ location.reload(); return; }
-  render(await r.json());
+  try {
+    let r = await fetch(q, {credentials:'same-origin'});
+    if (r.status === 401){ location.reload(); return; }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+    setRefreshNote();
+    clearDashError();
+  } catch (e) {
+    showDashError('Nie udało się odświeżyć statystyk. Kolejna próba za minutę.');
+  }
 }
 document.getElementById('btn-op-toggle').addEventListener('click', function(){
   showOp = !showOp;
@@ -365,6 +443,7 @@ async function loadLive(){
   renderLive(await r.json());
 }
 function renderLive(s){
+  document.getElementById('ver').textContent = s.version ? 'v' + s.version : '';
   const fc = s.find_cache || {}, cheap = s.cheap || {};
   const rss = s.rss_mb || 0, lim = s.memory_limit_mb || 1;
   const req = s.route_requests || 0, tout = s.route_timeouts || 0;
@@ -373,6 +452,8 @@ function renderLive(s){
     ['Pamięć', '<b style="color:' + levelColor(rss / lim) + '">' + rss + ' / ' + lim + ' MB</b>'],
     ['Żądania HTTP', 'aktywne ' + (s.active_requests || 0) + ' / ' + (s.max_concurrent || '?')],
     ['Cache tras', (fc.route_entries || 0) + ' w pamięci · ' + (s.routes_from_disk || 0) + ' z dysku · ' + (s.routes_computed || 0) + ' wyliczonych'],
+    ['Cache odpowiedzi', ((s.route_json_cache || {}).entries || 0) + ' / ' +
+      ((s.route_json_cache || {}).max || '?') + ' gotowych JSON-ów'],
     ['Wyszukiwania (od restartu)', req + ' · timeouty ' + tout +
       (req ? ' (' + Math.round(100 * tout / req) + '%)' : '')],
     ['Silnik', 'perony ' + (fc.find_entries || 0) + ' · sweeps ' + (s.sweep_lru || 0) +
@@ -517,23 +598,25 @@ function render(s){
   const total = (k)=>days.reduce((x,d)=>x+(s.daily[d][k]||0),0);
   const rng = (s.range && s.range.from) ? s.range.from + ' → ' + s.range.to
                                         : 'ostatnie 30 dni';
+  const shortRange = rangeLabel();
   // unique_total liczy rozróżnialne hashe z zachowanych surowych zdarzeń —
   // dla zakresów sięgających przed okno retencji (agregaty dobowe bez
   // identyfikatorów) pokazujemy, od kiedy liczenie jest dokładne.
-  const usersLabel = 'użytkownicy · ' + rng
+  const usersLabel = 'użytkownicy · ' + shortRange
     + ((s.unique_exact === false && s.unique_since)
         ? ' (dokł. od ' + s.unique_since.split('-').reverse().join('.') + ')' : '');
 
   document.getElementById('kpis').innerHTML = [
-    {l:'wyszukiwania · ' + rng, v:total('requests'), c:'', sec:'sec-searches'},
-    {l:usersLabel, v:(s.unique_total||0), c:'', sec:'sec-vis'},
+    {l:'wyszukiwania · ' + shortRange, v:total('requests'), c:'', sec:'sec-searches', title:rng},
+    {l:usersLabel, v:(s.unique_total||0), c:'', sec:'sec-vis', title:rng},
     {l:'timeouty', v:total('timeout'), c:total('timeout')?'red':'', sec:'sec-searches', filter:'anom'},
     {l:'odrzucone', v:total('busy'), c:total('busy')?'orange':'', sec:'sec-searches', filter:'anom'}
-  ].map(k=>'<div class="card clickable" data-sec="'+k.sec+'"' +
+  ].map(k=>'<div class="card clickable" role="button" tabindex="0" data-sec="'+k.sec+'"' +
     (k.filter ? ' data-filter="' + k.filter + '"' : '') +
-    '><div class="v '+k.c+'">'+k.v+'</div><div class="l">'+esc(k.l)+'</div></div>').join('');
+    (k.title ? ' title="' + esc(k.title) + '"' : '') +
+    ' aria-label="' + esc(k.l) + ': ' + k.v + '"><div class="v '+k.c+'">'+k.v+'</div><div class="l">'+esc(k.l)+'</div></div>').join('');
   document.querySelectorAll('#kpis .card.clickable').forEach(el=>{
-    el.onclick = function(){
+    const open = function(){
       if (el.dataset.filter) {
         searchFilter = el.dataset.filter;
         renderSearches(lastSearches);
@@ -543,6 +626,13 @@ function render(s){
       const target = document.getElementById(el.dataset.sec);
       if (target) target.scrollIntoView(
         {behavior: reduceMotion ? 'auto' : 'smooth', block:'start'});
+    };
+    el.onclick = open;
+    el.onkeydown = function(e){
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        open();
+      }
     };
   });
 
@@ -586,7 +676,7 @@ async function loadGtfs(){
 
 function fmtGtfsDate(yyyymmdd){
   const d = String(yyyymmdd || '');
-  if (/^\d{8}$/.test(d)) return d.slice(6, 8) + '.' + d.slice(4, 6) + '.' + d.slice(0, 4);
+  if (/^\\d{8}$/.test(d)) return d.slice(6, 8) + '.' + d.slice(4, 6) + '.' + d.slice(0, 4);
   return d || '—';
 }
 
@@ -801,7 +891,8 @@ function initSectionNav(){
       }
     });
   }, {rootMargin: '-30% 0px -60% 0px'});
-  ['sec-live', 'sec-operator', 'sec-searches', 'sec-req', 'sec-gtfs', 'sec-sys']
+  ['sec-live', 'sec-operator', 'sec-searches', 'sec-req', 'sec-vis',
+   'sec-gtfs', 'sec-sys']
     .forEach(function(id){
       const el = document.getElementById(id);
       if (el) obs.observe(el);
@@ -815,7 +906,17 @@ async function boot(){
     if (r.ok) showDash(); else document.getElementById('login').style.display='block';
   }catch(e){ document.getElementById('err').textContent='Błąd połączenia'; }
 }
-document.getElementById('pw').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
+document.getElementById('login-form').addEventListener('submit', function(e){
+  e.preventDefault();
+  login();
+});
+document.getElementById('logout').addEventListener('click', logout);
+document.getElementById('refresh').addEventListener('click', function(){
+  loadStats(); loadGtfs(); loadLive(); loadOperator();
+});
+document.addEventListener('visibilitychange', function(){
+  if (!document.hidden) { loadStats(); loadGtfs(); loadLive(); }
+});
 boot();
 </script>
 </body>

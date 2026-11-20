@@ -75,7 +75,7 @@ Oficjalne przedziały są liczone **w linii prostej A→B** — kalkulator używ
 
 Bez kont, bez reklam, bez Google Analytics i bez profili użytkowników. Strona jest dostarczana przez **Cloudflare** (CDN/ochrona; tunel do serwera) — Cloudflare widzi techniczne dane połączenia i przetwarza je zgodnie z własną polityką. Kafelki mapy serwujemy sami (proxy), więc CARTO nie widzi odwiedzających. Statystyki używają solonego skrótu IP (bez surowego IP), surowe zdarzenia są usuwane po 90 dniach, a dzienne rollupy nie mają identyfikatorów. Pełne szczegóły w aplikacji pod przyciskiem „🔒 Prywatność" (`public/privacy.md`).
 
-Aplikacja ma też panel operatora ze statystykami. Własny ruch operatora jest oznaczany (`op=1`) i domyślnie ukrywany; opcjonalne ciasteczko `operator=1` ustawia tylko operator na własnym urządzeniu.
+Aplikacja ma też panel operatora ze statystykami: logowanie hasłem, KPI, wykresy, filtr anomalii, status GTFS i stan serwera na żywo. Panel jest responsywny, obsługuje klawiaturę i działa bez zewnętrznych zależności. Własny ruch operatora jest oznaczany (`op=1`) i domyślnie ukrywany; opcjonalne ciasteczko `operator=1` ustawia tylko operator na własnym urządzeniu.
 
 ## Uruchomienie
 
@@ -106,7 +106,7 @@ Dane GTFS przetwarza `process_gtfs.py` (surowe pliki zip w `data/` → `processe
 ## Testy
 
 ```bash
-python3 -m unittest discover -s tests     # 152 testów
+python3 -m unittest discover -s tests     # 153 testów
 ```
 
 W tym `TestExactSearchExactness` — na małym grafie testowym algorytm jest porównywany z metodą, która sprawdza wszystkie możliwe trasy. Wyniki muszą się zgadzać. Testy admina wymagają `init_pathfinding`; część testów pomija się, gdy brak danych GTFS.
